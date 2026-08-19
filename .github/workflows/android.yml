@@ -1,112 +1,232 @@
-name: Android CI
+name: Build self-contained Grand Leagues APK
 
 on:
-  pull_request:
-    branches-ignore:
-      - 'l10n_v3_openjdk2'
-    types: [ opened, reopened ]
-  push:
-    branches-ignore:
-      - 'l10n_v3_openjdk2'
   workflow_dispatch:
+  push:
+    branches:
+      - grand-leagues-self-contained
+    paths:
+      - build/grandleague/build.once
+
+permissions:
+  contents: read
+
+concurrency:
+  group: grand-leagues-self-contained-apk
+  cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    env:
-      GPLAY_KEYSTORE_PASSWORD: ${{ secrets.GPLAY_KEYSTORE_PASSWORD }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Set up JDK 8
-        uses: actions/setup-java@v3
+      - name: Checkout mobile source
+        uses: actions/checkout@v4
         with:
-          distribution: 'temurin'
+          fetch-depth: 1
+
+      - name: Verify vendored Grand League overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s build/grandleague/server-overlay/upstream.sha
+          test -s build/grandleague/server-overlay/sha256.txt
+          test -n "$(find build/grandleague/server-overlay/parts -type f -name 'part-*' -print -quit)"
+
+      - name: Set up JDK 11 for 2009Scape server
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '11'
+          cache: maven
+
+      - name: Reconstruct tested Grand League server
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVER="$RUNNER_TEMP/2009scape"
+          UPSTREAM="$(tr -d '\r\n' < build/grandleague/server-overlay/upstream.sha)"
+          git init -q "$SERVER"
+          git -C "$SERVER" remote add origin https://gitlab.com/2009scape/2009scape.git
+          if ! git -C "$SERVER" fetch --depth 1 origin "$UPSTREAM"; then
+            git -C "$SERVER" fetch --depth 250 origin master
+          fi
+          git -C "$SERVER" checkout -q --detach "$UPSTREAM"
+
+          cat build/grandleague/server-overlay/parts/part-* > "$RUNNER_TEMP/grand-leagues-overlay.b64"
+          base64 -d "$RUNNER_TEMP/grand-leagues-overlay.b64" > "$RUNNER_TEMP/grand-leagues-overlay.tar.gz"
+          EXPECTED="$(awk '{print $1}' build/grandleague/server-overlay/sha256.txt)"
+          printf '%s  %s\n' "$EXPECTED" "$RUNNER_TEMP/grand-leagues-overlay.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/grand-leagues-overlay.tar.gz" -C "$SERVER"
+
+          if [[ -s build/grandleague/server-overlay/deletes.txt ]]; then
+            while IFS= read -r path; do
+              [[ -z "$path" ]] && continue
+              rm -rf -- "$SERVER/$path"
+            done < build/grandleague/server-overlay/deletes.txt
+          fi
+
+          test -s "$SERVER/Server/src/main/content/global/leagues/GrandLeagueManager.kt"
+          grep -q 'Boolean.getBoolean("grandleague.mobile")' "$SERVER/Server/src/main/content/global/leagues/GrandLeagueManager.kt"
+
+      - name: Test and package Grand League server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/2009scape/Server"
+          mvn -B -ntp test package
+
+          SERVER_JAR="$(find target -maxdepth 1 -type f -name '*jar-with-dependencies*.jar' -print -quit)"
+          test -n "$SERVER_JAR"
+          test -s "$SERVER_JAR"
+
+          PAYLOAD="$RUNNER_TEMP/grandleague-payload"
+          mkdir -p "$PAYLOAD/worldprops"
+          cp "$SERVER_JAR" "$PAYLOAD/server.jar"
+          cp -a data "$PAYLOAD/data"
+          cp worldprops/default.conf "$PAYLOAD/worldprops/mobile.conf"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p = Path(os.environ["RUNNER_TEMP"]) / "grandleague-payload/worldprops/mobile.conf"
+          s = p.read_text()
+          replacements = {
+              'write_logs = true': 'write_logs = false',
+              'noauth_default_admin = true': 'noauth_default_admin = false',
+              'watchdog_enabled = true': 'watchdog_enabled = false',
+              'name = "2009Scape"': 'name = "Grand Leagues"',
+              'name_ge = "2009Scape"': 'name_ge = "Grand Leagues"',
+              'debug = true': 'debug = false',
+              'dev = true': 'dev = false',
+              'activity = "2009Scape Classic."': 'activity = "Grand Leagues"',
+              'enable_default_clan = true': 'enable_default_clan = false',
+              'enable_bots = true': 'enable_bots = false',
+              'max_adv_bots = 100': 'max_adv_bots = 0',
+          }
+          for old, new in replacements.items():
+              if old not in s:
+                  raise SystemExit(f"Missing expected server config line: {old}")
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+
+          mkdir -p "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague"
+          (
+            cd "$PAYLOAD"
+            zip -q -r "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague/server.zip" .
+          )
+          unzip -t "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague/server.zip" >/dev/null
+          printf '%s\n' "$GITHUB_SHA" > "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague/version.txt"
+
+      - name: Download permanent client JRE 8
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMP="$RUNNER_TEMP/jre8"
+          mkdir -p "$TMP"
+          curl --fail --location --retry 3 \
+            https://github.com/TeamPojavLauncher/PojavLauncher/releases/download/v0.1.1/PojavLauncher-debug-full.apk \
+            -o "$TMP/pojav-full.apk"
+          unzip -q "$TMP/pojav-full.apk" 'assets/components/jre/*' -d "$TMP/unpack"
+          SRC="$TMP/unpack/assets/components/jre"
+          test -s "$SRC/version"
+          test -s "$SRC/universal.tar.xz"
+          test -s "$SRC/bin-arm64.tar.xz"
+          DEST="$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/components/jre"
+          rm -rf "$DEST"
+          mkdir -p "$(dirname "$DEST")"
+          cp -a "$SRC" "$DEST"
+
+      - name: Download and normalize permanent server JRE 17
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMP="$RUNNER_TEMP/jre17"
+          mkdir -p "$TMP/extract"
+          curl --fail --location --retry 3 \
+            https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/jre17-ec28559/jre17-arm64-20210825-release.tar.xz \
+            -o "$TMP/source.tar.xz"
+          tar -xJf "$TMP/source.tar.xz" -C "$TMP/extract"
+
+          RELEASE_FILE="$(find "$TMP/extract" -type f -name release -print -quit)"
+          test -n "$RELEASE_FILE"
+          RUNTIME_ROOT="$(dirname "$RELEASE_FILE")"
+          test -s "$RUNTIME_ROOT/bin/java"
+          test -n "$(find "$RUNTIME_ROOT" -type f -name libjvm.so -print -quit)"
+
+          DEST="$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/components/grandleague-jre17"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          tar -chJf "$DEST/jre17-arm64.tar.xz" -C "$RUNTIME_ROOT" .
+          tar -tJf "$DEST/jre17-arm64.tar.xz" > "$TMP/runtime-files.txt"
+          grep -Eq '(^|^\./)release$' "$TMP/runtime-files.txt"
+          grep -Eq '(^|^\./)bin/java$' "$TMP/runtime-files.txt"
+
+      - name: Install Android SDK requirements
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-33' 'build-tools;33.0.2' 'ndk;25.2.9519653'
+
+      - name: Set up JDK 8 build toolchain
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
           java-version: '8'
 
-      - name: Get JRE 8
-        uses: dawidd6/action-download-artifact@v2
+      - name: Set up Gradle 7.6.1
+        uses: gradle/actions/setup-gradle@v4
         with:
-          workflow: build.yml
-          path: app_pojavlauncher/src/main/assets/components/jre
-          workflow_conclusion: success
-          repo: PojavLauncherTeam/android-openjdk-build-multiarch
-          branch: buildjre8
-          name: jre8-pojav
+          gradle-version: '7.6.1'
 
-      - name: Get JRE17
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          workflow: build.yml
-          path: app_pojavlauncher/src/main/assets/components/jre-new
-          workflow_conclusion: success
-          repo: PojavLauncherTeam/android-openjdk-build-multiarch
-          branch: buildjre17
-          name: jre17-pojav
-
-      - uses: gradle/gradle-build-action@v2
-        with:
-          gradle-version: 7.6.1
-
-      - name: Build JRE JAR files
+      - name: Build Java 8 launcher support
+        shell: bash
         run: |
+          set -euo pipefail
           ./scripts/languagelist_updater.sh
-
-          mkdir out
-          # Build JRE JAR files (security manager, etc...)
           gradle :jre_lwjgl3glfw:build --no-daemon
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
+      - name: Set up JDK 17 for Android build
+        uses: actions/setup-java@v5
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
-      - name: Build Google Play .aab
-        if: github.repository_owner == 'PojavLauncherTeam' && github.ref_name == 'v3_openjdk'
+      - name: Build self-contained APK
+        shell: bash
         run: |
-          gradle :app_pojavlauncher:bundleGplay
-          mv app_pojavlauncher/build/outputs/bundle/gplay/app_pojavlauncher-gplay.aab out/app-gplay.aab
+          set -euo pipefail
+          gradle :app_pojavlauncher:assembleDebug --no-daemon
 
-      - name: Build Debug .apk
-        run: |
-          # Build the launcher
-          gradle :app_pojavlauncher:assembleDebug
-          mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/app-debug.apk
+          mkdir -p out
+          APK="out/2009Scape-Grand-Leagues-arm64-debug.apk"
+          cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk "$APK"
 
-      - name: Build APK without runtime
-        run: |
-          rm -r app_pojavlauncher/src/main/assets/components/jre
-          rm -r app_pojavlauncher/src/main/assets/components/jre-new
-          gradle assembleDebug
-          mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/app-debug-noruntime.apk
-      - name: Gen md5sums
-        run: |
-          md5sum out/app-debug.apk > out/app-debug.md5
-          md5sum out/app-debug-noruntime.apk > out/app-debug-noruntime.md5
-          
+          unzip -t "$APK" >/dev/null
+          unzip -l "$APK" > "$RUNNER_TEMP/apk-files.txt"
+          grep -q 'assets/grandleague/server.zip' "$RUNNER_TEMP/apk-files.txt"
+          grep -q 'assets/grandleague/version.txt' "$RUNNER_TEMP/apk-files.txt"
+          grep -q 'assets/components/jre/version' "$RUNNER_TEMP/apk-files.txt"
+          grep -q 'assets/components/grandleague-jre17/jre17-arm64.tar.xz' "$RUNNER_TEMP/apk-files.txt"
+          "$ANDROID_HOME/build-tools/33.0.2/apksigner" verify --verbose "$APK"
+          sha256sum "$APK" > "$APK.sha256"
+
+          {
+            echo "mobile_sha=$GITHUB_SHA"
+            echo "server_upstream=$(cat build/grandleague/server-overlay/upstream.sha)"
+            echo "server_overlay_sha256=$(awk '{print $1}' build/grandleague/server-overlay/sha256.txt)"
+            echo "architecture=arm64-v8a"
+          } > out/build-metadata.txt
+
       - name: Upload APK
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: out/app-debug.*
-
-      - name: Upload onto the Google Play testing track
-        continue-on-error: true
-        if: github.repository_owner == 'PojavLauncherTeam' && github.ref_name == 'v3_openjdk'
-        uses: r0adkll/upload-google-play@v1.1.1
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.GPLAY_SERVICE_JSON }}
-          packageName: net.kdt.pojavlaunch
-          releaseFiles: out/app-gplay.aab
-          track: internal
-          inAppUpdatePriority: 5
-          changesNotSentForReview: true
-
-      - name: Upload APK (without runtime)
-        uses: actions/upload-artifact@v3
-        with:
-          name: app-debug-noruntime
-          path: out/app-debug-noruntime.*
-
+          name: 2009Scape-Grand-Leagues-arm64
+          path: |
+            out/2009Scape-Grand-Leagues-arm64-debug.apk
+            out/2009Scape-Grand-Leagues-arm64-debug.apk.sha256
+            out/build-metadata.txt
+          if-no-files-found: error
+          retention-days: 14
