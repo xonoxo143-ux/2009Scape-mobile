@@ -26,6 +26,7 @@ public class ScapeLauncher extends BaseActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_dummy_launcher);
 
+        Tools.initContextConstants(this);
         try {
             Tools.copyAssetFile(this, "config.json", Tools.DIR_DATA, true);
         } catch (Exception exception) {
