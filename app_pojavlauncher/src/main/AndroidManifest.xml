@@ -26,7 +26,7 @@
         android:hasFragileUserData="true"
         android:icon="@mipmap/ic_launcher"
         android:isGame="true"
-        android:label="@string/app_name"
+        android:label="2009Scape Grand Leagues"
         android:process=":launcher"
         android:resizeableActivity="true"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -42,7 +42,7 @@
         <activity
             android:name=".TestStorageActivity"
             android:exported="true"
-            android:label="@string/app_short_name"
+            android:label="Grand Leagues"
             android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -52,7 +52,7 @@
         <activity
             android:name=".ScapeLauncher"
             android:screenOrientation="sensorLandscape"
-            android:label="@string/app_short_name" />
+            android:label="Grand Leagues" />
         <activity
             android:name=".FatalErrorActivity"
             android:configChanges="keyboardHidden|orientation|screenSize|keyboard|navigation"
