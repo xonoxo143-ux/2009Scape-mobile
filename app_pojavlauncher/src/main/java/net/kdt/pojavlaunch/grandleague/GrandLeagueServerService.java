@@ -39,6 +39,7 @@ public final class GrandLeagueServerService extends Service {
     private static final String CHANNEL_ID = "grand_league_server";
     private static final int NOTIFICATION_ID = 53095;
     private static final String RUNTIME_NAME = "GrandLeague17";
+    private static final String[] MUTABLE_DATA_DIRS = {"players", "eco", "serverstore"};
     private static final AtomicBoolean STARTED = new AtomicBoolean(false);
 
     @Override
@@ -117,9 +118,34 @@ public final class GrandLeagueServerService extends Service {
             return root;
         }
 
-        if (root.exists()) FileUtils.deleteDirectory(root);
-        if (!root.mkdirs()) throw new IOException("Unable to create Grand League server directory");
+        File staged = new File(getFilesDir(), "grandleague-server.next");
+        File previous = new File(getFilesDir(), "grandleague-server.previous");
+        if (staged.exists()) FileUtils.deleteDirectory(staged);
+        if (previous.exists()) FileUtils.deleteDirectory(previous);
+        if (!staged.mkdirs()) throw new IOException("Unable to create staged Grand League server directory");
 
+        extractPayload(staged);
+        carryForwardMutableState(root, staged);
+        Tools.write(new File(staged, ".payload-version").getAbsolutePath(), packagedVersion + "\n");
+
+        boolean hadPrevious = root.exists();
+        if (hadPrevious && !root.renameTo(previous)) {
+            FileUtils.deleteDirectory(staged);
+            throw new IOException("Unable to stage previous Grand League server for update");
+        }
+
+        if (!staged.renameTo(root)) {
+            if (hadPrevious && previous.exists() && !previous.renameTo(root)) {
+                throw new IOException("Unable to activate new Grand League server or restore previous version");
+            }
+            throw new IOException("Unable to activate staged Grand League server");
+        }
+
+        if (previous.exists()) FileUtils.deleteDirectory(previous);
+        return root;
+    }
+
+    private void extractPayload(File root) throws IOException {
         try (InputStream raw = getAssets().open("grandleague/server.zip");
              ZipInputStream zip = new ZipInputStream(new BufferedInputStream(raw))) {
             ZipEntry entry;
@@ -142,9 +168,29 @@ public final class GrandLeagueServerService extends Service {
                 zip.closeEntry();
             }
         }
+    }
 
-        Tools.write(stamp.getAbsolutePath(), packagedVersion + "\n");
-        return root;
+    private void carryForwardMutableState(File current, File staged) throws IOException {
+        if (!current.isDirectory()) return;
+
+        for (String name : MUTABLE_DATA_DIRS) {
+            File source = new File(new File(current, "data"), name);
+            if (!source.exists()) continue;
+
+            File destination = new File(new File(staged, "data"), name);
+            if (destination.exists()) {
+                if (destination.isDirectory()) FileUtils.deleteDirectory(destination);
+                else if (!destination.delete()) throw new IOException("Unable to replace staged state: " + destination);
+            }
+
+            File parent = destination.getParentFile();
+            if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+                throw new IOException("Unable to create staged data directory: " + parent);
+            }
+
+            if (source.isDirectory()) FileUtils.copyDirectory(source, destination);
+            else FileUtils.copyFile(source, destination);
+        }
     }
 
     private void writeFailure(Throwable throwable) {
@@ -161,7 +207,7 @@ public final class GrandLeagueServerService extends Service {
             NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Grand League world", NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("Local 2009Scape Grand League server");
             NotificationManager manager = getSystemService(NotificationManager.class);
-            manager.createNotificationChannel(channel);
+            if (manager != null) manager.createNotificationChannel(channel);
         }
     }
 
@@ -177,7 +223,7 @@ public final class GrandLeagueServerService extends Service {
 
     private void updateNotification(String text) {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        manager.notify(NOTIFICATION_ID, notification(text));
+        if (manager != null) manager.notify(NOTIFICATION_ID, notification(text));
     }
 
     @Nullable
