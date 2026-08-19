@@ -1,7 +1,6 @@
 package net.kdt.pojavlaunch;
 
 import android.annotation.SuppressLint;
-import android.content.Intent;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.TextView;
@@ -9,6 +8,7 @@ import android.widget.Toast;
 
 import com.kdt.mcgui.ProgressLayout;
 
+import net.kdt.pojavlaunch.grandleague.GrandLeagueServerController;
 import net.kdt.pojavlaunch.progresskeeper.ProgressKeeper;
 import net.kdt.pojavlaunch.services.ProgressServiceKeeper;
 
@@ -32,6 +32,7 @@ public class ScapeLauncher extends BaseActivity {
         mProgressLayout = findViewById(R.id.progress_layout);
 
         ProgressKeeper.addTaskCountListener((mProgressServiceKeeper = new ProgressServiceKeeper(this)));
+        GrandLeagueServerController.ensureStarted(this);
         ProgressKeeper.addTaskCountListener(mProgressLayout);
 
         mProgressLayout.observe(ProgressLayout.UNPACK_RUNTIME);
@@ -39,14 +40,12 @@ public class ScapeLauncher extends BaseActivity {
 
         playHD.setOnClickListener(view -> {
             if(!runtimeReady()) return;
-            Intent intent = new Intent(ScapeLauncher.this, MainActivity.class);
-            startActivity(intent);
+            GrandLeagueServerController.launchWhenReady(ScapeLauncher.this, MainActivity.class);
         });
 
         playSD.setOnClickListener(view -> {
             if(!runtimeReady()) return;
-            Intent intent = new Intent(ScapeLauncher.this, JavaGUILauncherActivity.class);
-            startActivity(intent);
+            GrandLeagueServerController.launchWhenReady(ScapeLauncher.this, JavaGUILauncherActivity.class);
         });
         settings.setOnClickListener(view -> showBottomDialog());
     }
