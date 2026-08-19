@@ -2,6 +2,7 @@ package net.kdt.pojavlaunch;
 
 import android.annotation.SuppressLint;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -26,6 +27,11 @@ public class ScapeLauncher extends BaseActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_dummy_launcher);
+        try {
+            Tools.copyAssetFile(this, "config.json", Tools.DIR_DATA, true);
+        } catch (Exception exception) {
+            Log.e("GrandLeagueClient", "Unable to enforce embedded-server config", exception);
+        }
         settings = findViewById(R.id.settings);
         playHD = findViewById(R.id.playHD);
         playSD = findViewById(R.id.playSD);
