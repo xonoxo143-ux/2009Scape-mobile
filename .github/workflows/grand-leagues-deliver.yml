@@ -184,8 +184,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platforms;android-33' 'build-tools;33.0.2' 'ndk;25.2.9519653'
+          SDKROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          CLI="$RUNNER_TEMP/android-cli"
+          mkdir -p "$CLI"
+          curl --fail --location --retry 3 \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+            -o "$RUNNER_TEMP/android-commandline-tools.zip"
+          unzip -q "$RUNNER_TEMP/android-commandline-tools.zip" -d "$CLI"
+          SDKMANAGER="$CLI/cmdline-tools/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$SDKROOT" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDKROOT" \
+            'platforms;android-33' \
+            'build-tools;33.0.2'
+
+          NDK_DIR="$SDKROOT/ndk/25.2.9519653"
+          if [[ ! -x "$NDK_DIR/ndk-build" ]]; then
+            rm -rf "$NDK_DIR" "$RUNNER_TEMP/android-ndk-r25c"
+            curl --fail --location --retry 3 \
+              https://dl.google.com/android/repository/android-ndk-r25c-linux.zip \
+              -o "$RUNNER_TEMP/android-ndk-r25c-linux.zip"
+            unzip -q "$RUNNER_TEMP/android-ndk-r25c-linux.zip" -d "$RUNNER_TEMP"
+            mkdir -p "$SDKROOT/ndk"
+            mv "$RUNNER_TEMP/android-ndk-r25c" "$NDK_DIR"
+          fi
+          test -x "$NDK_DIR/ndk-build"
 
       - name: Set up JDK 8 build toolchain
         uses: actions/setup-java@v5
