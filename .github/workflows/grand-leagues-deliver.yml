@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  statuses: write
 
 concurrency:
   group: grand-leagues-apk-delivery
@@ -20,6 +21,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
+      - name: Publish running status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=pending \
+            -f context=grand-leagues-apk \
+            -f description="run_id=${GITHUB_RUN_ID}" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
       - name: Checkout Grand Leagues mobile source
         uses: actions/checkout@v4
         with:
@@ -240,3 +253,22 @@ jobs:
             --target "$SOURCE_SHA" \
             --title "2009Scape Grand Leagues Android" \
             --notes "Self-contained arm64-v8a APK with bundled local Grand League server and Java runtimes."
+
+      - name: Publish final status
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINAL_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          case "$FINAL_STATUS" in
+            success) STATE=success ;;
+            failure) STATE=failure ;;
+            *) STATE=error ;;
+          esac
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="$STATE" \
+            -f context=grand-leagues-apk \
+            -f description="run_id=${GITHUB_RUN_ID}" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
