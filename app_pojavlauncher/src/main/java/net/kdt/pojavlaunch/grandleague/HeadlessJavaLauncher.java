@@ -56,6 +56,7 @@ final class HeadlessJavaLauncher {
         args.add("-Dos.name=Linux");
         args.add("-Dos.version=Android-" + Build.VERSION.RELEASE);
         args.add("-Djava.awt.headless=true");
+        args.add("-Dgrandleague.mobile=true");
         args.add("-Xms128M");
         args.add("-Xmx768M");
         args.addAll(programArgs);
