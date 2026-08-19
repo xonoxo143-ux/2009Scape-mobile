@@ -1,0 +1,37 @@
+name: Repair Grand Leagues overlay checksum
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - build/grandleague/fix-overlay.once
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Grand Leagues branch
+        uses: actions/checkout@v4
+        with:
+          ref: grand-leagues-self-contained
+          fetch-depth: 1
+
+      - name: Recalculate and commit checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat build/grandleague/server-overlay/parts/part-* > "$RUNNER_TEMP/grand-leagues-overlay.b64"
+          base64 -d "$RUNNER_TEMP/grand-leagues-overlay.b64" > "$RUNNER_TEMP/grand-leagues-overlay.tar.gz"
+          tar -tzf "$RUNNER_TEMP/grand-leagues-overlay.tar.gz" >/dev/null
+          ACTUAL="$(sha256sum "$RUNNER_TEMP/grand-leagues-overlay.tar.gz" | awk '{print $1}')"
+          printf '%s  grand-leagues-mobile-overlay.tar.gz\n' "$ACTUAL" > build/grandleague/server-overlay/sha256.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add build/grandleague/server-overlay/sha256.txt
+          git commit -m "Repair Grand Leagues overlay checksum"
+          git push origin HEAD:grand-leagues-self-contained
