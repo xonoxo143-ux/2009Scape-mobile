@@ -1,3 +1,4 @@
-build=2026-08-19-self-contained-final
+build=2026-08-19-self-contained-release-gate
 server_overlay_sha256=d84e5bac941a0d60d82887e70ce0fc00ca8fc3555458247fd2937a6d1bb0c3df
+server_upstream=91bb6be123bdc08e1d022ddb310a901d1b363269
 architecture=arm64-v8a
