@@ -87,7 +87,7 @@ public final class GrandLeagueServerService extends Service {
 
     private void ensureRuntime17() throws IOException {
         AssetManager assets = getAssets();
-        String base = "components/jre-new";
+        String base = "components/grandleague-jre17";
         String version;
         try (InputStream input = assets.open(base + "/version")) {
             version = Tools.read(input).trim();
@@ -97,12 +97,19 @@ public final class GrandLeagueServerService extends Service {
         if (version.equals(installed)) return;
 
         String arch = Architecture.archAsString(Tools.DEVICE_ARCHITECTURE);
-        Log.i(TAG, "Installing embedded JRE17 for " + arch);
-        try (InputStream universal = assets.open(base + "/universal.tar.xz");
-             InputStream platform = assets.open(base + "/bin-" + arch + ".tar.xz")) {
-            MultiRTUtils.installRuntimeNamedBinpack(universal, platform, RUNTIME_NAME, version);
+        if (!"arm64".equals(arch)) {
+            throw new IOException("This Grand Leagues APK currently requires a 64-bit ARM Android device; detected " + arch);
         }
+
+        Log.i(TAG, "Installing stable embedded JRE17 for " + arch);
+        try (InputStream runtime = assets.open(base + "/jre17-arm64.tar.xz")) {
+            MultiRTUtils.installRuntimeNamed(Tools.NATIVE_LIB_DIR, runtime, RUNTIME_NAME);
+        }
+
+        File runtimeHome = MultiRTUtils.getRuntimeHome(RUNTIME_NAME);
+        Tools.write(new File(runtimeHome, "pojav_version").getAbsolutePath(), version);
         MultiRTUtils.postPrepare(RUNTIME_NAME);
+        MultiRTUtils.forceReread(RUNTIME_NAME);
     }
 
     private File ensureServerPayload() throws IOException {
