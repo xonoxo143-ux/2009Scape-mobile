@@ -89,6 +89,6 @@
             android:enabled="true"
             android:exported="false"
             android:process=":grandleague_server"
-            android:stopWithTask="false" />
+            android:stopWithTask="true" />
     </application>
 </manifest>
