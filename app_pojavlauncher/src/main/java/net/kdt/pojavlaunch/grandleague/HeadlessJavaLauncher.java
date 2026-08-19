@@ -47,6 +47,9 @@ final class HeadlessJavaLauncher {
         args.add("-Dos.name=Linux");
         args.add("-Dos.version=Android-" + Build.VERSION.RELEASE);
         args.add("-Djava.awt.headless=true");
+        args.add("-Dgrandleague.mobile=true");
+        args.add("-Dorg.sqlite.lib.path=" + Tools.NATIVE_LIB_DIR);
+        args.add("-Dorg.sqlite.lib.name=libsqlitejdbc.so");
         args.add("-Xms128M");
         args.add("-Xmx1024M");
         args.addAll(programArgs);
