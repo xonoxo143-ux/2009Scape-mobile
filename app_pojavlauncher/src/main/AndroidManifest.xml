@@ -84,5 +84,11 @@
             android:screenOrientation="sensorLandscape" />
 
         <service android:name=".services.ProgressService" />
+        <service
+            android:name=".grandleague.GrandLeagueServerService"
+            android:enabled="true"
+            android:exported="false"
+            android:process=":grandleague_server"
+            android:stopWithTask="false" />
     </application>
 </manifest>
