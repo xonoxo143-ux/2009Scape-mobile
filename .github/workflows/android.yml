@@ -1,7 +1,6 @@
 name: Build self-contained Grand Leagues APK
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - grand-leagues-self-contained
@@ -9,7 +8,7 @@ on:
       - build/grandleague/build.once
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: grand-leagues-self-contained-apk
@@ -220,13 +219,18 @@ jobs:
             echo "architecture=arm64-v8a"
           } > out/build-metadata.txt
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: 2009Scape-Grand-Leagues-arm64
-          path: |
-            out/2009Scape-Grand-Leagues-arm64-debug.apk
-            out/2009Scape-Grand-Leagues-arm64-debug.apk.sha256
-            out/build-metadata.txt
-          if-no-files-found: error
-          retention-days: 14
+      - name: Publish verified APK release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="grand-leagues-mobile-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          gh release create "$TAG" \
+            out/2009Scape-Grand-Leagues-arm64-debug.apk \
+            out/2009Scape-Grand-Leagues-arm64-debug.apk.sha256 \
+            out/build-metadata.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "2009Scape Grand Leagues Android #${GITHUB_RUN_NUMBER}" \
+            --notes "Self-contained arm64-v8a debug APK. Includes the local Grand League server and Java runtimes."
