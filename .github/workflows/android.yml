@@ -8,10 +8,11 @@ on:
 
 permissions:
   contents: write
+  statuses: write
 
 concurrency:
   group: grand-leagues-clean-apk
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   SERVER_DIR: vendor/2009scape/Server
@@ -23,105 +24,30 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - name: Checkout monorepo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      # One-time migration only. Once these paths have been committed, this step
-      # is a no-op and the build is completely sourced from this repository.
-      - name: Bootstrap missing in-repo payloads
+      - name: Mark build running
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          changed=0
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=pending \
+            -f context=grand-leagues-apk \
+            -f description='Grand Leagues APK build is running' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
 
-          if [[ ! -s "$SERVER_DIR/pom.xml" ]]; then
-            echo "Vendoring the pinned Grand Leagues server into this repository..."
-            TMP_SERVER="$RUNNER_TEMP/2009scape-bootstrap"
-            UPSTREAM="$(tr -d '\r\n' < build/grandleague/server-overlay/upstream.sha)"
+      - name: Checkout monorepo
+        uses: actions/checkout@v4
 
-            git init -q "$TMP_SERVER"
-            git -C "$TMP_SERVER" remote add origin https://gitlab.com/2009scape/2009scape.git
-            if ! git -C "$TMP_SERVER" fetch --depth 1 origin "$UPSTREAM"; then
-              git -C "$TMP_SERVER" fetch --depth 250 origin master
-            fi
-            git -C "$TMP_SERVER" checkout -q --detach "$UPSTREAM"
-
-            cat build/grandleague/server-overlay/parts/part-* > "$RUNNER_TEMP/grand-leagues-overlay.b64"
-            base64 -d "$RUNNER_TEMP/grand-leagues-overlay.b64" > "$RUNNER_TEMP/grand-leagues-overlay.tar.gz"
-            EXPECTED="$(awk '{print $1}' build/grandleague/server-overlay/sha256.txt)"
-            printf '%s  %s\n' "$EXPECTED" "$RUNNER_TEMP/grand-leagues-overlay.tar.gz" | sha256sum -c -
-            tar -xzf "$RUNNER_TEMP/grand-leagues-overlay.tar.gz" -C "$TMP_SERVER"
-
-            if [[ -s build/grandleague/server-overlay/deletes.txt ]]; then
-              while IFS= read -r path; do
-                [[ -z "$path" ]] && continue
-                rm -rf -- "$TMP_SERVER/$path"
-              done < build/grandleague/server-overlay/deletes.txt
-            fi
-
-            test -s "$TMP_SERVER/Server/src/main/content/global/leagues/GrandLeagueManager.kt"
-            grep -q 'Boolean.getBoolean("grandleague.mobile")' "$TMP_SERVER/Server/src/main/content/global/leagues/GrandLeagueManager.kt"
-
-            rm -rf vendor/2009scape
-            mkdir -p vendor/2009scape
-            rsync -a --delete --exclude='.git' "$TMP_SERVER/Server/" "$SERVER_DIR/"
-            printf '%s\n' "$UPSTREAM" > vendor/2009scape/UPSTREAM_COMMIT
-            changed=1
-          fi
-
-          JRE8=app_pojavlauncher/src/main/assets/components/jre
-          if [[ ! -s "$JRE8/version" || ! -s "$JRE8/universal.tar.xz" || ! -s "$JRE8/bin-arm64.tar.xz" ]]; then
-            echo "Vendoring the Android Java 8 runtime into this repository..."
-            TMP_JRE8="$RUNNER_TEMP/jre8-bootstrap"
-            mkdir -p "$TMP_JRE8"
-            curl --fail --location --retry 3 \
-              https://github.com/TeamPojavLauncher/PojavLauncher/releases/download/v0.1.1/PojavLauncher-debug-full.apk \
-              -o "$TMP_JRE8/pojav-full.apk"
-            unzip -q "$TMP_JRE8/pojav-full.apk" 'assets/components/jre/*' -d "$TMP_JRE8/unpack"
-            rm -rf "$JRE8"
-            mkdir -p "$(dirname "$JRE8")"
-            cp -a "$TMP_JRE8/unpack/assets/components/jre" "$JRE8"
-            changed=1
-          fi
-
-          JRE17=app_pojavlauncher/src/main/assets/components/grandleague-jre17
-          if [[ ! -s "$JRE17/jre17-arm64.tar.xz" ]]; then
-            echo "Vendoring the Android Java 17 runtime into this repository..."
-            TMP_JRE17="$RUNNER_TEMP/jre17-bootstrap"
-            mkdir -p "$TMP_JRE17/extract"
-            curl --fail --location --retry 3 \
-              https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/jre17-ec28559/jre17-arm64-20210825-release.tar.xz \
-              -o "$TMP_JRE17/source.tar.xz"
-            tar -xJf "$TMP_JRE17/source.tar.xz" -C "$TMP_JRE17/extract"
-            RELEASE_FILE="$(find "$TMP_JRE17/extract" -type f -name release -print -quit)"
-            test -n "$RELEASE_FILE"
-            RUNTIME_ROOT="$(dirname "$RELEASE_FILE")"
-            test -s "$RUNTIME_ROOT/bin/java"
-            test -n "$(find "$RUNTIME_ROOT" -type f -name libjvm.so -print -quit)"
-            rm -rf "$JRE17"
-            mkdir -p "$JRE17"
-            tar -chJf "$JRE17/jre17-arm64.tar.xz" -C "$RUNTIME_ROOT" .
-            changed=1
-          fi
-
-          if [[ "$changed" == 1 ]]; then
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add -f vendor/2009scape \
-              app_pojavlauncher/src/main/assets/components/jre \
-              app_pojavlauncher/src/main/assets/components/grandleague-jre17
-            git commit -m 'Vendor Grand Leagues server and Android runtimes [monorepo]'
-            git push origin HEAD:grand-leagues-clean
-          fi
-
-      - name: Verify monorepo inputs
+      - name: Verify self-contained inputs
         shell: bash
         run: |
           set -euo pipefail
           test -s "$SERVER_DIR/pom.xml"
           test -s "$SERVER_DIR/src/main/content/global/leagues/GrandLeagueManager.kt"
+          grep -q 'Boolean.getBoolean("grandleague.mobile")' \
+            "$SERVER_DIR/src/main/content/global/leagues/GrandLeagueManager.kt"
+          test -s vendor/2009scape/UPSTREAM_COMMIT
           test -s app_pojavlauncher/src/main/assets/components/jre/version
           test -s app_pojavlauncher/src/main/assets/components/jre/universal.tar.xz
           test -s app_pojavlauncher/src/main/assets/components/jre/bin-arm64.tar.xz
@@ -143,7 +69,11 @@ jobs:
           mvn -B -ntp test package
 
           SERVER_JAR="$(find target -maxdepth 1 -type f -name '*jar-with-dependencies*.jar' -print -quit)"
-          test -s "$SERVER_JAR"
+          if [[ -z "$SERVER_JAR" || ! -s "$SERVER_JAR" ]]; then
+            echo 'Server build did not produce the expected shaded jar.' >&2
+            find target -maxdepth 1 -type f -print || true
+            exit 1
+          fi
 
           PAYLOAD="$RUNNER_TEMP/grandleague-payload"
           rm -rf "$PAYLOAD"
@@ -155,8 +85,9 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import os
-          p = Path(os.environ['RUNNER_TEMP']) / 'grandleague-payload/worldprops/mobile.conf'
-          s = p.read_text()
+
+          path = Path(os.environ['RUNNER_TEMP']) / 'grandleague-payload/worldprops/mobile.conf'
+          text = path.read_text()
           replacements = {
               'write_logs = true': 'write_logs = false',
               'noauth_default_admin = true': 'noauth_default_admin = false',
@@ -171,10 +102,10 @@ jobs:
               'max_adv_bots = 100': 'max_adv_bots = 0',
           }
           for old, new in replacements.items():
-              if old not in s:
+              if old not in text:
                   raise SystemExit(f'Missing expected server config line: {old}')
-              s = s.replace(old, new, 1)
-          p.write_text(s)
+              text = text.replace(old, new, 1)
+          path.write_text(text)
           PY
 
           DEST="$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague"
@@ -204,6 +135,18 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
+
+      - name: Install pinned Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install \
+            'platform-tools' \
+            'platforms;android-33' \
+            'build-tools;33.0.2' \
+            'ndk;25.2.9519653' \
+            'cmake;3.22.1'
 
       - name: Build and validate APK
         shell: bash
@@ -242,9 +185,32 @@ jobs:
           TAG=grand-leagues-clean-latest
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "out/$APK_NAME" "out/$APK_NAME.sha256" --clobber
+            gh release edit "$TAG" \
+              --title '2009Scape Grand Leagues Android' \
+              --notes "Self-contained APK built from commit $GITHUB_SHA."
           else
             gh release create "$TAG" "out/$APK_NAME" "out/$APK_NAME.sha256" \
+              --target "$GITHUB_SHA" \
               --title '2009Scape Grand Leagues Android' \
-              --notes 'Built from the self-contained grand-leagues-clean branch.' \
+              --notes "Self-contained APK built from commit $GITHUB_SHA." \
               --prerelease
           fi
+
+      - name: Publish final build status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RESULT: ${{ job.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$BUILD_RESULT" in
+            success) STATE=success; DESCRIPTION='Grand Leagues APK build succeeded' ;;
+            cancelled) STATE=error; DESCRIPTION='Grand Leagues APK build was cancelled' ;;
+            *) STATE=failure; DESCRIPTION='Grand Leagues APK build failed' ;;
+          esac
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$STATE" \
+            -f context=grand-leagues-apk \
+            -f description="$DESCRIPTION" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
