@@ -1,0 +1,21 @@
+id	source	difficulty	points	name	description	trigger	arg1	arg2	target	region	tags	adaptation
+bootstrap.cut-oak	GRAND_LEAGUE	EASY		A Better Axe	Cut an oak log.	produce_item	1521		1		woodcutting,gathering	bootstrap
+bootstrap.cut-100-oak	GRAND_LEAGUE	MEDIUM		Oak You Doing?	Cut 100 oak logs.	produce_item	1521		100		woodcutting,gathering	bootstrap
+bootstrap.mine-iron	GRAND_LEAGUE	EASY		Iron Working	Mine an iron ore.	produce_item	440		1		mining,gathering	bootstrap
+bootstrap.mine-100-iron	GRAND_LEAGUE	MEDIUM		Iron Stockpile	Mine 100 iron ore.	produce_item	440		100		mining,gathering	bootstrap
+bootstrap.kill-kbd	GRAND_LEAGUE	HARD		King Slayer	Defeat the King Black Dragon.	kill_npc	50		1		combat,boss	bootstrap
+bootstrap.kill-25-kbd	GRAND_LEAGUE	ELITE		Dragon Extinction Event	Defeat the King Black Dragon 25 times.	kill_npc	50		25		combat,boss	bootstrap
+bootstrap.kill-elvarg	GRAND_LEAGUE	HARD		Crandor's Problem	Defeat Elvarg.	kill_npc	742		1		combat,quest	bootstrap
+bootstrap.level-20-mining	GRAND_LEAGUE	EASY		Mining Twenty	Reach level 20 Mining.	reach_skill_level	14	20	1		mining,level	bootstrap
+bootstrap.level-40-woodcutting	GRAND_LEAGUE	MEDIUM		Woodcutting Forty	Reach level 40 Woodcutting.	reach_skill_level	8	40	1		woodcutting,level	bootstrap
+bootstrap.level-60-attack	GRAND_LEAGUE	HARD		Attack Sixty	Reach level 60 Attack.	reach_skill_level	0	60	1		attack,combat,level	bootstrap
+bootstrap.gain-1m-mining-xp	GRAND_LEAGUE	ELITE		A Million Rocks	Gain 1,000,000 Mining XP while in the League.	gain_xp	14		1000000		mining,xp	bootstrap
+bootstrap.complete-dragon-slayer	GRAND_LEAGUE	HARD		Dragon Slayer	Complete Dragon Slayer.	complete_quest	dragon_slayer		1		quest	bootstrap
+bootstrap.complete-cooks-assistant	GRAND_LEAGUE	EASY		Cook's Assistant	Complete Cook's Assistant.	complete_quest	cooks_assistant		1		quest	bootstrap
+bootstrap.equip-rune-platebody	GRAND_LEAGUE	MEDIUM		Rune Armour	Equip a rune platebody.	equip_item	1127		1		equipment,combat	bootstrap
+bootstrap.equip-dragon-scimitar	GRAND_LEAGUE	HARD		Red Curved Sword	Equip a dragon scimitar.	equip_item	4587		1		equipment,combat	bootstrap
+bootstrap.obtain-lobster	GRAND_LEAGUE	EASY		Lobster Dinner	Obtain a cooked lobster.	obtain_item	379		1		cooking,item	bootstrap
+bootstrap.teleport-lumbridge-region	GRAND_LEAGUE	EASY		Home Again	Teleport into the Lumbridge map region.	teleport	region:12850		1	misthalin	travel	bootstrap
+bootstrap.total-level-500	GRAND_LEAGUE	MEDIUM		Getting Somewhere	Reach total level 500.	metric	total-level	500	1		total-level	bootstrap
+bootstrap.100-quest-points	GRAND_LEAGUE	HARD		Questing Habit	Reach 100 quest points.	metric	quest-points	100	1		quest	bootstrap
+bootstrap.first-echo	GRAND_LEAGUE	ELITE		An Echo Answers	Defeat any Echo boss.	custom	echo-kill		1		echo,boss	bootstrap
