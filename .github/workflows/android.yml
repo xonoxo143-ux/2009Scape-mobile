@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  statuses: write
 
 concurrency:
   group: grand-leagues-apk
@@ -23,6 +24,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Identify this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=pending \
+            -f context=grand-leagues-apk \
+            -f description='Grand Leagues APK build running' \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
       - name: Set up JDK 11 for server
         uses: actions/setup-java@v4
@@ -194,3 +206,24 @@ jobs:
           files: |
             out/2009Scape-Grand-Leagues-arm64-debug.apk
             out/2009Scape-Grand-Leagues-arm64-debug.apk.sha256
+
+      - name: Publish final build status
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          if [[ "$JOB_STATUS" == "success" ]]; then
+            STATE=success
+            DESC='Grand Leagues APK ready'
+          else
+            STATE=failure
+            DESC='Grand Leagues APK build failed'
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="$STATE" \
+            -f context=grand-leagues-apk \
+            -f description="$DESC" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
