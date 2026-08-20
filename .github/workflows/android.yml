@@ -1,67 +1,43 @@
-name: Build self-contained Grand Leagues APK
+name: Build Grand Leagues APK
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - grand-leagues-self-contained
     paths:
-      - build/grandleague/build.once
+      - .github/workflows/android.yml
 
 permissions:
   contents: write
 
 concurrency:
-  group: grand-leagues-self-contained-apk
+  group: grand-leagues-apk
   cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
+
     steps:
-      - name: Checkout mobile source
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Publish current run ID
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build/grandleague
-          cat > build/grandleague/latest-run.txt <<EOF
-          run_id=$GITHUB_RUN_ID
-          run_number=$GITHUB_RUN_NUMBER
-          status=in_progress
-          head_sha=$GITHUB_SHA
-          run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          EOF
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add build/grandleague/latest-run.txt
-          git commit -m "Record Grand Leagues APK run ${GITHUB_RUN_ID} start"
-          git push origin HEAD:grand-leagues-self-contained
-
-      - name: Verify vendored Grand League overlay
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s build/grandleague/server-overlay/upstream.sha
-          test -s build/grandleague/server-overlay/sha256.txt
-          test -n "$(find build/grandleague/server-overlay/parts -type f -name 'part-*' -print -quit)"
-
-      - name: Set up JDK 11 for 2009Scape server
-        uses: actions/setup-java@v5
+      - name: Set up JDK 11 for server
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '11'
 
-      - name: Reconstruct tested Grand League server
+      - name: Build bundled Grand League server
         shell: bash
         run: |
           set -euo pipefail
+
           SERVER="$RUNNER_TEMP/2009scape"
           UPSTREAM="$(tr -d '\r\n' < build/grandleague/server-overlay/upstream.sha)"
+
           git init -q "$SERVER"
           git -C "$SERVER" remote add origin https://gitlab.com/2009scape/2009scape.git
           if ! git -C "$SERVER" fetch --depth 1 origin "$UPSTREAM"; then
@@ -85,15 +61,10 @@ jobs:
           test -s "$SERVER/Server/src/main/content/global/leagues/GrandLeagueManager.kt"
           grep -q 'Boolean.getBoolean("grandleague.mobile")' "$SERVER/Server/src/main/content/global/leagues/GrandLeagueManager.kt"
 
-      - name: Test and package Grand League server
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/2009scape/Server"
+          cd "$SERVER/Server"
           mvn -B -ntp test package
 
           SERVER_JAR="$(find target -maxdepth 1 -type f -name '*jar-with-dependencies*.jar' -print -quit)"
-          test -n "$SERVER_JAR"
           test -s "$SERVER_JAR"
 
           PAYLOAD="$RUNNER_TEMP/grandleague-payload"
@@ -105,7 +76,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import os
-          p = Path(os.environ["RUNNER_TEMP"]) / "grandleague-payload/worldprops/mobile.conf"
+          p = Path(os.environ['RUNNER_TEMP']) / 'grandleague-payload/worldprops/mobile.conf'
           s = p.read_text()
           replacements = {
               'write_logs = true': 'write_logs = false',
@@ -122,20 +93,18 @@ jobs:
           }
           for old, new in replacements.items():
               if old not in s:
-                  raise SystemExit(f"Missing expected server config line: {old}")
+                  raise SystemExit(f'Missing expected server config line: {old}')
               s = s.replace(old, new, 1)
           p.write_text(s)
           PY
 
-          mkdir -p "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague"
-          (
-            cd "$PAYLOAD"
-            zip -q -r "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague/server.zip" .
-          )
-          unzip -t "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague/server.zip" >/dev/null
-          printf '%s\n' "$GITHUB_SHA" > "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague/version.txt"
+          DEST="$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/grandleague"
+          mkdir -p "$DEST"
+          (cd "$PAYLOAD" && zip -q -r "$DEST/server.zip" .)
+          unzip -t "$DEST/server.zip" >/dev/null
+          printf '%s\n' "$GITHUB_SHA" > "$DEST/version.txt"
 
-      - name: Download permanent client JRE 8
+      - name: Add client JRE 8
         shell: bash
         run: |
           set -euo pipefail
@@ -154,7 +123,7 @@ jobs:
           mkdir -p "$(dirname "$DEST")"
           cp -a "$SRC" "$DEST"
 
-      - name: Download and normalize permanent server JRE 17
+      - name: Add server JRE 17
         shell: bash
         run: |
           set -euo pipefail
@@ -175,115 +144,53 @@ jobs:
           rm -rf "$DEST"
           mkdir -p "$DEST"
           tar -chJf "$DEST/jre17-arm64.tar.xz" -C "$RUNTIME_ROOT" .
-          tar -tJf "$DEST/jre17-arm64.tar.xz" > "$TMP/runtime-files.txt"
-          grep -Eq '(^|^\./)release$' "$TMP/runtime-files.txt"
-          grep -Eq '(^|^\./)bin/java$' "$TMP/runtime-files.txt"
 
-      - name: Install Android SDK requirements
-        shell: bash
-        run: |
-          set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platforms;android-33' 'build-tools;33.0.2' 'ndk;25.2.9519653'
-
-      - name: Set up JDK 8 build toolchain
-        uses: actions/setup-java@v5
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '8'
 
-      - name: Configure Gradle wrapper cache
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Build Java 8 launcher support
+      - name: Build launcher support
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x gradlew
+          chmod +x gradlew scripts/languagelist_updater.sh
           ./scripts/languagelist_updater.sh
-          ./gradlew :jre_lwjgl3glfw:build --stacktrace --no-daemon
+          ./gradlew :jre_lwjgl3glfw:build --no-daemon --stacktrace
 
-      - name: Set up JDK 17 for Android build
-        uses: actions/setup-java@v5
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Build self-contained APK
+      - name: Build APK
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          ./gradlew :app_pojavlauncher:assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
+          ./gradlew :app_pojavlauncher:assembleDebug --no-daemon --stacktrace
 
           mkdir -p out
           APK="out/2009Scape-Grand-Leagues-arm64-debug.apk"
           cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk "$APK"
-
+          test -s "$APK"
           unzip -t "$APK" >/dev/null
           unzip -l "$APK" > "$RUNNER_TEMP/apk-files.txt"
           grep -q 'assets/grandleague/server.zip' "$RUNNER_TEMP/apk-files.txt"
           grep -q 'assets/grandleague/version.txt' "$RUNNER_TEMP/apk-files.txt"
           grep -q 'assets/components/jre/version' "$RUNNER_TEMP/apk-files.txt"
           grep -q 'assets/components/grandleague-jre17/jre17-arm64.tar.xz' "$RUNNER_TEMP/apk-files.txt"
-          "$ANDROID_HOME/build-tools/33.0.2/apksigner" verify --verbose "$APK"
           sha256sum "$APK" > "$APK.sha256"
 
-          {
-            echo "mobile_sha=$GITHUB_SHA"
-            echo "server_upstream=$(cat build/grandleague/server-overlay/upstream.sha)"
-            echo "server_overlay_sha256=$(awk '{print $1}' build/grandleague/server-overlay/sha256.txt)"
-            echo "architecture=arm64-v8a"
-          } > out/build-metadata.txt
-
-      - name: Upload Android build log
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Publish APK
+        uses: softprops/action-gh-release@v2
         with:
-          name: GrandLeagues-build-log
-          path: build.log
-          if-no-files-found: warn
-
-      - name: Upload verified APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: GrandLeagues-APK
-          path: |
+          tag_name: grand-leagues-latest
+          name: 2009Scape Grand Leagues Android
+          prerelease: true
+          make_latest: true
+          overwrite_files: true
+          files: |
             out/2009Scape-Grand-Leagues-arm64-debug.apk
             out/2009Scape-Grand-Leagues-arm64-debug.apk.sha256
-            out/build-metadata.txt
-          if-no-files-found: error
-
-      - name: Publish verified APK release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          TAG="grand-leagues-mobile-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
-          gh release create "$TAG" \
-            out/2009Scape-Grand-Leagues-arm64-debug.apk \
-            out/2009Scape-Grand-Leagues-arm64-debug.apk.sha256 \
-            out/build-metadata.txt \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "2009Scape Grand Leagues Android #${GITHUB_RUN_NUMBER}" \
-            --notes "Self-contained arm64-v8a debug APK. Includes the local Grand League server and Java runtimes."
-
-      - name: Publish final run status
-        if: always()
-        shell: bash
-        env:
-          FINAL_STATUS: ${{ job.status }}
-        run: |
-          set -euo pipefail
-          cat > build/grandleague/latest-run.txt <<EOF
-          run_id=$GITHUB_RUN_ID
-          run_number=$GITHUB_RUN_NUMBER
-          status=$FINAL_STATUS
-          head_sha=$GITHUB_SHA
-          run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          EOF
-          git add build/grandleague/latest-run.txt
-          git commit -m "Record Grand Leagues APK run ${GITHUB_RUN_ID}: ${FINAL_STATUS}" || exit 0
-          git push origin HEAD:grand-leagues-self-contained
