@@ -180,10 +180,17 @@ jobs:
           grep -Eq '(^|^\./)release$' "$TMP/runtime-files.txt"
           grep -Eq '(^|^\./)bin/java$' "$TMP/runtime-files.txt"
 
+      - name: Set up JDK 17 for Android tooling and build
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Install Android SDK requirements
         shell: bash
         run: |
           set -euo pipefail
+          java -version
           SDKROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           CLI="$RUNNER_TEMP/android-cli"
           mkdir -p "$CLI"
@@ -214,12 +221,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '7.6.1'
-
-      - name: Set up JDK 17 for Android build
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
 
       - name: Build self-contained APK
         shell: bash
