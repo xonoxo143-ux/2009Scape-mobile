@@ -1,0 +1,205 @@
+name: Local Server Java 8 Compatibility
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - local-server-spike
+    paths:
+      - '.github/workflows/local-server-java8-compat.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  java8-server:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout runner branch
+        uses: actions/checkout@v4
+
+      - name: Publish run id
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p ci
+          printf 'run_id=%s\nsha=%s\n' '${{ github.run_id }}' '${{ github.sha }}' > ci/local-server-java8-run-id.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ci/local-server-java8-run-id.txt
+          git commit -m 'Record Java 8 server run id' || true
+          git push origin HEAD:local-server-spike
+
+      - name: Set up JDK 11 compiler
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Clone current server without LFS smudge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/downthecrop/2009scape-mirror.git server-source
+          cd server-source
+          git rev-parse HEAD | tee ../server-source-sha.txt
+
+      - name: Recover cache for boot probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CACHE_DIR=server-source/Server/data/cache
+          rm -rf "$CACHE_DIR"
+          mkdir -p "$CACHE_DIR"
+          curl --fail --location --silent --show-error \
+            'https://api.github.com/repos/2009scape/Singleplayer-Edition-Linux/contents/data/cache?ref=master' \
+            -o /tmp/cache-list.json
+          python3 - <<'PY'
+          import json, pathlib, urllib.request
+          dest = pathlib.Path('server-source/Server/data/cache')
+          for item in json.load(open('/tmp/cache-list.json')):
+              url = item.get('download_url')
+              if url:
+                  urllib.request.urlretrieve(url, dest / item['name'])
+          PY
+          test -s "$CACHE_DIR/main_file_cache.dat2"
+          sha256sum "$CACHE_DIR/main_file_cache.dat2" | tee archived-cache-sha256.txt
+
+      - name: Patch modern server for Java 8 and localhost
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('server-source/Server')
+
+          def replace(path, old, new, count=1):
+              p = root / path
+              s = p.read_text()
+              assert old in s, f'missing expected text in {path}: {old!r}'
+              p.write_text(s.replace(old, new, count))
+
+          # Build bytecode compatible with the JRE already used by the Android client.
+          replace('pom.xml', '<kotlin.compiler.jvmTarget>11</kotlin.compiler.jvmTarget>', '<kotlin.compiler.jvmTarget>1.8</kotlin.compiler.jvmTarget>')
+          replace('pom.xml', '<maven.compiler.source>11</maven.compiler.source>', '<maven.compiler.source>1.8</maven.compiler.source>')
+          replace('pom.xml', '<maven.compiler.target>11</maven.compiler.target>', '<maven.compiler.target>1.8</maven.compiler.target>')
+
+          # Four Java-10 local-variable-inference uses are the only source errors found by the first Java-8 compile.
+          replace('src/main/core/game/node/entity/player/link/quest/QuestRepository.java', 'var theQuest = QUESTS.get(quest);', 'Quest theQuest = QUESTS.get(quest);')
+          replace('src/main/content/region/asgarnia/taverley/quest/witchshouse/WitchsHouse.java', 'var line = 12;', 'int line = 12;')
+          replace('src/main/content/region/misthalin/varrock/quest/whatliesbelow/WhatLiesBelow.java', 'var line = 12;', 'int line = 12;')
+          replace('src/main/content/region/asgarnia/taverley/quest/WolfWhistle.java', 'var line = 12;', 'int line = 12;')
+
+          # Add an address-aware NIO constructor while preserving the normal public API.
+          p = root / 'src/main/core/net/NioReactor.java'
+          s = p.read_text()
+          old = '\tpublic static NioReactor configure(int port) throws IOException {\n\t\treturn configure(port, 1);\n\t}\n'
+          new = '\tpublic static NioReactor configure(int port) throws IOException {\n\t\treturn configure(null, port, 1);\n\t}\n\n\tpublic static NioReactor configure(String address, int port) throws IOException {\n\t\treturn configure(address, port, 1);\n\t}\n'
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = '\tpublic static NioReactor configure(int port, int poolSize) throws IOException {\n\t\tNioReactor reactor = new NioReactor(new IoEventHandler(Executors.newFixedThreadPool(poolSize)));\n\t\tServerSocketChannel channel = ServerSocketChannel.open();\n\t\tSelector selector = Selector.open();\n\t\tchannel.bind(new InetSocketAddress(port));\n\t\tchannel.configureBlocking(false);\n\t\tchannel.register(selector, SelectionKey.OP_ACCEPT);\n\t\treactor.channel = new ServerSocketConnection(selector, channel);\n\t\treturn reactor;\n\t}\n'
+          new = '\tpublic static NioReactor configure(int port, int poolSize) throws IOException {\n\t\treturn configure(null, port, poolSize);\n\t}\n\n\tpublic static NioReactor configure(String address, int port, int poolSize) throws IOException {\n\t\tNioReactor reactor = new NioReactor(new IoEventHandler(Executors.newFixedThreadPool(poolSize)));\n\t\tServerSocketChannel channel = ServerSocketChannel.open();\n\t\tSelector selector = Selector.open();\n\t\tchannel.bind(address == null ? new InetSocketAddress(port) : new InetSocketAddress(address, port));\n\t\tchannel.configureBlocking(false);\n\t\tchannel.register(selector, SelectionKey.OP_ACCEPT);\n\t\treactor.channel = new ServerSocketConnection(selector, channel);\n\t\treturn reactor;\n\t}\n'
+          assert old in s
+          p.write_text(s.replace(old, new, 1))
+
+          replace('src/main/core/Server.kt',
+                  'reactor = NioReactor.configure(43594 + GameWorld.settings?.worldId!!)',
+                  'reactor = NioReactor.configure("127.0.0.1", 43594 + GameWorld.settings?.worldId!!)')
+
+          conf = root / 'worldprops/local-singleplayer.conf'
+          s = (root / 'worldprops/default.conf').read_text()
+          for old, new in {
+              'watchdog_enabled = true': 'watchdog_enabled = false',
+              'enable_default_clan = true': 'enable_default_clan = false',
+              'enable_bots = true': 'enable_bots = false',
+              'max_adv_bots = 100': 'max_adv_bots = 0',
+          }.items():
+              s = s.replace(old, new)
+          conf.write_text(s)
+          PY
+
+      - name: Compile Java-8-targeted fat JAR
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd server-source/Server
+          ./mvnw -DskipTests clean package 2>&1 | tee ../../maven-java8-compat.log
+          JAR="$(find target -maxdepth 1 -type f -name '*jar-with-dependencies*.jar' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" ../../local-server-java8.jar
+          ls -lh ../../local-server-java8.jar
+
+      - name: Verify every class is Java 8 bytecode or older
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import struct, zipfile
+          bad=[]
+          highest=(0,'')
+          with zipfile.ZipFile('local-server-java8.jar') as z:
+              for name in z.namelist():
+                  if not name.endswith('.class'):
+                      continue
+                  data=z.read(name)[:8]
+                  if len(data) < 8 or data[:4] != b'\xca\xfe\xba\xbe':
+                      continue
+                  major=struct.unpack('>H', data[6:8])[0]
+                  if major > highest[0]: highest=(major,name)
+                  if major > 52: bad.append((major,name))
+          print('highest class version:', highest)
+          print('classes newer than Java 8:', len(bad))
+          for x in bad[:100]: print(x)
+          if bad: raise SystemExit(1)
+          PY
+
+      - name: Set up Java 8 runtime
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Boot on Java 8 and prove loopback-only socket
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -version 2>&1 | tee java8-version.txt
+          cd server-source/Server
+          java -jar ../../local-server-java8.jar worldprops/local-singleplayer.conf > ../../server-java8-smoke.log 2>&1 &
+          SERVER_PID=$!
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in $(seq 1 120); do
+            if (echo > /dev/tcp/127.0.0.1/43595) 2>/dev/null; then
+              echo 'JAVA8_LOCAL_SERVER_TCP_READY=1' | tee ../../smoke-result.txt
+              break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              cat ../../server-java8-smoke.log >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          grep -q 'JAVA8_LOCAL_SERVER_TCP_READY=1' ../../smoke-result.txt
+          ss -ltnp | tee ../../listeners.txt
+          grep -Eq '127\.0\.0\.1:43595' ../../listeners.txt
+          ! grep -Eq '(0\.0\.0\.0|\*):43595' ../../listeners.txt
+          tail -200 ../../server-java8-smoke.log
+
+      - name: Upload proven Java 8 localhost server
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-server-java8-proven
+          path: |
+            local-server-java8.jar
+            server-source-sha.txt
+            archived-cache-sha256.txt
+            maven-java8-compat.log
+            java8-version.txt
+            server-java8-smoke.log
+            smoke-result.txt
+            listeners.txt
+            server-source/Server/worldprops/local-singleplayer.conf
+          if-no-files-found: error
+          retention-days: 14
