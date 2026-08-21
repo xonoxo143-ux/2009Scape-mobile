@@ -1,0 +1,201 @@
+Run: https://github.com/xonoxo143-ux/2009Scape-mobile/actions/runs/32458072402
+Commit: 967dd8ca1f242190788e99d21dc89004b06d16ff
+
+===== COMPACT FAILURE SUMMARY =====
+1-To honour the JVM settings for this build a single-use Daemon process will be forked. See https://docs.gradle.org/7.6.1/userguide/gradle_daemon.html#sec:disabling_the_daemon.
+2-Daemon will be stopped at the end of the build 
+3-Configuration on demand is an incubating feature.
+4-
+5-> Configure project :app_pojavlauncher
+6:WARNING:The option setting 'android.enableDexingArtifactTransform=false' is deprecated.
+7-The current default is 'true'.
+8-It will be removed in version 8.0 of the Android Gradle plugin.
+9-fatal: No names found, cannot describe anything.
+10-
+11-> Task :app_pojavlauncher:preBuild UP-TO-DATE
+12-> Task :app_pojavlauncher:preDebugBuild UP-TO-DATE
+13-> Task :app_pojavlauncher:mergeDebugNativeDebugMetadata NO-SOURCE
+14-> Task :app_pojavlauncher:compileDebugAidl NO-SOURCE
+15-> Task :app_pojavlauncher:compileDebugRenderscript NO-SOURCE
+16-> Task :app_pojavlauncher:generateDebugBuildConfig
+17-> Task :app_pojavlauncher:javaPreCompileDebug
+18-> Task :app_pojavlauncher:checkDebugAarMetadata
+19-> Task :app_pojavlauncher:generateDebugResValues
+20-> Task :app_pojavlauncher:mapDebugSourceSetPaths
+21-> Task :app_pojavlauncher:generateDebugResources
+22-
+23-> Task :app_pojavlauncher:mergeDebugResources
+24-/home/runner/work/2009Scape-mobile/2009Scape-mobile/app_pojavlauncher/src/main/res/values/strings.xml:65:4: Multiple substitutions specified in non-positional format of string resource string/mcl_launch_downloading_progress. Did you mean to add the formatted="false" attribute?
+25-/home/runner/work/2009Scape-mobile/2009Scape-mobile/app_pojavlauncher/src/main/res/values/strings.xml:357:4: Multiple substitutions specified in non-positional format of string resource string/memory_warning_msg. Did you mean to add the formatted="false" attribute?
+26-/home/runner/work/2009Scape-mobile/2009Scape-mobile/app_pojavlauncher/src/main/res/values/strings.xml:256:4: Multiple substitutions specified in non-positional format of string resource string/multirt_java_ver. Did you mean to add the formatted="false" attribute?
+--
+36-> Task :app_pojavlauncher:processDebugJavaRes NO-SOURCE
+37-> Task :app_pojavlauncher:compressDebugAssets FAILED
+38-> Task :app_pojavlauncher:processDebugManifestForPackage
+39-> Task :app_pojavlauncher:mergeDebugJavaResource
+40-
+41:FAILURE: Build failed with an exception.
+42-
+43:* What went wrong:
+44:Execution failed for task ':app_pojavlauncher:compressDebugAssets'.
+45-> A failure occurred while executing com.android.build.gradle.internal.tasks.CompressAssetsWorkAction
+46-   > Java heap space
+47-
+48-* Try:
+49-> Run with --info or --debug option to get more log output.
+50-> Run with --scan to get full insights.
+51-
+52:* Exception is:
+53:org.gradle.api.tasks.TaskExecutionException: Execution failed for task ':app_pojavlauncher:compressDebugAssets'.
+54-	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.lambda$executeIfValid$1(ExecuteActionsTaskExecuter.java:142)
+55-	at org.gradle.internal.Try$Failure.ifSuccessfulOrElse(Try.java:282)
+56-	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.executeIfValid(ExecuteActionsTaskExecuter.java:140)
+57-	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.execute(ExecuteActionsTaskExecuter.java:128)
+58-	at org.gradle.api.internal.tasks.execution.CleanupStaleOutputsExecuter.execute(CleanupStaleOutputsExecuter.java:77)
+59-	at org.gradle.api.internal.tasks.execution.FinalizePropertiesTaskExecuter.execute(FinalizePropertiesTaskExecuter.java:46)
+60-	at org.gradle.api.internal.tasks.execution.ResolveTaskExecutionModeExecuter.execute(ResolveTaskExecutionModeExecuter.java:51)
+61-	at org.gradle.api.internal.tasks.execution.SkipTaskWithNoActionsExecuter.execute(SkipTaskWithNoActionsExecuter.java:57)
+62-	at org.gradle.api.internal.tasks.execution.SkipOnlyIfTaskExecuter.execute(SkipOnlyIfTaskExecuter.java:57)
+63:	at org.gradle.api.internal.tasks.execution.CatchExceptionTaskExecuter.execute(CatchExceptionTaskExecuter.java:36)
+64-	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.executeTask(EventFiringTaskExecuter.java:77)
+65-	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:55)
+66-	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:52)
+67-	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:204)
+68-	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:199)
+69-	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+70-	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+71-	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:157)
+72-	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+73-	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:53)
+74-	at org.gradle.internal.operations.DefaultBuildOperationExecutor.call(DefaultBuildOperationExecutor.java:73)
+75-	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter.execute(EventFiringTaskExecuter.java:52)
+76-	at org.gradle.execution.plan.LocalTaskNodeExecutor.execute(LocalTaskNodeExecutor.java:69)
+77-	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:322)
+78-	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:309)
+79-	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:302)
+80-	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:288)
+81-	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.execute(DefaultPlanExecutor.java:462)
+82-	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.run(DefaultPlanExecutor.java:379)
+83-	at org.gradle.internal.concurrent.ExecutorPolicy$CatchAndRecordFailures.onExecute(ExecutorPolicy.java:64)
+84-	at org.gradle.internal.concurrent.ManagedExecutorImpl$1.run(ManagedExecutorImpl.java:49)
+85:Caused by: org.gradle.workers.internal.DefaultWorkerExecutor$WorkExecutionException: A failure occurred while executing com.android.build.gradle.internal.tasks.CompressAssetsWorkAction
+86-	at org.gradle.workers.internal.DefaultWorkerExecutor$WorkItemExecution.waitForCompletion(DefaultWorkerExecutor.java:348)
+87-	at org.gradle.internal.work.DefaultAsyncWorkTracker.lambda$waitForItemsAndGatherFailures$2(DefaultAsyncWorkTracker.java:130)
+88-	at org.gradle.internal.Factories$1.create(Factories.java:31)
+89-	at org.gradle.internal.work.DefaultWorkerLeaseService.withoutLocks(DefaultWorkerLeaseService.java:321)
+90-	at org.gradle.internal.work.DefaultWorkerLeaseService.withoutLocks(DefaultWorkerLeaseService.java:304)
+91-	at org.gradle.internal.work.DefaultWorkerLeaseService.withoutLock(DefaultWorkerLeaseService.java:309)
+92-	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForItemsAndGatherFailures(DefaultAsyncWorkTracker.java:126)
+93-	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForItemsAndGatherFailures(DefaultAsyncWorkTracker.java:92)
+94-	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForAll(DefaultAsyncWorkTracker.java:78)
+95-	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForCompletion(DefaultAsyncWorkTracker.java:66)
+96-	at org.gradle.api.internal.tasks.execution.TaskExecution$3.run(TaskExecution.java:244)
+97-	at org.gradle.internal.operations.DefaultBuildOperationRunner$1.execute(DefaultBuildOperationRunner.java:29)
+98-	at org.gradle.internal.operations.DefaultBuildOperationRunner$1.execute(DefaultBuildOperationRunner.java:26)
+99-	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+100-	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+101-	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:157)
+102-	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+103-	at org.gradle.internal.operations.DefaultBuildOperationRunner.run(DefaultBuildOperationRunner.java:47)
+104-	at org.gradle.internal.operations.DefaultBuildOperationExecutor.run(DefaultBuildOperationExecutor.java:68)
+105-	at org.gradle.api.internal.tasks.execution.TaskExecution.executeAction(TaskExecution.java:221)
+--
+178-	at org.gradle.api.internal.tasks.execution.CleanupStaleOutputsExecuter.execute(CleanupStaleOutputsExecuter.java:77)
+179-	at org.gradle.api.internal.tasks.execution.FinalizePropertiesTaskExecuter.execute(FinalizePropertiesTaskExecuter.java:46)
+180-	at org.gradle.api.internal.tasks.execution.ResolveTaskExecutionModeExecuter.execute(ResolveTaskExecutionModeExecuter.java:51)
+181-	at org.gradle.api.internal.tasks.execution.SkipTaskWithNoActionsExecuter.execute(SkipTaskWithNoActionsExecuter.java:57)
+182-	at org.gradle.api.internal.tasks.execution.SkipOnlyIfTaskExecuter.execute(SkipOnlyIfTaskExecuter.java:57)
+183:	at org.gradle.api.internal.tasks.execution.CatchExceptionTaskExecuter.execute(CatchExceptionTaskExecuter.java:36)
+184-	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.executeTask(EventFiringTaskExecuter.java:77)
+185-	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:55)
+186-	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:52)
+187-	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:204)
+188-	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:199)
+189-	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+190-	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+191-	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:157)
+192-	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+193-	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:53)
+194-	at org.gradle.internal.operations.DefaultBuildOperationExecutor.call(DefaultBuildOperationExecutor.java:73)
+195-	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter.execute(EventFiringTaskExecuter.java:52)
+196-	at org.gradle.execution.plan.LocalTaskNodeExecutor.execute(LocalTaskNodeExecutor.java:69)
+197-	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:322)
+198-	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:309)
+199-	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:302)
+200-	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:288)
+201-	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.execute(DefaultPlanExecutor.java:462)
+202-	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.run(DefaultPlanExecutor.java:379)
+203-	at org.gradle.internal.concurrent.ExecutorPolicy$CatchAndRecordFailures.onExecute(ExecutorPolicy.java:64)
+204-	at org.gradle.internal.concurrent.ManagedExecutorImpl$1.run(ManagedExecutorImpl.java:49)
+205:Caused by: java.lang.OutOfMemoryError: Java heap space
+206-	at com.android.zipflinger.NoCopyByteArrayOutputStream.<init>(NoCopyByteArrayOutputStream.java:27)
+207-	at com.android.zipflinger.Compressor.deflate(Compressor.java:35)
+208-	at com.android.zipflinger.BytesSource.build(BytesSource.java:89)
+209-	at com.android.zipflinger.BytesSource.<init>(BytesSource.java:50)
+210-	at com.android.build.gradle.internal.tasks.CompressAssetsWorkAction.execute(CompressAssetsTask.kt:189)
+211-	at org.gradle.workers.internal.DefaultWorkerServer.execute(DefaultWorkerServer.java:63)
+212-	at org.gradle.workers.internal.NoIsolationWorkerFactory$1$1.create(NoIsolationWorkerFactory.java:66)
+213-	at org.gradle.workers.internal.NoIsolationWorkerFactory$1$1.create(NoIsolationWorkerFactory.java:62)
+214-	at org.gradle.internal.classloader.ClassLoaderUtils.executeInClassloader(ClassLoaderUtils.java:100)
+215-	at org.gradle.workers.internal.NoIsolationWorkerFactory$1.lambda$execute$0(NoIsolationWorkerFactory.java:62)
+216-	at org.gradle.workers.internal.NoIsolationWorkerFactory$1$$Lambda$1216/0x00007f5433bce800.execute(Unknown Source)
+217-	at org.gradle.workers.internal.AbstractWorker$1.call(AbstractWorker.java:44)
+218-	at org.gradle.workers.internal.AbstractWorker$1.call(AbstractWorker.java:41)
+219-	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:204)
+220-	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:199)
+221-	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+222-	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+223-	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:157)
+224-	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+225-	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:53)
+
+===== LOMBOK DEPENDENCY INSIGHT =====
+To honour the JVM settings for this build a single-use Daemon process will be forked. See https://docs.gradle.org/7.6.1/userguide/gradle_daemon.html#sec:disabling_the_daemon.
+Daemon will be stopped at the end of the build 
+Configuration on demand is an incubating feature.
+
+> Configure project :app_pojavlauncher
+WARNING:The option setting 'android.enableDexingArtifactTransform=false' is deprecated.
+The current default is 'true'.
+It will be removed in version 8.0 of the Android Gradle plugin.
+fatal: No names found, cannot describe anything.
+
+> Task :app_pojavlauncher:dependencyInsight
+No dependencies matching given input were found in configuration ':app_pojavlauncher:debugRuntimeClasspath'
+
+BUILD SUCCESSFUL in 7s
+1 actionable task: 1 executed
+
+===== ANDROID SUPPORT DEPENDENCY INSIGHT =====
+To honour the JVM settings for this build a single-use Daemon process will be forked. See https://docs.gradle.org/7.6.1/userguide/gradle_daemon.html#sec:disabling_the_daemon.
+Daemon will be stopped at the end of the build 
+Configuration on demand is an incubating feature.
+
+> Configure project :app_pojavlauncher
+WARNING:The option setting 'android.enableDexingArtifactTransform=false' is deprecated.
+The current default is 'true'.
+It will be removed in version 8.0 of the Android Gradle plugin.
+fatal: No names found, cannot describe anything.
+
+> Task :app_pojavlauncher:dependencyInsight
+No dependencies matching given input were found in configuration ':app_pojavlauncher:debugRuntimeClasspath'
+
+BUILD SUCCESSFUL in 7s
+1 actionable task: 1 executed
+
+===== EXOPLAYER DEPENDENCY INSIGHT =====
+To honour the JVM settings for this build a single-use Daemon process will be forked. See https://docs.gradle.org/7.6.1/userguide/gradle_daemon.html#sec:disabling_the_daemon.
+Daemon will be stopped at the end of the build 
+Configuration on demand is an incubating feature.
+
+> Configure project :app_pojavlauncher
+WARNING:The option setting 'android.enableDexingArtifactTransform=false' is deprecated.
+The current default is 'true'.
+It will be removed in version 8.0 of the Android Gradle plugin.
+fatal: No names found, cannot describe anything.
+
+> Task :app_pojavlauncher:dependencyInsight
+No dependencies matching given input were found in configuration ':app_pojavlauncher:debugRuntimeClasspath'
+
+BUILD SUCCESSFUL in 6s
+1 actionable task: 1 executed
