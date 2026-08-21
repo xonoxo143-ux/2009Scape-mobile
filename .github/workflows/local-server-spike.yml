@@ -38,13 +38,38 @@ jobs:
           distribution: temurin
           java-version: '11'
 
-      - name: Checkout current 2009Scape mirror
+      - name: Checkout current 2009Scape mirror without LFS smudge
         shell: bash
         run: |
           set -euxo pipefail
-          git clone --depth 1 https://github.com/downthecrop/2009scape-mirror.git server-source
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/downthecrop/2009scape-mirror.git server-source
           cd server-source
           git rev-parse HEAD | tee ../server-source-sha.txt
+
+      - name: Recover cache from archived singleplayer distribution
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CACHE_DIR=server-source/Server/data/cache
+          rm -rf "$CACHE_DIR"
+          mkdir -p "$CACHE_DIR"
+          curl --fail --location --silent --show-error \
+            'https://api.github.com/repos/2009scape/Singleplayer-Edition-Linux/contents/data/cache?ref=master' \
+            -o /tmp/cache-list.json
+          python3 - <<'PY'
+          import json, pathlib, urllib.request
+          dest = pathlib.Path('server-source/Server/data/cache')
+          items = json.load(open('/tmp/cache-list.json'))
+          for item in items:
+              url = item.get('download_url')
+              if not url:
+                  continue
+              target = dest / item['name']
+              print(f"downloading {item['name']} ({item['size']} bytes)", flush=True)
+              urllib.request.urlretrieve(url, target)
+          PY
+          test -s "$CACHE_DIR/main_file_cache.dat2"
+          ls -lh "$CACHE_DIR" | head -40
 
       - name: Configure minimal localhost world
         shell: bash
