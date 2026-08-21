@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - grand-leagues-clean
+    paths-ignore:
+      - 'build-diagnostics/**'
 
 permissions:
   contents: write
@@ -158,8 +160,34 @@ jobs:
       - name: Build and validate APK
         shell: bash
         run: |
-          set -euo pipefail
-          ./gradlew :app_pojavlauncher:assembleDebug --no-daemon --stacktrace
+          set -uo pipefail
+          BUILD_LOG="$RUNNER_TEMP/android-build.log"
+          FAILURE_SUMMARY="$RUNNER_TEMP/android-build-failure.txt"
+
+          set +e
+          ./gradlew :app_pojavlauncher:assembleDebug --no-daemon --stacktrace 2>&1 | tee "$BUILD_LOG"
+          GRADLE_STATUS=${PIPESTATUS[0]}
+          set -e
+
+          if [[ "$GRADLE_STATUS" -ne 0 ]]; then
+            {
+              echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+              echo "Commit: $GITHUB_SHA"
+              echo
+              echo '===== COMPACT FAILURE SUMMARY ====='
+              grep -n -E -B 5 -A 20 'FAILURE:|What went wrong|Execution failed|Caused by:|D8|Dex|Duplicate class|Unsupported class|Error while dexing|mergeExtDexDebug|lombok|android\.support|exoplayer|Transform|Exception' "$BUILD_LOG" | tail -n 600 || true
+              echo
+              echo '===== LOMBOK DEPENDENCY INSIGHT ====='
+              ./gradlew :app_pojavlauncher:dependencyInsight --dependency lombok --configuration debugRuntimeClasspath --no-daemon || true
+              echo
+              echo '===== ANDROID SUPPORT DEPENDENCY INSIGHT ====='
+              ./gradlew :app_pojavlauncher:dependencyInsight --dependency com.android.support --configuration debugRuntimeClasspath --no-daemon || true
+              echo
+              echo '===== EXOPLAYER DEPENDENCY INSIGHT ====='
+              ./gradlew :app_pojavlauncher:dependencyInsight --dependency exoplayer --configuration debugRuntimeClasspath --no-daemon || true
+            } 2>&1 | tee "$FAILURE_SUMMARY"
+            exit "$GRADLE_STATUS"
+          fi
 
           mkdir -p out
           APK="out/$APK_NAME"
@@ -172,6 +200,44 @@ jobs:
           grep -q 'assets/components/jre/version' "$RUNNER_TEMP/apk-files.txt"
           grep -q 'assets/components/grandleague-jre17/jre17-arm64.tar.xz' "$RUNNER_TEMP/apk-files.txt"
           sha256sum "$APK" > "$APK.sha256"
+
+      - name: Upload Android build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Grand-Leagues-Android-Build-Diagnostics
+          path: |
+            ${{ runner.temp }}/android-build.log
+            ${{ runner.temp }}/android-build-failure.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Publish readable build diagnostics
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SUMMARY="$RUNNER_TEMP/android-build-failure.txt"
+          if [[ ! -s "$SUMMARY" ]]; then
+            exit 0
+          fi
+          API_PATH="repos/$GITHUB_REPOSITORY/contents/build-diagnostics/latest.txt"
+          CONTENT="$(base64 -w0 "$SUMMARY")"
+          CURRENT_SHA="$(gh api "$API_PATH?ref=grand-leagues-clean" --jq .sha 2>/dev/null || true)"
+          if [[ -n "$CURRENT_SHA" ]]; then
+            gh api --method PUT "$API_PATH" \
+              -f message='Record latest Android build failure [skip ci]' \
+              -f content="$CONTENT" \
+              -f branch=grand-leagues-clean \
+              -f sha="$CURRENT_SHA" >/dev/null
+          else
+            gh api --method PUT "$API_PATH" \
+              -f message='Record latest Android build failure [skip ci]' \
+              -f content="$CONTENT" \
+              -f branch=grand-leagues-clean >/dev/null
+          fi
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
