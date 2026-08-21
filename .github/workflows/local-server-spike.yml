@@ -32,7 +32,7 @@ jobs:
           git commit -m 'Record local server spike run id' || true
           git push origin HEAD:local-server-spike
 
-      - name: Set up JDK 11
+      - name: Set up JDK 11 for build
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -46,7 +46,7 @@ jobs:
           cd server-source
           git rev-parse HEAD | tee ../server-source-sha.txt
 
-      - name: Recover cache from archived singleplayer distribution
+      - name: Recover and verify cache from archived singleplayer distribution
         shell: bash
         run: |
           set -euxo pipefail
@@ -59,8 +59,7 @@ jobs:
           python3 - <<'PY'
           import json, pathlib, urllib.request
           dest = pathlib.Path('server-source/Server/data/cache')
-          items = json.load(open('/tmp/cache-list.json'))
-          for item in items:
+          for item in json.load(open('/tmp/cache-list.json')):
               url = item.get('download_url')
               if not url:
                   continue
@@ -69,74 +68,159 @@ jobs:
               urllib.request.urlretrieve(url, target)
           PY
           test -s "$CACHE_DIR/main_file_cache.dat2"
-          ls -lh "$CACHE_DIR" | head -40
+          echo 'b5431211adae042e478af36e3bb760500a8f18f90c0050f0afdb0666fade655e  server-source/Server/data/cache/main_file_cache.dat2' | sha256sum -c -
+          du -sh server-source/Server/data server-source/Server/data/cache
 
-      - name: Configure minimal localhost world
+      - name: Patch server for Java 8 and loopback-only singleplayer
         shell: bash
         run: |
           set -euxo pipefail
-          cd server-source/Server
-          cp worldprops/default.conf worldprops/local-singleplayer.conf
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('worldprops/local-singleplayer.conf')
-          s = p.read_text()
-          replacements = {
+
+          root = Path('server-source/Server')
+
+          # Retarget our own Java/Kotlin bytecode to the JRE already proven in the Android APK.
+          pom = root / 'pom.xml'
+          s = pom.read_text()
+          for old, new in [
+              ('<kotlin.compiler.jvmTarget>11</kotlin.compiler.jvmTarget>', '<kotlin.compiler.jvmTarget>1.8</kotlin.compiler.jvmTarget>'),
+              ('<maven.compiler.source>11</maven.compiler.source>', '<maven.compiler.source>1.8</maven.compiler.source>'),
+              ('<maven.compiler.target>11</maven.compiler.target>', '<maven.compiler.target>1.8</maven.compiler.target>'),
+          ]:
+              assert old in s, old
+              s = s.replace(old, new, 1)
+          pom.write_text(s)
+
+          # Add an address-aware NIO constructor while preserving existing callers.
+          nio = root / 'src/main/core/net/NioReactor.java'
+          s = nio.read_text()
+          old = '''\tpublic static NioReactor configure(int port) throws IOException {\n\t\treturn configure(port, 1);\n\t}\n'''
+          new = '''\tpublic static NioReactor configure(int port) throws IOException {\n\t\treturn configure(null, port, 1);\n\t}\n\n\tpublic static NioReactor configure(String address, int port) throws IOException {\n\t\treturn configure(address, port, 1);\n\t}\n'''
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = '''\tpublic static NioReactor configure(int port, int poolSize) throws IOException {\n\t\tNioReactor reactor = new NioReactor(new IoEventHandler(Executors.newFixedThreadPool(poolSize)));\n\t\tServerSocketChannel channel = ServerSocketChannel.open();\n\t\tSelector selector = Selector.open();\n\t\tchannel.bind(new InetSocketAddress(port));\n\t\tchannel.configureBlocking(false);\n\t\tchannel.register(selector, SelectionKey.OP_ACCEPT);\n\t\treactor.channel = new ServerSocketConnection(selector, channel);\n\t\treturn reactor;\n\t}\n'''
+          new = '''\tpublic static NioReactor configure(int port, int poolSize) throws IOException {\n\t\treturn configure(null, port, poolSize);\n\t}\n\n\tpublic static NioReactor configure(String address, int port, int poolSize) throws IOException {\n\t\tNioReactor reactor = new NioReactor(new IoEventHandler(Executors.newFixedThreadPool(poolSize)));\n\t\tServerSocketChannel channel = ServerSocketChannel.open();\n\t\tSelector selector = Selector.open();\n\t\tchannel.bind(address == null ? new InetSocketAddress(port) : new InetSocketAddress(address, port));\n\t\tchannel.configureBlocking(false);\n\t\tchannel.register(selector, SelectionKey.OP_ACCEPT);\n\t\treactor.channel = new ServerSocketConnection(selector, channel);\n\t\treturn reactor;\n\t}\n'''
+          assert old in s
+          s = s.replace(old, new, 1)
+          nio.write_text(s)
+
+          server = root / 'src/main/core/Server.kt'
+          s = server.read_text()
+          old = 'reactor = NioReactor.configure(43594 + GameWorld.settings?.worldId!!)'
+          new = 'reactor = NioReactor.configure("127.0.0.1", 43594 + GameWorld.settings?.worldId!!)'
+          assert old in s
+          server.write_text(s.replace(old, new, 1))
+
+          # Use the existing dev-mode account path and remove nonessential background systems.
+          conf = root / 'worldprops/local-singleplayer.conf'
+          conf.write_text((root / 'worldprops/default.conf').read_text())
+          s = conf.read_text()
+          for old, new in {
               'watchdog_enabled = true': 'watchdog_enabled = false',
               'enable_default_clan = true': 'enable_default_clan = false',
               'enable_bots = true': 'enable_bots = false',
               'max_adv_bots = 100': 'max_adv_bots = 0',
-          }
-          for old, new in replacements.items():
+          }.items():
               s = s.replace(old, new)
-          p.write_text(s)
+          conf.write_text(s)
           PY
-          grep -E 'use_auth|persist_accounts|watchdog_enabled|enable_default_clan|enable_bots|max_adv_bots|world_id' worldprops/local-singleplayer.conf
+          grep -E 'kotlin.compiler.jvmTarget|maven.compiler.source|maven.compiler.target' server-source/Server/pom.xml
+          grep -E 'use_auth|persist_accounts|watchdog_enabled|enable_default_clan|enable_bots|max_adv_bots|world_id' server-source/Server/worldprops/local-singleplayer.conf
+          grep -n '127.0.0.1' server-source/Server/src/main/core/Server.kt
 
-      - name: Build server
+      - name: Build Java-8-targeted server
         shell: bash
         run: |
           set -euxo pipefail
           cd server-source/Server
           ./mvnw -DskipTests clean package
-          ls -lh target
           JAR="$(find target -maxdepth 1 -type f -name '*jar-with-dependencies*.jar' -print -quit)"
           test -n "$JAR"
-          cp "$JAR" ../../local-server.jar
+          cp "$JAR" ../../local-server-java8.jar
+          ls -lh ../../local-server-java8.jar
+          javap -verbose -classpath "$JAR" core.Server | grep 'major version' | tee ../../server-class-version.txt
+          grep -q 'major version: 52' ../../server-class-version.txt
 
-      - name: Boot localhost server and verify TCP listener
+      - name: Scan fat JAR for bytecode newer than Java 8
         shell: bash
         run: |
           set -euxo pipefail
+          python3 - <<'PY'
+          import struct, zipfile
+          jar = 'local-server-java8.jar'
+          bad = []
+          highest = (0, '')
+          with zipfile.ZipFile(jar) as z:
+              for name in z.namelist():
+                  if not name.endswith('.class'):
+                      continue
+                  data = z.read(name)[:8]
+                  if len(data) < 8 or data[:4] != b'\xca\xfe\xba\xbe':
+                      continue
+                  major = struct.unpack('>H', data[6:8])[0]
+                  if major > highest[0]:
+                      highest = (major, name)
+                  if major > 52:
+                      bad.append((major, name))
+          print('highest class version:', highest)
+          print('classes newer than Java 8:', len(bad))
+          for item in bad[:100]:
+              print(item)
+          if bad:
+              raise SystemExit(1)
+          PY
+
+      - name: Set up the same Java generation used by mobile
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Boot server on Java 8 and prove loopback-only listener
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -version 2>&1 | tee java8-version.txt
           cd server-source/Server
-          java -jar ../../local-server.jar worldprops/local-singleplayer.conf > ../../server-smoke.log 2>&1 &
+          java -jar ../../local-server-java8.jar worldprops/local-singleplayer.conf > ../../server-java8-smoke.log 2>&1 &
           SERVER_PID=$!
           cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
           trap cleanup EXIT
+
           for i in $(seq 1 120); do
             if (echo > /dev/tcp/127.0.0.1/43595) 2>/dev/null; then
-              echo 'LOCAL_SERVER_TCP_READY=1' | tee ../../smoke-result.txt
+              echo 'JAVA8_LOCAL_SERVER_TCP_READY=1' | tee ../../smoke-result.txt
               break
             fi
             if ! kill -0 "$SERVER_PID" 2>/dev/null; then
               echo 'Server exited before opening TCP listener' >&2
-              cat ../../server-smoke.log >&2
+              cat ../../server-java8-smoke.log >&2
               exit 1
             fi
             sleep 1
           done
-          grep -q 'LOCAL_SERVER_TCP_READY=1' ../../smoke-result.txt
-          tail -200 ../../server-smoke.log
+          grep -q 'JAVA8_LOCAL_SERVER_TCP_READY=1' ../../smoke-result.txt
+          ss -ltnp | tee ../../listeners.txt
+          grep -Eq '127\.0\.0\.1:43595' ../../listeners.txt
+          if grep -Eq '(0\.0\.0\.0|\*):43595' ../../listeners.txt; then
+            echo 'FAIL: game listener is exposed beyond loopback' >&2
+            exit 1
+          fi
+          tail -200 ../../server-java8-smoke.log
 
-      - name: Upload server smoke evidence
+      - name: Upload Java 8 localhost evidence
         uses: actions/upload-artifact@v4
         with:
-          name: local-server-spike
+          name: local-server-java8-spike
           path: |
-            local-server.jar
+            local-server-java8.jar
             server-source-sha.txt
-            server-smoke.log
+            server-class-version.txt
+            java8-version.txt
+            server-java8-smoke.log
             smoke-result.txt
+            listeners.txt
             server-source/Server/worldprops/local-singleplayer.conf
           if-no-files-found: error
           retention-days: 14
