@@ -1,0 +1,71 @@
+name: Current Cache Probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - local-server-spike
+    paths:
+      - '.github/workflows/current-cache-probe.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cache-probe:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish run id
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p ci
+          printf 'run_id=%s\nsha=%s\n' '${{ github.run_id }}' '${{ github.sha }}' > ci/current-cache-probe-run-id.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ci/current-cache-probe-run-id.txt
+          git commit -m 'Record current cache probe run id' || true
+          git push origin HEAD:local-server-spike
+
+      - name: Install Git LFS
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git lfs install
+          git lfs version
+
+      - name: Clone authoritative 2009Scape GitLab source with LFS
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://gitlab.com/2009scape/2009scape.git authoritative-server
+          cd authoritative-server
+          git lfs pull
+          git rev-parse HEAD | tee ../gitlab-server-sha.txt
+          test -s Server/data/cache/main_file_cache.dat2
+          stat -c '%s' Server/data/cache/main_file_cache.dat2 | tee ../gitlab-cache-size.txt
+          sha256sum Server/data/cache/main_file_cache.dat2 | tee ../gitlab-cache-sha256.txt
+
+      - name: Require same cache as uploaded source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          EXPECTED='b5431211b019b9403b4cfca933f4c9635c1d5278d3730995dced0d8672b1cc91'
+          ACTUAL="$(cut -d' ' -f1 gitlab-cache-sha256.txt)"
+          echo "uploaded-current=$EXPECTED"
+          echo "gitlab-current=$ACTUAL"
+          test "$ACTUAL" = "$EXPECTED"
+
+      - name: Upload cache provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-cache-provenance
+          path: |
+            gitlab-server-sha.txt
+            gitlab-cache-size.txt
+            gitlab-cache-sha256.txt
+          if-no-files-found: error
+          retention-days: 14
