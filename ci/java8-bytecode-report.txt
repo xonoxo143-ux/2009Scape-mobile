@@ -1,0 +1,13 @@
+artifact=local-server-java8.jar
+class_count=16277
+highest_major=53
+highest_class=META-INF/versions/9/module-info.class
+baseline_offenders=0
+multi_release_offenders=2
+total_offenders=2
+
+[baseline offenders: normal classpath entries]
+
+[multi-release offenders: META-INF/versions/*]
+major=53 path=META-INF/versions/9/kotlin/reflect/jvm/internal/impl/serialization/deserialization/builtins/BuiltInsResourceLoader.class
+major=53 path=META-INF/versions/9/module-info.class
