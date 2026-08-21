@@ -209,13 +209,12 @@ jobs:
           git commit -m 'Record Java 8 bytecode compatibility report' || true
           git push origin HEAD:local-server-spike
 
-      - name: Fail if incompatible bytecode remains
-        if: steps.bytecode.outputs.bad_count != '0'
+      - name: Fail if baseline bytecode is newer than Java 8
+        if: steps.bytecode.outputs.baseline_bad_count != '0'
         shell: bash
         run: |
-          echo "Java 8 compatibility offenders remain: ${{ steps.bytecode.outputs.bad_count }}"
-          echo "Baseline offenders: ${{ steps.bytecode.outputs.baseline_bad_count }}"
-          echo "Multi-release offenders: ${{ steps.bytecode.outputs.multi_release_bad_count }}"
+          echo "Java 8 baseline compatibility offenders remain: ${{ steps.bytecode.outputs.baseline_bad_count }}"
+          echo "Multi-release Java 9+ entries (reported but not Java 8 classpath entries): ${{ steps.bytecode.outputs.multi_release_bad_count }}"
           exit 1
 
       - name: Set up Java 8 runtime
