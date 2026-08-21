@@ -69,7 +69,7 @@ jobs:
           PY
           test -s "$CACHE_DIR/main_file_cache.dat2"
           sha256sum "$CACHE_DIR/main_file_cache.dat2" | tee archived-cache-sha256.txt
-          echo 'NOTE: this archived cache is only for the JVM/network boot probe; final Android packaging will use the current uploaded cache.'
+          echo 'NOTE: archived cache is used only for JVM/network boot probing; final APK will use the current uploaded cache.'
           du -sh server-source/Server/data server-source/Server/data/cache
 
       - name: Patch server for Java 8 and loopback-only singleplayer
@@ -124,12 +124,43 @@ jobs:
           grep -E 'use_auth|persist_accounts|watchdog_enabled|enable_default_clan|enable_bots|max_adv_bots|world_id' server-source/Server/worldprops/local-singleplayer.conf
           grep -n '127.0.0.1' server-source/Server/src/main/core/Server.kt
 
-      - name: Build Java-8-targeted server
+      - name: Build Java-8-targeted server and preserve compiler output
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd server-source/Server
+          set +e
+          ./mvnw -DskipTests clean package 2>&1 | tee ../../maven-java8-build.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$STATUS" | tee ../../maven-java8-build.exit
+          # Deliberately do not fail here; the diagnostic artifact must upload first.
+          exit 0
+
+      - name: Upload Java 8 compiler diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: java8-build-diagnostics
+          path: |
+            maven-java8-build.log
+            maven-java8-build.exit
+            server-source-sha.txt
+            archived-cache-sha256.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Require Java 8 build and inspect server bytecode
         shell: bash
         run: |
           set -euxo pipefail
+          STATUS="$(cat maven-java8-build.exit)"
+          if [ "$STATUS" != "0" ]; then
+            echo "Java 8 target compile failed with status $STATUS" >&2
+            grep -E '^\[ERROR\]|error:|Exception|Unsupported|unresolved reference|cannot find symbol' maven-java8-build.log | tail -200 >&2 || true
+            exit "$STATUS"
+          fi
           cd server-source/Server
-          ./mvnw -DskipTests clean package
           JAR="$(find target -maxdepth 1 -type f -name '*jar-with-dependencies*.jar' -print -quit)"
           test -n "$JAR"
           cp "$JAR" ../../local-server-java8.jar
