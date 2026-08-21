@@ -40,27 +40,30 @@ jobs:
           distribution: temurin
           java-version: '8'
 
-      - name: Download Pojav JRE 8
-        uses: dawidd6/action-download-artifact@v9
-        with:
-          workflow: build.yml
-          path: app_pojavlauncher/src/main/assets/components/jre
-          workflow_conclusion: success
-          repo: PojavLauncherTeam/android-openjdk-build-multiarch
-          branch: buildjre8
-          name: jre8-pojav
+      - name: Recover known-good runtimes from official 2.4 APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          RELEASE_JSON=/tmp/release.json
+          curl --fail --location --silent --show-error \
+            https://api.github.com/repos/2009scape/2009Scape-mobile/releases/tags/hd-2.4 \
+            -o "$RELEASE_JSON"
+          jq -r '.assets[] | [.name, .size, .browser_download_url] | @tsv' "$RELEASE_JSON"
+          APK_URL="$(jq -r '.assets[] | select(.name | endswith(".apk")) | select((.name | ascii_downcase | contains("noruntime")) | not) | .browser_download_url' "$RELEASE_JSON" | head -1)"
+          test -n "$APK_URL"
+          test "$APK_URL" != "null"
+          curl --fail --location --retry 3 --silent --show-error "$APK_URL" -o /tmp/official-2.4.apk
+          unzip -l /tmp/official-2.4.apk | grep -F 'assets/components/jre/' | head
+          unzip -l /tmp/official-2.4.apk | grep -F 'assets/components/jre-new/' | head
+          rm -rf /tmp/official-runtime
+          mkdir -p /tmp/official-runtime
+          unzip -q /tmp/official-2.4.apk 'assets/components/jre/*' 'assets/components/jre-new/*' -d /tmp/official-runtime
+          rm -rf app_pojavlauncher/src/main/assets/components/jre app_pojavlauncher/src/main/assets/components/jre-new
+          mkdir -p app_pojavlauncher/src/main/assets/components
+          cp -a /tmp/official-runtime/assets/components/jre app_pojavlauncher/src/main/assets/components/jre
+          cp -a /tmp/official-runtime/assets/components/jre-new app_pojavlauncher/src/main/assets/components/jre-new
 
-      - name: Download Pojav JRE 17
-        uses: dawidd6/action-download-artifact@v9
-        with:
-          workflow: build.yml
-          path: app_pojavlauncher/src/main/assets/components/jre-new
-          workflow_conclusion: success
-          repo: PojavLauncherTeam/android-openjdk-build-multiarch
-          branch: buildjre17-21
-          name: jre17-pojav
-
-      - name: Verify downloaded runtimes
+      - name: Verify recovered runtimes
         shell: bash
         run: |
           set -euxo pipefail
@@ -68,9 +71,8 @@ jobs:
           test -d app_pojavlauncher/src/main/assets/components/jre-new
           test -n "$(find app_pojavlauncher/src/main/assets/components/jre -type f -print -quit)"
           test -n "$(find app_pojavlauncher/src/main/assets/components/jre-new -type f -print -quit)"
-          echo 'JRE 8 files:'
+          du -sh app_pojavlauncher/src/main/assets/components/jre app_pojavlauncher/src/main/assets/components/jre-new
           find app_pojavlauncher/src/main/assets/components/jre -type f | sort | head -40
-          echo 'JRE 17 files:'
           find app_pojavlauncher/src/main/assets/components/jre-new -type f | sort | head -40
 
       - name: Set up Gradle 7.6.1
