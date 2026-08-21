@@ -131,28 +131,92 @@ jobs:
           ls -lh ../../local-server-java8.jar
 
       - name: Verify every class is Java 8 bytecode or older
+        id: bytecode
         shell: bash
         run: |
           set -euxo pipefail
+          mkdir -p ci
           python3 - <<'PY'
-          import struct, zipfile
-          bad=[]
-          highest=(0,'')
-          with zipfile.ZipFile('local-server-java8.jar') as z:
+          import os, struct, zipfile
+          from pathlib import Path
+
+          jar = Path('local-server-java8.jar')
+          baseline = []
+          multi_release = []
+          highest = (0, '')
+          class_count = 0
+
+          with zipfile.ZipFile(jar) as z:
               for name in z.namelist():
                   if not name.endswith('.class'):
                       continue
-                  data=z.read(name)[:8]
+                  data = z.read(name)[:8]
                   if len(data) < 8 or data[:4] != b'\xca\xfe\xba\xbe':
                       continue
-                  major=struct.unpack('>H', data[6:8])[0]
-                  if major > highest[0]: highest=(major,name)
-                  if major > 52: bad.append((major,name))
-          print('highest class version:', highest)
-          print('classes newer than Java 8:', len(bad))
-          for x in bad[:100]: print(x)
-          if bad: raise SystemExit(1)
+                  class_count += 1
+                  major = struct.unpack('>H', data[6:8])[0]
+                  if major > highest[0]:
+                      highest = (major, name)
+                  if major > 52:
+                      item = (major, name)
+                      if name.startswith('META-INF/versions/'):
+                          multi_release.append(item)
+                      else:
+                          baseline.append(item)
+
+          bad = baseline + multi_release
+          report = Path('ci/java8-bytecode-report.txt')
+          with report.open('w') as f:
+              f.write(f'artifact={jar}\n')
+              f.write(f'class_count={class_count}\n')
+              f.write(f'highest_major={highest[0]}\n')
+              f.write(f'highest_class={highest[1]}\n')
+              f.write(f'baseline_offenders={len(baseline)}\n')
+              f.write(f'multi_release_offenders={len(multi_release)}\n')
+              f.write(f'total_offenders={len(bad)}\n\n')
+              f.write('[baseline offenders: normal classpath entries]\n')
+              for major, name in sorted(baseline):
+                  f.write(f'major={major} path={name}\n')
+              f.write('\n[multi-release offenders: META-INF/versions/*]\n')
+              for major, name in sorted(multi_release):
+                  f.write(f'major={major} path={name}\n')
+
+          print(report.read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'bad_count={len(bad)}\n')
+              out.write(f'baseline_bad_count={len(baseline)}\n')
+              out.write(f'multi_release_bad_count={len(multi_release)}\n')
           PY
+
+      - name: Upload Java 8 bytecode report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: java8-bytecode-report
+          path: ci/java8-bytecode-report.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish Java 8 bytecode report
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s ci/java8-bytecode-report.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ci/java8-bytecode-report.txt
+          git commit -m 'Record Java 8 bytecode compatibility report' || true
+          git push origin HEAD:local-server-spike
+
+      - name: Fail if incompatible bytecode remains
+        if: steps.bytecode.outputs.bad_count != '0'
+        shell: bash
+        run: |
+          echo "Java 8 compatibility offenders remain: ${{ steps.bytecode.outputs.bad_count }}"
+          echo "Baseline offenders: ${{ steps.bytecode.outputs.baseline_bad_count }}"
+          echo "Multi-release offenders: ${{ steps.bytecode.outputs.multi_release_bad_count }}"
+          exit 1
 
       - name: Set up Java 8 runtime
         uses: actions/setup-java@v4
