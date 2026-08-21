@@ -140,13 +140,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install \
-            'platform-tools' \
-            'platforms;android-33' \
-            'build-tools;33.0.2' \
-            'ndk;25.2.9519653' \
-            'cmake;3.22.1'
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          fi
+          if [[ -z "$SDKMANAGER" || ! -x "$SDKMANAGER" ]]; then
+            echo "sdkmanager not found under ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >&2
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.2" \
+            "ndk;25.2.9519653"
 
       - name: Build and validate APK
         shell: bash
