@@ -1,0 +1,117 @@
+name: Local Server Spike
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - local-server-spike
+    paths:
+      - '.github/workflows/local-server-spike.yml'
+      - 'offline-spike/**'
+
+permissions:
+  contents: write
+
+jobs:
+  server-smoke:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout mobile runner branch
+        uses: actions/checkout@v4
+
+      - name: Publish run id
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p ci
+          printf 'run_id=%s\nsha=%s\n' '${{ github.run_id }}' '${{ github.sha }}' > ci/local-server-run-id.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ci/local-server-run-id.txt
+          git commit -m 'Record local server spike run id' || true
+          git push origin HEAD:local-server-spike
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Checkout current 2009Scape mirror
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/downthecrop/2009scape-mirror.git server-source
+          cd server-source
+          git rev-parse HEAD | tee ../server-source-sha.txt
+
+      - name: Configure minimal localhost world
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd server-source/Server
+          cp worldprops/default.conf worldprops/local-singleplayer.conf
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('worldprops/local-singleplayer.conf')
+          s = p.read_text()
+          replacements = {
+              'watchdog_enabled = true': 'watchdog_enabled = false',
+              'enable_default_clan = true': 'enable_default_clan = false',
+              'enable_bots = true': 'enable_bots = false',
+              'max_adv_bots = 100': 'max_adv_bots = 0',
+          }
+          for old, new in replacements.items():
+              s = s.replace(old, new)
+          p.write_text(s)
+          PY
+          grep -E 'use_auth|persist_accounts|watchdog_enabled|enable_default_clan|enable_bots|max_adv_bots|world_id' worldprops/local-singleplayer.conf
+
+      - name: Build server
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd server-source/Server
+          ./mvnw -DskipTests clean package
+          ls -lh target
+          JAR="$(find target -maxdepth 1 -type f -name '*jar-with-dependencies*.jar' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" ../../local-server.jar
+
+      - name: Boot localhost server and verify TCP listener
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd server-source/Server
+          java -jar ../../local-server.jar worldprops/local-singleplayer.conf > ../../server-smoke.log 2>&1 &
+          SERVER_PID=$!
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in $(seq 1 120); do
+            if (echo > /dev/tcp/127.0.0.1/43595) 2>/dev/null; then
+              echo 'LOCAL_SERVER_TCP_READY=1' | tee ../../smoke-result.txt
+              break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo 'Server exited before opening TCP listener' >&2
+              cat ../../server-smoke.log >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          grep -q 'LOCAL_SERVER_TCP_READY=1' ../../smoke-result.txt
+          tail -200 ../../server-smoke.log
+
+      - name: Upload server smoke evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-server-spike
+          path: |
+            local-server.jar
+            server-source-sha.txt
+            server-smoke.log
+            smoke-result.txt
+            server-source/Server/worldprops/local-singleplayer.conf
+          if-no-files-found: error
+          retention-days: 14
