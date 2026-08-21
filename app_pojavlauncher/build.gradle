@@ -158,6 +158,12 @@ android {
         }
     }
 
+    // Runtime archives are already compressed. Recompressing the large JRE
+    // payloads wastes heap and previously OOMed CompressAssetsWorkAction.
+    aaptOptions {
+        noCompress 'xz', 'zip'
+    }
+
     packagingOptions {
         jniLibs {
             useLegacyPackaging = true
