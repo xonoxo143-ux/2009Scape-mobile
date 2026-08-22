@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CORE="$ROOT/server/2009scape-master/Server/src/main/content/global/leagues/core"
-MANAGER="$ROOT/server/2009scape-master/Server/src/main/content/global/leagues/GrandLeagueManager.kt"
+if [[ -d "$ROOT/vendor/2009scape/Server" ]]; then
+  SERVER_ROOT="$ROOT/vendor/2009scape/Server"
+elif [[ -d "$ROOT/server/2009scape-master/Server" ]]; then
+  SERVER_ROOT="$ROOT/server/2009scape-master/Server"
+else
+  echo "Unable to locate the canonical 2009Scape Server tree" >&2
+  exit 1
+fi
+CORE="$SERVER_ROOT/src/main/content/global/leagues/core"
+MANAGER="$SERVER_ROOT/src/main/content/global/leagues/GrandLeagueManager.kt"
 QA="$ROOT/qa/grandleague"
 BUILD="$QA/build"
 mkdir -p "$BUILD"
@@ -28,6 +36,6 @@ kotlinc -Werror -classpath "$BUILD/domain.jar" "$MANAGER" "${STUBS[@]}" "$QA/ada
 kotlin -classpath "$BUILD/domain.jar:$BUILD/adapter.jar" AdapterAcceptanceKt
 bash "$QA/ServerSeamAcceptance.sh"
 
-grep -q 'QuestCompleteEvent' "$ROOT/server/2009scape-master/Server/src/main/core/game/node/entity/player/link/quest/Quest.java"
-grep -q 'QuestCompleted' "$ROOT/server/2009scape-master/Server/src/main/core/api/Event.kt"
+grep -q 'QuestCompleteEvent' "$SERVER_ROOT/src/main/core/game/node/entity/player/link/quest/Quest.java"
+grep -q 'QuestCompleted' "$SERVER_ROOT/src/main/core/api/Event.kt"
 echo 'GRAND LEAGUE LOCAL GATE PASS'

@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SERVER="$ROOT/server/2009scape-master/Server/src/main"
+if [[ -d "$ROOT/vendor/2009scape/Server" ]]; then
+    SERVER="$ROOT/vendor/2009scape/Server/src/main"
+elif [[ -d "$ROOT/server/2009scape-master/Server" ]]; then
+    SERVER="$ROOT/server/2009scape-master/Server/src/main"
+else
+    echo "Unable to locate the canonical 2009Scape Server tree" >&2
+    exit 1
+fi
 
 require() {
     local pattern="$1"
