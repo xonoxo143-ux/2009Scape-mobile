@@ -1,5 +1,6 @@
 package content.global.skill.agility;
 
+import content.global.leagues.GrandLeagueManager;
 import static core.api.ContentAPIKt.*;
 
 import core.game.node.entity.impl.PulseType;
@@ -36,7 +37,8 @@ public final class AgilityHandler {
 		}
 		double chance = (1 + levelDiff) * 0.01;
 		chance *= Math.random();
-		return chance <= (Math.random() * failChance);
+		double leagueFailChance = failChance * GrandLeagueManager.agilityFailChanceMultiplier(player);
+		return chance <= (Math.random() * leagueFailChance);
 	}
 
 	/**

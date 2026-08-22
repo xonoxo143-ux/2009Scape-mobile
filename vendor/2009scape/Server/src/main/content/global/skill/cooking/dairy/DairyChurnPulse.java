@@ -3,6 +3,8 @@ package content.global.skill.cooking.dairy;
 import content.region.fremennik.rellekka.handlers.RellekkaUtils;
 import content.region.fremennik.rellekka.handlers.RellekkaZone;
 import core.game.event.ResourceProducedEvent;
+import core.game.event.ResourceActivity;
+import core.game.event.ResourceSkill;
 import core.game.node.entity.player.Player;
 import core.game.node.entity.player.link.diary.DiaryType;
 import core.game.node.entity.skill.SkillPulse;
@@ -112,7 +114,7 @@ public final class DairyChurnPulse extends SkillPulse<Item> {
                     }
                 }
                 player.getPacketDispatch().sendMessage("You make " + (StringUtils.isPlusN(dairy.getProduct().getName().toLowerCase()) ? "an" : "a") + " " + dairy.getProduct().getName().toLowerCase() + ".");
-				player.dispatch(new ResourceProducedEvent(dairy.getProduct().getId(), amount, node, BUCKET_OF_MILK.getId()));
+				player.dispatch(new ResourceProducedEvent(dairy.getProduct().getId(), dairy.getProduct().getAmount(), node, input.getId(), ResourceActivity.PRODUCTION, ResourceSkill.COOKING));
                 player.getSkills().addExperience(Skills.COOKING, dairy.getExperience(), true);
 				break;
             }

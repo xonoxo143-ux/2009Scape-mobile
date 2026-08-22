@@ -1,5 +1,7 @@
 package content.global.skill.farming
 
+import content.global.leagues.GrandLeagueManager
+import content.global.leagues.core.LeagueEffectMath
 import core.api.*
 import core.game.node.entity.player.Player
 import core.tools.Log
@@ -38,6 +40,11 @@ class Patch(val player: Player, val patch: FarmingPatch, var plantable: Plantabl
             harvestAmt += compostMod
         }
         cropLives = 3 + compostMod
+        val leagueYield = GrandLeagueManager.farmingYieldMultiplier(player)
+        if (leagueYield != 1.0) {
+            harvestAmt = LeagueEffectMath.scaledQuantity(harvestAmt, leagueYield, RandomFunction.randomDouble(1.0))
+            cropLives = LeagueEffectMath.scaledQuantity(cropLives, leagueYield, RandomFunction.randomDouble(1.0))
+        }
     }
 
     fun rollLivesDecrement(farmingLevel: Int, magicSecateurs: Boolean){
@@ -361,8 +368,10 @@ class Patch(val player: Player, val patch: FarmingPatch, var plantable: Plantabl
             CompostType.SUPERCOMPOST -> 13
         }
 
+        val leagueDiseaseChance = GrandLeagueManager.farmingDiseaseChanceMultiplier(player)
         if(patch != FarmingPatch.TROLL_STRONGHOLD_HERB
-            && RandomFunction.random(128) <= (17 - diseaseMod)
+            && !GrandLeagueManager.farmingDiseaseImmune(player)
+            && RandomFunction.random(128).toDouble() <= ((17 - diseaseMod) * leagueDiseaseChance)
             && !isWatered && !isGrown()
             && !protectionPaid
             && !isFlowerProtected()
@@ -455,7 +464,8 @@ class Patch(val player: Player, val patch: FarmingPatch, var plantable: Plantabl
             // Willow Branches grow back in only 5 minutes
             minutes = 5
         }
-        return minutes
+        val leagueGrowth = GrandLeagueManager.farmingGrowthMultiplier(player).coerceAtLeast(1.0)
+        return ceil(minutes / leagueGrowth).toInt().coerceAtLeast(1)
     }
 
     fun isFlowerProtected(): Boolean{

@@ -1,5 +1,6 @@
 package core.game.shops
 
+import content.global.leagues.GrandLeagueManager
 import core.ServerConstants
 import core.api.*
 import core.game.component.Component
@@ -176,7 +177,10 @@ class Shop(val title: String, val stock: Array<ShopItem>, val general: Boolean =
             }
         }
 
-        return Item(currency, price)
+        val adjustedPrice = if (isMainStock && currency == Items.COINS_995) {
+            kotlin.math.ceil(price * GrandLeagueManager.shopPriceMultiplier(player)).toInt().coerceAtLeast(0)
+        } else price
+        return Item(currency, adjustedPrice)
     }
 
     fun getSellPrice(player: Player, slot: Int): Pair<Container?,Item>
@@ -300,8 +304,9 @@ class Shop(val title: String, val stock: Array<ShopItem>, val general: Boolean =
 
         val cost = getBuyPrice(player, slot)
         if(cost.id == -1) sendMessage(player, "This shop cannot sell that item.").also { return TransactionStatus.Failure("Shop cannot sell this item") }
+        val freePurchase = isMainStock && currency == Items.COINS_995 && GrandLeagueManager.shopPriceMultiplier(player) <= 0.0
 
-        if(currency == Items.COINS_995){
+        if(currency == Items.COINS_995 && !freePurchase){
             val fixedPrice = fixedPriceItems[item.id]
             if (fixedPrice != null) {
                 // Fixed price items: simple multiplication
@@ -313,32 +318,37 @@ class Shop(val title: String, val stock: Array<ShopItem>, val general: Boolean =
                 while(amt-- > 1)
                     cost.amount += getGPCost(Item(item.id, 1), if (isMainStock) stock[slot].amount else playerStock[slot].amount, --inStockAmt)
             }
-        } else {
+        } else if (currency != Items.COINS_995) {
             cost.amount = cost.amount * item.amount
+        } else {
+            cost.amount = 0
         }
 
-        if(inInventory(player, cost.id, cost.amount))
+        if(freePurchase || inInventory(player, cost.id, cost.amount))
         {
-            if(removeItem(player, cost))
+            if(freePurchase || removeItem(player, cost))
             {
                 if (item.amount == 0) {
                     item.amount = 1
                 }
                 if(!hasSpaceFor(player, item)) {
-                    addItem(player, cost.id, cost.amount)
+                    if (!freePurchase) addItem(player, cost.id, cost.amount)
                     sendMessage(player, "You don't have enough inventory space to buy that many.")
                     return TransactionStatus.Failure("Not enough inventory space")
                 }
 
-                if(!isMainStock && cont[slot].amount - item.amount == 0)
-                {
-                    cont.remove(cont[slot], false)
-                    cont.refresh()
-                }
-                else {
-                    cont[slot].amount -= item.amount
-                    cont.event.flag(slot, cont[slot])
-                    cont.update()
+                val consumeStock = !isMainStock || GrandLeagueManager.shopStockConsumptionMultiplier(player) > 0.0
+                if (consumeStock) {
+                    if(!isMainStock && cont[slot].amount - item.amount == 0)
+                    {
+                        cont.remove(cont[slot], false)
+                        cont.refresh()
+                    }
+                    else {
+                        cont[slot].amount -= item.amount
+                        cont.event.flag(slot, cont[slot])
+                        cont.update()
+                    }
                 }
 
                 addItem(player, item.id, item.amount)

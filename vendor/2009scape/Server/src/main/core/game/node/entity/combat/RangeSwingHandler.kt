@@ -1,5 +1,6 @@
 package core.game.node.entity.combat
 
+import content.global.leagues.GrandLeagueManager
 import content.global.skill.skillcapeperks.SkillcapePerks
 import content.global.skill.summoning.SummoningPouch
 import core.api.*
@@ -379,6 +380,9 @@ open class RangeSwingHandler (vararg flags: SwingHandlerFlag) : CombatSwingHandl
             }
             val dropRate = getDropRate(e)
             if (dropRate == -1.0) {
+                return
+            }
+            if (Math.random() < GrandLeagueManager.rangedAmmoSaveChance(e)) {
                 return
             }
             e.equipment.replace(Item(ammo.id, ammo.amount - amount, ammo.charge), state.weapon.ammunitionSlot)

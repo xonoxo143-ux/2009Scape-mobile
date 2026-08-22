@@ -14,11 +14,19 @@ import core.game.world.map.Location
 import content.global.activity.jobs.JobType
 import content.global.handlers.iface.FairyRing
 import content.global.skill.magic.TeleportMethod
-import content.data.Quests
 
-data class ResourceProducedEvent(val itemId: Int, val amount: Int, val source: Node, val original: Int = -1) : Event
+enum class ResourceActivity { GENERIC, GATHERING, PRODUCTION }
+enum class ResourceSkill { NONE, WOODCUTTING, FISHING, MINING, THIEVING, FARMING, COOKING, CRAFTING, SMITHING, FLETCHING, HERBLORE, CONSTRUCTION, RUNECRAFTING, OTHER }
+
+data class ResourceProducedEvent @JvmOverloads constructor(
+    val itemId: Int,
+    val amount: Int,
+    val source: Node,
+    val original: Int = -1,
+    val activity: ResourceActivity = ResourceActivity.GENERIC,
+    val skill: ResourceSkill = ResourceSkill.NONE
+) : Event
 data class NPCKillEvent(val npc: NPC) : Event
-data class QuestCompleteEvent(val quest: Quests) : Event
 data class BoneBuryEvent(val boneId: Int) : Event
 data class TeleportEvent(val type: TeleportType, val method: TeleportMethod, val source: Any, val location: Location) : Event
 data class LitFireEvent(val logId: Int) : Event
@@ -47,9 +55,9 @@ data class JobAssignmentEvent(val jobType: JobType, val employerNpc: NPC) : Even
 data class FairyRingDialEvent(val fairyRing: FairyRing) : Event
 data class VarbitUpdateEvent(val offset: Int, val value: Int) : Event
 data class DynamicSkillLevelChangeEvent(val skillId: Int, val oldValue: Int, val newValue: Int): Event
-data class StaticSkillLevelUpEvent(val skillId: Int, val oldValue: Int, val newValue: Int) : Event
 data class SummoningPointsRechargeEvent(val obelisk: Node) : Event
 data class PrayerPointsRechargeEvent(val altar: Node) : Event
 data class XPGainEvent(val skillId: Int, val amount: Double) : Event
+data class QuestCompleteEvent(val questId: String, val questPoints: Int, val totalQuestPoints: Int) : Event
 data class PrayerActivatedEvent (val type: PrayerType) : Event
 data class PrayerDeactivatedEvent (val type: PrayerType) : Event

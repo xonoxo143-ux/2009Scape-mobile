@@ -5,7 +5,6 @@ import core.game.event.*
 object Event {
     @JvmStatic val ResourceProduced = ResourceProducedEvent::class.java
     @JvmStatic val NPCKilled = NPCKillEvent::class.java
-    @JvmStatic val QuestCompleted = QuestCompleteEvent::class.java
     @JvmStatic val BoneBuried = BoneBuryEvent::class.java
     @JvmStatic val Teleported = TeleportEvent::class.java
     @JvmStatic val FireLit = LitFireEvent::class.java
@@ -34,10 +33,10 @@ object Event {
     @JvmStatic val FairyRingDialed = FairyRingDialEvent::class.java
     @JvmStatic val VarbitUpdated = VarbitUpdateEvent::class.java
     @JvmStatic val DynamicSkillLevelChanged = DynamicSkillLevelChangeEvent::class.java
-    @JvmStatic val StaticSkillLevelUp = StaticSkillLevelUpEvent::class.java
     @JvmStatic val SummoningPointsRecharged = SummoningPointsRechargeEvent::class.java
     @JvmStatic val PrayerPointsRecharged = PrayerPointsRechargeEvent::class.java
     @JvmStatic val XpGained = XPGainEvent::class.java
+    @JvmStatic val QuestCompleted = QuestCompleteEvent::class.java
     @JvmStatic val PrayerActivated = PrayerActivatedEvent::class.java
     @JvmStatic val PrayerDeactivated = PrayerDeactivatedEvent::class.java
 }

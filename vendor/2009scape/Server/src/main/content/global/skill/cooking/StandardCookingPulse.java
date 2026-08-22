@@ -1,11 +1,10 @@
 package content.global.skill.cooking;
 
 import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
 import content.global.skill.skillcapeperks.SkillcapePerks;
 import core.game.event.ResourceProducedEvent;
+import core.game.event.ResourceActivity;
+import core.game.event.ResourceSkill;
 import core.game.node.entity.impl.Animator;
 import core.game.node.entity.player.Player;
 import core.game.node.entity.player.info.LogType;
@@ -63,13 +62,8 @@ public class StandardCookingPulse extends Pulse {
         properties = CookableItems.forId(initial);
         if (checkRequirements()) {
             super.start();
-            LeagueOutputPlan productionPlan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION);
-            if (productionPlan.getInstantBatch()) {
-                processInstantBatch();
-            } else {
-                cook(player, object, properties != null && burned, initial, product);
-                amount--;
-            }
+            cook(player, object, properties != null && burned, initial, product);
+            amount--;
         }
     }
 
@@ -79,16 +73,6 @@ public class StandardCookingPulse extends Pulse {
             return true;
         }
         return reward();
-    }
-
-    /** Process the selected cooking queue in the current tick for Production Prodigy/Master. */
-    private void processInstantBatch() {
-        while (amount > 0 && checkRequirements()) {
-            if (!cook(player, object, properties != null && burned, initial, product)) {
-                break;
-            }
-            amount--;
-        }
     }
 
     public void animate() {
@@ -126,7 +110,7 @@ public class StandardCookingPulse extends Pulse {
             if (SkillcapePerks.isActive(SkillcapePerks.HASTY_COOKING, player)) {
                 delay -= 1;
             }
-            setDelay(delay);
+            setDelay(GrandLeagueManager.productionDelay(player, delay, false));
             return false;
         }
 
@@ -192,11 +176,9 @@ public class StandardCookingPulse extends Pulse {
         }
         if (player.getInventory().remove(initialItem)) {
             if (!burned) {
-                LeagueResolvedOutput leagueOutput = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION);
                 player.getInventory().add(productItem);
-                GrandLeagueManager.deliverBonusOutput(player, productItem.getId(), leagueOutput);
-                player.dispatch(new ResourceProducedEvent(productItem.getId(), leagueOutput.getAmount(), object, initialItem.getId()));
-                player.getSkills().addExperience(Skills.COOKING, experience * leagueOutput.getExperienceUnits(), true);
+                player.dispatch(new ResourceProducedEvent(productItem.getId(), 1, object, initialItem.getId(), ResourceActivity.PRODUCTION, ResourceSkill.COOKING));
+                player.getSkills().addExperience(Skills.COOKING, experience, true);
                 processedAmount++;
                 if (processedAmount > initialAmount) {
                     PlayerMonitor.log(player, LogType.DUPE_ALERT, "cooked item (" + player.getName() + ", " + initialItem.getName() + "): initialAmount " + initialAmount + ", processedAmount " + processedAmount);

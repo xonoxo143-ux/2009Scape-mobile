@@ -1,9 +1,9 @@
 package content.global.skill.gather.mining
 
-import content.global.leagues.GrandLeagueManager
-import content.global.leagues.core.LeagueOutputKind
 import core.api.*
 import core.game.event.ResourceProducedEvent
+import core.game.event.ResourceActivity
+import core.game.event.ResourceSkill
 import core.cache.def.impl.ItemDefinition
 import core.game.node.Node
 import core.game.node.entity.impl.Animator
@@ -102,7 +102,7 @@ class MiningSkillPulse(private val player: Player, private val node: Node) : Pul
             sendMessage(player, "You do not have a pickaxe to use.")
             return false
         }
-        if (freeSlots(player) == 0 && !GrandLeagueManager.autoBanksResources(player)) {
+        if (freeSlots(player) == 0) {
             if(resource!!.identifier == 13.toByte()) {
                 sendDialogue(player,"Your inventory is too full to hold any more gems.")
                 return false
@@ -132,11 +132,10 @@ class MiningSkillPulse(private val player: Player, private val node: Node) : Pul
             reward = calculateReward(reward) // calculate rewards
             rewardAmount = calculateRewardAmount(reward) // calculate amount
 
-            val leagueOutput = GrandLeagueManager.resolveOutput(player, rewardAmount, LeagueOutputKind.RESOURCE)
+            player.dispatch(ResourceProducedEvent(reward, rewardAmount, node, -1, ResourceActivity.GATHERING, ResourceSkill.MINING))
 
-            // Reward mining experience. Some League relic variants grant XP for
-            // their duplicated resources while older variants deliberately do not.
-            val experience = resource!!.experience * leagueOutput.experienceUnits
+            // Reward mining experience
+            val experience = resource!!.experience * rewardAmount
             rewardXP(player, Skills.MINING, experience)
 
             // If player is wearing Bracelet of Clay, soften
@@ -165,9 +164,8 @@ class MiningSkillPulse(private val player: Player, private val node: Node) : Pul
                 sendMessage(player, "You get some ${rewardName.lowercase()}.")
             }
 
-            // Give the mining reward, then publish the actual League-expanded amount.
-            GrandLeagueManager.deliverOutput(player, reward, leagueOutput)
-            player.dispatch(ResourceProducedEvent(reward, leagueOutput.amount, node))
+            // Give the mining reward, increment 'rocks mined' attribute
+            addItemOrDrop(player, reward, rewardAmount)
             var rocksMined = getAttribute(player, "$STATS_BASE:$STATS_ROCKS", 0)
             setAttribute(player, "/save:$STATS_BASE:$STATS_ROCKS", rocksMined + rewardAmount)
 

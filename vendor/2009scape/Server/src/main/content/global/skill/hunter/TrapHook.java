@@ -1,5 +1,6 @@
 package content.global.skill.hunter;
 
+import content.global.leagues.GrandLeagueManager;
 import core.game.world.GameWorld;
 import core.game.world.map.Location;
 import core.tools.RandomFunction;
@@ -37,7 +38,8 @@ public class TrapHook {
 	public Location getChanceLocation() {
 		final double chance = wrapper.getChanceRate();
 		final int roll = RandomFunction.random(99);
-		final double successChance = (GameWorld.getSettings().isDevMode() ? 100 : 55.0) + chance;
+		double successChance = (GameWorld.getSettings().isDevMode() ? 100 : 55.0) + chance;
+		successChance = Math.min(100.0, successChance * GrandLeagueManager.hunterSuccessMultiplier(wrapper.getPlayer()));
 		if (successChance > roll) {
 			return RandomFunction.getRandomElement(locations);
 		}

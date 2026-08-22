@@ -153,7 +153,7 @@ public abstract class Quest implements Plugin<Object> {
 		}
 		player.getQuestRepository().setStage(this, 100);
 		player.getQuestRepository().incrementPoints(getQuestPoints());
-		player.dispatch(new QuestCompleteEvent(quest));
+		player.dispatch(new QuestCompleteEvent(getQuest().name().toLowerCase().replace('_', '-'), getQuestPoints(), player.getQuestRepository().getPoints()));
 		player.getQuestRepository().syncronizeTab(player);
 		player.getInterfaceManager().open(new Component(277).setCloseEvent((p, c) -> {
 			this.questCloseEvent(p, c);

@@ -9,6 +9,8 @@ import content.global.skill.skillcapeperks.SkillcapePerks.Companion.isActive
 import content.global.skill.summoning.familiar.Forager
 import core.api.*
 import core.game.event.ResourceProducedEvent
+import core.game.event.ResourceActivity
+import core.game.event.ResourceSkill
 import core.game.interaction.Clocks
 import core.game.interaction.IntType
 import core.game.interaction.InteractionListener
@@ -81,7 +83,7 @@ class FishingListener : InteractionListener{
 
             val fish = op?.rollFish(player) ?: return delayClock(player, Clocks.SKILLING, 5)
             if (!hasSpaceFor(player, Item(fish.id)) || !op.removeBait(player)) return restartScript(player)
-            player.dispatch(ResourceProducedEvent(fish.id, fish.getItem().amount, node))
+            player.dispatch(ResourceProducedEvent(fish.id, fish.getItem().amount, node, -1, ResourceActivity.GATHERING, ResourceSkill.FISHING))
             val item = fish.getItem()
             val bigFishId = Fish.getBigFish(fish)
             val bigFishChance = if (GameWorld.settings?.isDevMode == true) 10 else 5000

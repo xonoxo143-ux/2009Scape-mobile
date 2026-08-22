@@ -1,162 +1,391 @@
 package content.global.leagues.core
 
-/** Common numeric modifier keys. Custom mechanics can use [FlagLeagueEffect]. */
-enum class LeagueModifierKey {
-    XP_MULTIPLIER,
-    RESOURCE_MULTIPLIER,
-    PRODUCTION_MULTIPLIER,
-    DROP_RATE_MULTIPLIER,
-    DAMAGE_MULTIPLIER,
-    ACCURACY_MULTIPLIER,
-    ATTACK_SPEED_MULTIPLIER,
-    PRAYER_DRAIN_MULTIPLIER,
-    RUN_ENERGY_DRAIN_MULTIPLIER
-}
-
-enum class LeagueModifierOperation {
-    MULTIPLY,
-    ADD,
-    MAX,
-    MIN
-}
-
-sealed interface LeagueEffect
-
-data class NumericLeagueEffect(
-    val key: LeagueModifierKey,
-    val operation: LeagueModifierOperation,
-    val value: Double
-) : LeagueEffect {
-    init { require(value.isFinite()) { "League modifier values must be finite" } }
-}
-
-data class FlagLeagueEffect(val key: String) : LeagueEffect {
-    init { require(key.matches(Regex("[a-z0-9][a-z0-9._:-]*"))) { "Invalid League effect flag '$key'" } }
-}
-
-/** Permanent effective-level floor above the player's static level. */
-data class SkillBoostLeagueEffect(val skillId: Int, val amount: Int) : LeagueEffect {
-    init {
-        require(skillId >= 0) { "Skill id cannot be negative" }
-        require(amount >= 0) { "Skill boost cannot be negative" }
-    }
-}
-
-data class LeagueResolvedEffects(
-    val numeric: Map<LeagueModifierKey, Double>,
-    val flags: Set<String>,
-    val skillBoosts: Map<Int, Int> = emptyMap()
-) {
-    fun numeric(key: LeagueModifierKey, default: Double = 1.0): Double = numeric[key] ?: default
-    fun hasFlag(key: String): Boolean = key in flags
-    fun skillBoost(skillId: Int): Int = skillBoosts[skillId] ?: 0
-}
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
 
 /**
- * Deterministic composition for effects coming from relics, fragments, masteries,
- * pacts, blessings and passive tier bonuses.
+ * Shared Grand League gameplay modifier primitives.
  *
- * For each numeric key: additions are applied to a base of 1.0, then multiplied;
- * MAX/MIN constraints are applied last. This gives content definitions explicit,
- * testable stacking semantics rather than relying on call order.
+ * Content definitions emit small, composable effects. Gameplay systems consume the
+ * resolved snapshot rather than knowing about individual relic/fragment/node ids.
  */
-object LeagueEffectResolver {
-    fun resolve(effects: Iterable<LeagueEffect>): LeagueResolvedEffects {
-        data class Acc(
-            var add: Double = 0.0,
-            var multiply: Double = 1.0,
-            var maxFloor: Double? = null,
-            var minCeiling: Double? = null
-        )
+enum class LeagueEffectScope {
+    GATHERING,
+    PRODUCTION,
+    XP,
+    SHOP,
+    FARMING,
+    MOVEMENT,
+    THIEVING,
+    AGILITY,
+    HUNTER,
+    FISHING,
+    MINING,
+    WOODCUTTING,
+    CONSTRUCTION,
+    COMBAT,
+    MELEE,
+    RANGED,
+    MAGIC
+}
 
-        val numeric = mutableMapOf<LeagueModifierKey, Acc>()
-        val flags = linkedSetOf<String>()
-        val skillBoosts = mutableMapOf<Int, Int>()
-        effects.forEach { effect ->
-            when (effect) {
-                is FlagLeagueEffect -> flags += effect.key
-                is SkillBoostLeagueEffect ->
-                    skillBoosts[effect.skillId] = maxOf(skillBoosts[effect.skillId] ?: 0, effect.amount)
-                is NumericLeagueEffect -> {
-                    val acc = numeric.getOrPut(effect.key) { Acc() }
-                    when (effect.operation) {
-                        LeagueModifierOperation.ADD -> acc.add += effect.value
-                        LeagueModifierOperation.MULTIPLY -> acc.multiply *= effect.value
-                        LeagueModifierOperation.MAX -> acc.maxFloor = maxOf(acc.maxFloor ?: Double.NEGATIVE_INFINITY, effect.value)
-                        LeagueModifierOperation.MIN -> acc.minCeiling = minOf(acc.minCeiling ?: Double.POSITIVE_INFINITY, effect.value)
-                    }
-                }
-            }
-        }
+enum class LeagueStacking { MULTIPLY, ADD, MAX, MIN }
 
-        val resolved = numeric.mapValues { (_, acc) ->
-            var value = (1.0 + acc.add) * acc.multiply
-            acc.maxFloor?.let { value = maxOf(value, it) }
-            acc.minCeiling?.let { value = minOf(value, it) }
-            value
-        }
-        return LeagueResolvedEffects(resolved, flags, skillBoosts)
+enum class LeagueModifierKey(val baseValue: Double, val stacking: LeagueStacking) {
+    RESOURCE_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    AUTO_BANK_CHANCE(0.0, LeagueStacking.MAX),
+    AUTO_PROCESS_CHANCE(0.0, LeagueStacking.MAX),
+    PRODUCTION_SPEED_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    PRODUCTION_OUTPUT_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    MATERIAL_SAVE_CHANCE(0.0, LeagueStacking.MAX),
+    XP_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    BELOW_AVERAGE_XP_BONUS(0.0, LeagueStacking.ADD),
+    SHOP_PRICE_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    SHOP_STOCK_CONSUMPTION_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    FARM_GROWTH_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    FARM_YIELD_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    FARM_DISEASE_CHANCE_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    RUN_REGEN_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    RUN_DRAIN_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    THIEVING_SUCCESS_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    AGILITY_FAIL_CHANCE_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    HUNTER_SUCCESS_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+
+    COMBAT_ACCURACY_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    COMBAT_DAMAGE_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    ATTACK_INTERVAL_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    DEFENCE_PENETRATION(0.0, LeagueStacking.ADD),
+    AMMO_SAVE_CHANCE(0.0, LeagueStacking.MAX),
+    RUNE_SAVE_CHANCE(0.0, LeagueStacking.MAX),
+    EXTRA_HIT_CHANCE(0.0, LeagueStacking.ADD),
+    EXTRA_HIT_DAMAGE_FRACTION(0.0, LeagueStacking.MAX),
+    LIFESTEAL_FRACTION(0.0, LeagueStacking.ADD),
+    PRAYER_RESTORE_FRACTION(0.0, LeagueStacking.ADD),
+    INCOMING_DAMAGE_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    DAMAGE_REFLECT_FRACTION(0.0, LeagueStacking.ADD),
+    LOW_HP_MAX_DAMAGE_BONUS(0.0, LeagueStacking.ADD),
+    SPECIAL_ATTACK_COST_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    SPECIAL_ENERGY_RESTORE_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    EXECUTION_THRESHOLD_NORMAL(0.0, LeagueStacking.MAX),
+    EXECUTION_THRESHOLD_BOSS(0.0, LeagueStacking.MAX),
+
+    // Capability-style switches use MAX and values of 0/1.
+    BANK_BONUS_RESOURCES(0.0, LeagueStacking.MAX),
+    PORTABLE_NOTE(0.0, LeagueStacking.MAX),
+    FAIRY_FLIGHT(0.0, LeagueStacking.MAX),
+    GLOBETROTTER(0.0, LeagueStacking.MAX),
+    FARM_DISEASE_IMMUNITY(0.0, LeagueStacking.MAX),
+    THIEVING_AUTO_REPEAT(0.0, LeagueStacking.MAX)
+}
+
+data class LeagueEffectDefinition(
+    val key: LeagueModifierKey,
+    val value: Double,
+    val requiredScopes: Set<LeagueEffectScope> = emptySet()
+) {
+    init {
+        require(value >= 0.0 && value.isFinite()) { "League effect values must be finite and non-negative" }
     }
 }
 
-fun Map<Int, Set<LeagueEffect>>.effectsThroughRank(rank: Int): List<LeagueEffect> =
-    entries.asSequence()
-        .filter { (requiredRank, _) -> requiredRank <= rank }
-        .sortedBy { it.key }
-        .flatMap { it.value.asSequence() }
-        .toList()
+data class LeagueActiveEffect(
+    val sourceType: String,
+    val sourceId: String,
+    val definition: LeagueEffectDefinition
+)
 
-/** Collects all currently-active effects from the major Grand League systems. */
-class LeagueActiveEffectResolver(
-    private val relics: RelicRegistry? = null,
-    private val fragments: FragmentRegistry? = null,
-    private val masteries: MasteryRegistry? = null,
-    private val pacts: PactRegistry? = null,
-    private val blessings: BlessingRegistry? = null,
-    private val tierEffects: Map<Int, Set<LeagueEffect>> = emptyMap(),
-    private val progression: LeagueProgression = LeagueProgression.grandLeagueDefaults()
+data class LeagueActiveTriggeredEffect(
+    val sourceType: String,
+    val sourceId: String,
+    val definition: LeagueTriggeredEffectDefinition
+)
+
+/** Immutable snapshot of every currently active League effect. */
+class LeagueModifierSnapshot internal constructor(
+    private val activeEffects: List<LeagueActiveEffect>,
+    private val activeTriggeredEffects: List<LeagueActiveTriggeredEffect> = emptyList()
 ) {
-    fun resolve(profile: LeagueProfile): LeagueResolvedEffects {
-        val effects = mutableListOf<LeagueEffect>()
-
-        val tier = progression.tierFor(profile.points).index
-        tierEffects.entries
-            .filter { it.key <= tier }
-            .sortedBy { it.key }
-            .forEach { effects += it.value }
-
-        relics?.let { registry ->
-            // Traditional relics are choices: alternatives may be permanently unlocked,
-            // but only the selected relic for each tier contributes active effects.
-            profile.primaryRelicsByTier.toSortedMap().values
-                .mapNotNull(registry::get)
-                .forEach { effects += it.effects }
-        }
-
-        fragments?.let { registry ->
-            profile.equippedFragments.forEach { id ->
-                val fragment = registry.get(id) ?: return@forEach
-                effects += fragment.effectsByLevel.effectsThroughRank(profile.fragmentLevels[id] ?: 0)
-            }
-            val activeSetIds = FragmentEngine(registry).activeSets(profile)
-            registry.sets.filter { it.id in activeSetIds }.forEach { effects += it.effects }
-        }
-
-        masteries?.let { registry ->
-            profile.masteryRanks.forEach { (id, rank) ->
-                val mastery = registry.get(id) ?: return@forEach
-                effects += mastery.effectsByRank.effectsThroughRank(rank)
+    fun value(key: LeagueModifierKey, scopes: Set<LeagueEffectScope> = emptySet()): Double {
+        var result = key.baseValue
+        for (active in activeEffects) {
+            val effect = active.definition
+            if (effect.key != key || !scopes.containsAll(effect.requiredScopes)) continue
+            result = when (key.stacking) {
+                LeagueStacking.MULTIPLY -> result * effect.value
+                LeagueStacking.ADD -> result + effect.value
+                LeagueStacking.MAX -> max(result, effect.value)
+                LeagueStacking.MIN -> min(result, effect.value)
             }
         }
+        return result
+    }
 
-        pacts?.let { registry ->
-            profile.unlockedPacts.mapNotNull(registry::get).forEach { effects += it.effects }
+    fun enabled(key: LeagueModifierKey, scopes: Set<LeagueEffectScope> = emptySet()): Boolean =
+        value(key, scopes) > 0.0
+
+    fun sourcesFor(key: LeagueModifierKey, scopes: Set<LeagueEffectScope> = emptySet()): List<String> =
+        activeEffects.asSequence()
+            .filter { it.definition.key == key && scopes.containsAll(it.definition.requiredScopes) }
+            .map { "${it.sourceType}:${it.sourceId}" }
+            .toList()
+
+    fun triggered(kind: LeagueTriggeredEffectKind): List<LeagueActiveTriggeredEffect> =
+        activeTriggeredEffects.asSequence()
+            .filter { it.definition.kind == kind }
+            .sortedWith(
+                compareByDescending<LeagueActiveTriggeredEffect> { it.definition.priority }
+                    .thenBy { it.sourceType }
+                    .thenBy { it.sourceId }
+                    .thenBy { it.definition.id }
+            )
+            .toList()
+
+    fun gathering(scopes: Set<LeagueEffectScope> = setOf(LeagueEffectScope.GATHERING)): LeagueGatheringModifiers =
+        LeagueGatheringModifiers(
+            resourceMultiplier = value(LeagueModifierKey.RESOURCE_MULTIPLIER, scopes),
+            autoBankChance = value(LeagueModifierKey.AUTO_BANK_CHANCE, scopes).coerceIn(0.0, 1.0),
+            autoProcessChance = value(LeagueModifierKey.AUTO_PROCESS_CHANCE, scopes).coerceIn(0.0, 1.0),
+            bankBonusResources = enabled(LeagueModifierKey.BANK_BONUS_RESOURCES, scopes)
+        )
+
+    fun production(scopes: Set<LeagueEffectScope> = setOf(LeagueEffectScope.PRODUCTION)): LeagueProductionModifiers =
+        LeagueProductionModifiers(
+            speedMultiplier = value(LeagueModifierKey.PRODUCTION_SPEED_MULTIPLIER, scopes),
+            outputMultiplier = value(LeagueModifierKey.PRODUCTION_OUTPUT_MULTIPLIER, scopes),
+            materialSaveChance = value(LeagueModifierKey.MATERIAL_SAVE_CHANCE, scopes).coerceIn(0.0, 1.0)
+        )
+
+    fun farming(): LeagueFarmingModifiers {
+        val scopes = setOf(LeagueEffectScope.FARMING)
+        return LeagueFarmingModifiers(
+            growthMultiplier = value(LeagueModifierKey.FARM_GROWTH_MULTIPLIER, scopes),
+            yieldMultiplier = value(LeagueModifierKey.FARM_YIELD_MULTIPLIER, scopes),
+            diseaseChanceMultiplier = if (enabled(LeagueModifierKey.FARM_DISEASE_IMMUNITY, scopes)) 0.0
+                else value(LeagueModifierKey.FARM_DISEASE_CHANCE_MULTIPLIER, scopes),
+            diseaseImmune = enabled(LeagueModifierKey.FARM_DISEASE_IMMUNITY, scopes)
+        )
+    }
+
+    fun movement(): LeagueMovementModifiers {
+        val scopes = setOf(LeagueEffectScope.MOVEMENT)
+        return LeagueMovementModifiers(
+            runRegenMultiplier = value(LeagueModifierKey.RUN_REGEN_MULTIPLIER, scopes),
+            runDrainMultiplier = value(LeagueModifierKey.RUN_DRAIN_MULTIPLIER, scopes),
+            fairyFlight = enabled(LeagueModifierKey.FAIRY_FLIGHT, scopes),
+            globetrotter = enabled(LeagueModifierKey.GLOBETROTTER, scopes)
+        )
+    }
+
+    fun shop(): LeagueShopModifiers {
+        val scopes = setOf(LeagueEffectScope.SHOP)
+        return LeagueShopModifiers(
+            priceMultiplier = value(LeagueModifierKey.SHOP_PRICE_MULTIPLIER, scopes),
+            stockConsumptionMultiplier = value(LeagueModifierKey.SHOP_STOCK_CONSUMPTION_MULTIPLIER, scopes)
+        )
+    }
+
+    fun thieving(): LeagueThievingModifiers {
+        val scopes = setOf(LeagueEffectScope.THIEVING)
+        return LeagueThievingModifiers(
+            successMultiplier = value(LeagueModifierKey.THIEVING_SUCCESS_MULTIPLIER, scopes),
+            autoRepeat = enabled(LeagueModifierKey.THIEVING_AUTO_REPEAT, scopes)
+        )
+    }
+
+    fun agility(): LeagueAgilityModifiers {
+        val scopes = setOf(LeagueEffectScope.AGILITY)
+        return LeagueAgilityModifiers(
+            failChanceMultiplier = value(LeagueModifierKey.AGILITY_FAIL_CHANCE_MULTIPLIER, scopes)
+        )
+    }
+
+    fun hunter(): LeagueHunterModifiers {
+        val scopes = setOf(LeagueEffectScope.HUNTER)
+        return LeagueHunterModifiers(
+            successMultiplier = value(LeagueModifierKey.HUNTER_SUCCESS_MULTIPLIER, scopes)
+        )
+    }
+
+    fun combat(style: LeagueCombatStyle): LeagueCombatModifiers {
+        val scopes = setOf(LeagueEffectScope.COMBAT, style.scope)
+        return LeagueCombatModifiers(
+            accuracyMultiplier = value(LeagueModifierKey.COMBAT_ACCURACY_MULTIPLIER, scopes),
+            damageMultiplier = value(LeagueModifierKey.COMBAT_DAMAGE_MULTIPLIER, scopes),
+            attackIntervalMultiplier = value(LeagueModifierKey.ATTACK_INTERVAL_MULTIPLIER, scopes),
+            defencePenetration = value(LeagueModifierKey.DEFENCE_PENETRATION, scopes).coerceIn(0.0, 0.95),
+            ammoSaveChance = value(LeagueModifierKey.AMMO_SAVE_CHANCE, scopes).coerceIn(0.0, 1.0),
+            runeSaveChance = value(LeagueModifierKey.RUNE_SAVE_CHANCE, scopes).coerceIn(0.0, 1.0),
+            extraHitChance = value(LeagueModifierKey.EXTRA_HIT_CHANCE, scopes).coerceIn(0.0, 1.0),
+            extraHitDamageFraction = value(LeagueModifierKey.EXTRA_HIT_DAMAGE_FRACTION, scopes).coerceIn(0.0, 2.0),
+            lifestealFraction = value(LeagueModifierKey.LIFESTEAL_FRACTION, scopes).coerceIn(0.0, 1.0),
+            prayerRestoreFraction = value(LeagueModifierKey.PRAYER_RESTORE_FRACTION, scopes).coerceIn(0.0, 1.0),
+            incomingDamageMultiplier = value(LeagueModifierKey.INCOMING_DAMAGE_MULTIPLIER, scopes).coerceIn(0.05, 5.0),
+            reflectFraction = value(LeagueModifierKey.DAMAGE_REFLECT_FRACTION, scopes).coerceIn(0.0, 1.0),
+            lowHpMaxDamageBonus = value(LeagueModifierKey.LOW_HP_MAX_DAMAGE_BONUS, scopes).coerceAtLeast(0.0),
+            specialAttackCostMultiplier = value(LeagueModifierKey.SPECIAL_ATTACK_COST_MULTIPLIER, scopes).coerceAtLeast(0.05),
+            specialEnergyRestoreMultiplier = value(LeagueModifierKey.SPECIAL_ENERGY_RESTORE_MULTIPLIER, scopes).coerceAtLeast(0.0),
+            normalExecutionThreshold = value(LeagueModifierKey.EXECUTION_THRESHOLD_NORMAL, scopes).coerceIn(0.0, 1.0),
+            bossExecutionThreshold = value(LeagueModifierKey.EXECUTION_THRESHOLD_BOSS, scopes).coerceIn(0.0, 1.0)
+        )
+    }
+
+    /**
+     * Equilibrium-style XP is deliberately expressed as a smooth deficit curve instead
+     * of a one-off skill patch. At/above average it contributes nothing; at zero XP it
+     * contributes its full BELOW_AVERAGE_XP_BONUS.
+     */
+    fun xpMultiplier(currentSkillXp: Double, averageSkillXp: Double): Double {
+        val scopes = setOf(LeagueEffectScope.XP)
+        val base = value(LeagueModifierKey.XP_MULTIPLIER, scopes)
+        val bonus = value(LeagueModifierKey.BELOW_AVERAGE_XP_BONUS, scopes)
+        if (bonus <= 0.0 || averageSkillXp <= 0.0 || currentSkillXp >= averageSkillXp) return base
+        val deficitRatio = ((averageSkillXp - currentSkillXp) / averageSkillXp).coerceIn(0.0, 1.0)
+        return base * (1.0 + bonus * deficitRatio)
+    }
+
+    fun all(): List<LeagueActiveEffect> = activeEffects.toList()
+
+    companion object {
+        val NONE = LeagueModifierSnapshot(emptyList())
+    }
+}
+
+data class LeagueGatheringModifiers(
+    val resourceMultiplier: Double = 1.0,
+    val autoBankChance: Double = 0.0,
+    val autoProcessChance: Double = 0.0,
+    val bankBonusResources: Boolean = false
+)
+
+data class LeagueProductionModifiers(
+    val speedMultiplier: Double = 1.0,
+    val outputMultiplier: Double = 1.0,
+    val materialSaveChance: Double = 0.0
+)
+
+data class LeagueFarmingModifiers(
+    val growthMultiplier: Double = 1.0,
+    val yieldMultiplier: Double = 1.0,
+    val diseaseChanceMultiplier: Double = 1.0,
+    val diseaseImmune: Boolean = false
+)
+
+data class LeagueMovementModifiers(
+    val runRegenMultiplier: Double = 1.0,
+    val runDrainMultiplier: Double = 1.0,
+    val fairyFlight: Boolean = false,
+    val globetrotter: Boolean = false
+)
+
+data class LeagueShopModifiers(
+    val priceMultiplier: Double = 1.0,
+    val stockConsumptionMultiplier: Double = 1.0
+)
+
+
+data class LeagueThievingModifiers(
+    val successMultiplier: Double = 1.0,
+    val autoRepeat: Boolean = false
+)
+
+data class LeagueAgilityModifiers(
+    val failChanceMultiplier: Double = 1.0
+)
+
+data class LeagueHunterModifiers(
+    val successMultiplier: Double = 1.0
+)
+
+enum class LeagueCombatStyle(val scope: LeagueEffectScope) {
+    MELEE(LeagueEffectScope.MELEE),
+    RANGED(LeagueEffectScope.RANGED),
+    MAGIC(LeagueEffectScope.MAGIC);
+
+    companion object {
+        fun fromKey(key: String): LeagueCombatStyle? = when (key.lowercase()) {
+            "melee" -> MELEE
+            "range", "ranged" -> RANGED
+            "magic" -> MAGIC
+            else -> null
         }
+    }
+}
 
-        blessings?.let { registry ->
-            profile.unlockedBlessings.mapNotNull(registry::get).forEach { effects += it.effects }
+data class LeagueCombatModifiers(
+    val accuracyMultiplier: Double = 1.0,
+    val damageMultiplier: Double = 1.0,
+    val attackIntervalMultiplier: Double = 1.0,
+    val defencePenetration: Double = 0.0,
+    val ammoSaveChance: Double = 0.0,
+    val runeSaveChance: Double = 0.0,
+    val extraHitChance: Double = 0.0,
+    val extraHitDamageFraction: Double = 0.0,
+    val lifestealFraction: Double = 0.0,
+    val prayerRestoreFraction: Double = 0.0,
+    val incomingDamageMultiplier: Double = 1.0,
+    val reflectFraction: Double = 0.0,
+    val lowHpMaxDamageBonus: Double = 0.0,
+    val specialAttackCostMultiplier: Double = 1.0,
+    val specialEnergyRestoreMultiplier: Double = 1.0,
+    val normalExecutionThreshold: Double = 0.0,
+    val bossExecutionThreshold: Double = 0.0
+) {
+    fun outgoingDamageMultiplier(healthRatio: Double): Double {
+        val missingHealth = 1.0 - healthRatio.coerceIn(0.0, 1.0)
+        return damageMultiplier * (1.0 + lowHpMaxDamageBonus * missingHealth)
+    }
+
+    fun shouldExecute(currentHealth: Int, maximumHealth: Int, boss: Boolean): Boolean {
+        if (currentHealth <= 0 || maximumHealth <= 0) return false
+        val threshold = if (boss) bossExecutionThreshold else normalExecutionThreshold
+        return threshold > 0.0 && currentHealth.toDouble() / maximumHealth.toDouble() < threshold
+    }
+}
+
+object LeagueEffectMath {
+    /** Convert a fractional multiplier into an integer quantity with an explicit roll for deterministic tests. */
+    fun scaledQuantity(baseAmount: Int, multiplier: Double, roll: Double = 1.0): Int {
+        require(baseAmount >= 0)
+        require(multiplier >= 0.0 && multiplier.isFinite())
+        require(roll in 0.0..1.0)
+        val exact = baseAmount * multiplier
+        val whole = floor(exact).toInt()
+        val fractional = exact - whole
+        return whole + if (fractional > 0.0 && roll < fractional) 1 else 0
+    }
+}
+
+class LeagueEffectResolver(private val content: LeagueContent) {
+    fun resolve(profile: LeagueProfile, activeFragmentSets: Set<String>): LeagueModifierSnapshot {
+        if (!profile.active) return LeagueModifierSnapshot.NONE
+        val active = mutableListOf<LeagueActiveEffect>()
+        val triggered = mutableListOf<LeagueActiveTriggeredEffect>()
+
+        profile.selectedRelics.values.forEach { id ->
+            content.relicsById[id]?.let { relic ->
+                relic.effects.forEach { active += LeagueActiveEffect("relic", id, it) }
+                relic.triggeredEffects.forEach { triggered += LeagueActiveTriggeredEffect("relic", id, it) }
+            }
         }
-
-        return LeagueEffectResolver.resolve(effects)
+        profile.equippedFragments.forEach { id ->
+            content.fragmentsById[id]?.effects.orEmpty().forEach { active += LeagueActiveEffect("fragment", id, it) }
+        }
+        activeFragmentSets.forEach { id ->
+            content.fragmentSetsById[id]?.effects.orEmpty().forEach { active += LeagueActiveEffect("fragment-set", id, it) }
+        }
+        profile.unlockedMasteries.forEach { id ->
+            content.masteriesById[id]?.let { node ->
+                node.effects.forEach { active += LeagueActiveEffect("mastery", id, it) }
+                node.triggeredEffects.forEach { triggered += LeagueActiveTriggeredEffect("mastery", id, it) }
+            }
+        }
+        profile.unlockedPacts.forEach { id ->
+            content.pactsById[id]?.let { node ->
+                node.effects.forEach { active += LeagueActiveEffect("pact", id, it) }
+                node.triggeredEffects.forEach { triggered += LeagueActiveTriggeredEffect("pact", id, it) }
+            }
+        }
+        return LeagueModifierSnapshot(active, triggered)
     }
 }

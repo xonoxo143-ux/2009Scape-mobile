@@ -1,5 +1,6 @@
 package core.game.system.timer.impl
 
+import content.global.leagues.GrandLeagueManager
 import core.api.*
 import core.api.Event
 import core.game.node.entity.Entity
@@ -35,7 +36,8 @@ class SkillRestore : RSTimer (1, "skillrestore", isAuto = true, isSoft = true) {
         }
 
         if (entity is Player && ticksSinceLastRestore[24]++ >= 50) {
-            entity.settings.setSpecialEnergy (kotlin.math.min (100, entity.settings.specialEnergy + 10))
+            val restore = GrandLeagueManager.specialEnergyRestore(entity, 10)
+            entity.settings.setSpecialEnergy (kotlin.math.min (100, entity.settings.specialEnergy + restore))
             ticksSinceLastRestore[24] = 0
         }
 
@@ -60,9 +62,9 @@ class SkillRestore : RSTimer (1, "skillrestore", isAuto = true, isSoft = true) {
     object PrayerActivatedHook : EventHook <PrayerActivatedEvent> {
         override fun process (entity: Entity, event: PrayerActivatedEvent) {
             val restore = getOrStartTimer <SkillRestore> (entity)
-            
+
             when (event.type) {
-                PrayerType.RAPID_HEAL -> { 
+                PrayerType.RAPID_HEAL -> {
                     restore.restoreTicks [Skills.HITPOINTS] = 50
                     restore.ticksSinceLastRestore [Skills.HITPOINTS] = 0
                 }

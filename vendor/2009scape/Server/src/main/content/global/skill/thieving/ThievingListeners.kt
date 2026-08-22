@@ -1,5 +1,6 @@
 package content.global.skill.thieving
 
+import content.global.leagues.GrandLeagueManager
 import content.global.skill.skillcapeperks.SkillcapePerks
 import core.api.*
 import core.api.utils.WeightBasedTable
@@ -34,7 +35,8 @@ class ThievingListeners : InteractionListener {
             }
 
             val chance = RandomFunction.randomDouble(1.0, 100.0)
-            val failThreshold = RandomFunction.getSkillSuccessChance(low, high ,player.skills.getLevel(Skills.THIEVING)) + successMod
+            val vanillaThreshold = RandomFunction.getSkillSuccessChance(low, high, player.skills.getLevel(Skills.THIEVING)) + successMod
+            val failThreshold = (vanillaThreshold * GrandLeagueManager.thievingSuccessMultiplier(player)).coerceAtMost(100.0)
 
             if (chance > failThreshold) {
                 // Fail Pickpocket

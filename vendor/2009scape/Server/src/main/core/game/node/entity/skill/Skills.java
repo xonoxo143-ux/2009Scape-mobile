@@ -1,13 +1,12 @@
 package core.game.node.entity.skill;
 
+import content.global.leagues.GrandLeagueManager;
 import content.global.handlers.item.equipment.brawling_gloves.BrawlingGloves;
 import content.global.handlers.item.equipment.brawling_gloves.BrawlingGlovesManager;
-import content.global.leagues.GrandLeagueManager;
 import content.global.skill.skillcapeperks.SkillcapePerks;
 import core.ServerConstants;
 import core.game.event.DynamicSkillLevelChangeEvent;
 import core.game.event.XPGainEvent;
-import core.game.event.StaticSkillLevelUpEvent;
 import core.game.node.entity.Entity;
 import core.game.node.entity.combat.ImpactHandler;
 import core.game.node.entity.npc.NPC;
@@ -228,6 +227,9 @@ public final class Skills {
 				else experienceAdd += (0.02 * experienceAdd);
 			}
 		}
+		if (player != null) {
+			experienceAdd *= GrandLeagueManager.xpMultiplier(player, slot);
+		}
 		this.experience[slot] += experienceAdd;
 		if (this.experience[slot] >= 200000000) {
 			if(!already200m && !player.isArtificial()){
@@ -244,7 +246,6 @@ public final class Skills {
 		XPGainPlugins.run(player,slot,experienceAdd);
 		int newLevel = getStaticLevelByExperience(slot);
 		if (newLevel > staticLevels[slot]) {
-			int oldStaticLevel = staticLevels[slot];
 			int amount = newLevel - staticLevels[slot];
 			if (dynamicLevels[slot] < newLevel) {
 				dynamicLevels[slot] += amount;
@@ -255,7 +256,6 @@ public final class Skills {
 			staticLevels[slot] = newLevel;
 
 			if (entity instanceof Player) {
-				entity.dispatch(new StaticSkillLevelUpEvent(slot, oldStaticLevel, newLevel));
                             player.updateAppearance();
 			    LevelUp.levelup(player, slot, amount);
                             updateCombatLevel();
@@ -291,11 +291,7 @@ public final class Skills {
 	private double getExperienceMod(int slot, double experience, boolean playerMod, boolean multiplyer) {
 		//Keywords for people ctrl + Fing the project
 		//xprate xp rate xp multiplier skilling rate
-		double mod = experienceMultiplier;
-		if (entity instanceof Player) {
-			mod *= GrandLeagueManager.experienceMultiplier((Player) entity);
-		}
-		return mod;
+		return experienceMultiplier;
 		/*if (!(entity instanceof Player)) {
 			return 1.0;
 		}
@@ -588,7 +584,6 @@ public final class Skills {
 	 * @return The dynamic level.
 	 */
 	public int getLevel(int slot, boolean discardAssist) {
-		int playerLevel = getLeagueAdjustedLevel(slot, dynamicLevels[slot]);
 		if (!discardAssist) {
 			if (entity instanceof Player) {
 				final Player p = (Player) entity;
@@ -601,6 +596,7 @@ public final class Skills {
 						// assist.getSkills()[index] + ", " + SKILL_NAME[slot]);
 						if (assist.getSkills()[index]) {
 							int assistLevel = assister.getSkills().getLevel(slot);
+							int playerLevel = dynamicLevels[slot];
 							if (assistLevel > playerLevel) {
 								return assistLevel;
 							}
@@ -609,18 +605,7 @@ public final class Skills {
 				}
 			}
 		}
-		return playerLevel;
-	}
-
-	private int getLeagueAdjustedLevel(int slot, int dynamicLevel) {
-		if (!(entity instanceof Player)) {
-			return dynamicLevel;
-		}
-		int boost = GrandLeagueManager.skillLevelBoost((Player) entity, slot);
-		if (boost <= 0) {
-			return dynamicLevel;
-		}
-		return Math.max(dynamicLevel, getStaticLevel(slot) + boost);
+		return dynamicLevels[slot];
 	}
 
 	/**
@@ -736,9 +721,6 @@ public final class Skills {
 	 * @param amount The amount to decrement with.
 	 */
 	public void decrementPrayerPoints(double amount) {
-		if (amount > 0 && entity instanceof Player) {
-			amount *= GrandLeagueManager.prayerDrainMultiplier((Player) entity);
-		}
 		prayerPoints -= amount;
 		if (prayerPoints < 0) {
 			prayerPoints = 0;

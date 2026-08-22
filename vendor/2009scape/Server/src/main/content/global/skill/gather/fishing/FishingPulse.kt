@@ -1,7 +1,5 @@
 package content.global.skill.gather.fishing
 
-import content.global.leagues.GrandLeagueManager
-import content.global.leagues.core.LeagueOutputKind
 import content.global.skill.fishing.Fish
 import content.global.skill.fishing.FishingOption
 import content.global.skill.skillcapeperks.SkillcapePerks
@@ -9,6 +7,8 @@ import content.global.skill.skillcapeperks.SkillcapePerks.Companion.isActive
 import content.global.skill.summoning.familiar.Forager
 import core.api.*
 import core.game.event.ResourceProducedEvent
+import core.game.event.ResourceActivity
+import core.game.event.ResourceSkill
 import core.game.node.entity.npc.NPC
 import core.game.node.entity.player.Player
 import core.game.node.entity.player.link.skillertasks.SkillTasks
@@ -77,7 +77,7 @@ class FishingPulse(player: Player?, npc: NPC, private val option: FishingOption?
             stop()
             return false
         }
-        if (freeSlots(player) == 0 && !GrandLeagueManager.autoBanksResources(player)) {
+        if (freeSlots(player) == 0) {
             if (option.fish.contains(Fish.LOBSTER)) {
                 sendDialogue(player, "You can't carry any more lobsters.")
             } else {
@@ -120,26 +120,24 @@ class FishingPulse(player: Player?, npc: NPC, private val option: FishingOption?
             forager.handlePassiveAction()
         }
         if (success()) {
-            val canReceive = player.inventory.hasSpaceFor(Item(fish!!.id)) || GrandLeagueManager.autoBanksResources(player)
-            if (canReceive && option!!.removeBait(player)) {
+            if (player.inventory.hasSpaceFor(Item(fish!!.id)) && option!!.removeBait(player)) {
                 if (player.skillTasks.hasTask()) {
                     updateSkillTask()
                 }
+                player.dispatch(ResourceProducedEvent(fish!!.id, 1, node!!, -1, ResourceActivity.GATHERING, ResourceSkill.FISHING))
                 val item = fish!!
-                val leagueOutput = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.RESOURCE)
                 if (isActive(SkillcapePerks.GREAT_AIM, player) && RandomFunction.random(100) <= 5) {
                     addItemOrDrop(player, item.id)
                     player.sendMessage(colorize("%RYour expert aim catches you a second fish."))
                 }
-                GrandLeagueManager.deliverOutput(player, item.id, leagueOutput)
-                player.dispatch(ResourceProducedEvent(item.id, leagueOutput.amount, node!!))
+                addItemOrDrop(player, item.id)
                 var fishCaught = player.getAttribute(STATS_BASE + ":" + STATS_FISH, 0)
                 player.setAttribute("/save:$STATS_BASE:$STATS_FISH", ++fishCaught)
-                player.skills.addExperience(Skills.FISHING, fish!!.experience * leagueOutput.experienceUnits, true)
+                player.skills.addExperience(Skills.FISHING, fish!!.experience, true)
                 message(2)
             }
         }
-        return player.inventory.freeSlots() == 0 && !GrandLeagueManager.autoBanksResources(player)
+        return player.inventory.freeSlots() == 0
     }
 
     fun updateSkillTask() {

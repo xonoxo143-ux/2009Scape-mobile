@@ -1,5 +1,6 @@
 package core.game.node.entity.skill;
 
+import content.global.leagues.GrandLeagueManager;
 import content.global.skill.gather.SkillingResource;
 import content.data.skill.SkillingTool;
 import core.game.node.Node;
@@ -66,6 +67,33 @@ public abstract class SkillPulse<T extends Node> extends Pulse {
 		}
 		animate();
 		return reward();
+	}
+
+	/**
+	 * Production relics alter the shared pulse cadence rather than individual recipes.
+	 * Gathering packages are intentionally excluded and have their own League seam.
+	 */
+	@Override
+	public void setDelay(int delay) {
+		if (isLeagueProductionPulse()) {
+			delay = GrandLeagueManager.productionDelay(player, delay, isLeagueConstructionPulse());
+		}
+		super.setDelay(delay);
+	}
+
+	private boolean isLeagueProductionPulse() {
+		String name = getClass().getName();
+		return name.contains(".skill.cooking.")
+				|| name.contains(".skill.crafting.")
+				|| name.contains(".skill.smithing.")
+				|| name.contains(".skill.fletching.")
+				|| name.contains(".skill.herblore.")
+				|| name.contains(".skill.runecrafting.")
+				|| name.contains(".skill.construction.");
+	}
+
+	private boolean isLeagueConstructionPulse() {
+		return getClass().getName().contains(".skill.construction.");
 	}
 
 	@Override

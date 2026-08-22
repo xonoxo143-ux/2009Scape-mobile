@@ -3,6 +3,8 @@ package content.global.skill.cooking
 import content.region.misc.tutisland.handlers.TutorialStage
 import core.api.*
 import core.game.event.ResourceProducedEvent
+import core.game.event.ResourceActivity
+import core.game.event.ResourceSkill
 import core.game.node.entity.skill.Skills
 import core.game.node.item.Item
 import org.rs09.consts.Items
@@ -74,7 +76,7 @@ class DoughMakingListener : InteractionListener {
 
                         if (removeItem(player!!, waterContainer) && removeItem(player!!, flourContainer)) {
                             addItem(player!!, selectedDoughProduct.itemId)
-                            player!!.dispatch(ResourceProducedEvent(selectedDoughProduct.itemId, 1, player!!))
+                            player!!.dispatch(ResourceProducedEvent(selectedDoughProduct.itemId, 1, player!!, -1, ResourceActivity.PRODUCTION, ResourceSkill.COOKING))
 
                             val emptyWaterContainerId = FULL_WATER_CONTAINERS_TO_EMPTY_CONTAINERS[waterContainer.id]!!
                             addItem(player!!, emptyWaterContainerId)

@@ -185,9 +185,11 @@ abstract class CombatSwingHandler(var type: CombatStyle?) {
         if (victim is Player && entity is Familiar && victim.prayer[PrayerType.PROTECT_FROM_SUMMONING]) {
             mod = 0.0
         }
-        val leagueAccuracy = if (entity is Player) GrandLeagueManager.accuracyMultiplier(entity) else 1.0
+        val styleKey = style.name.lowercase()
+        val leagueAccuracy = if (entity is Player) GrandLeagueManager.combatAccuracyMultiplier(entity, styleKey) else 1.0
+        val defencePenetration = if (entity is Player) GrandLeagueManager.combatDefencePenetration(entity, styleKey) else 0.0
         val attack = calculateAccuracy(entity) * accuracyMod * mod * leagueAccuracy
-        val defence = calculateDefence(victim, entity) * defenceMod
+        val defence = calculateDefence(victim, entity) * defenceMod * (1.0 - defencePenetration.coerceIn(0.0, 0.95))
         val chance: Double = if (attack > defence) {
             1 - ((defence + 2) / (2 * (attack + 1)))
         } else {
@@ -424,6 +426,14 @@ abstract class CombatSwingHandler(var type: CombatStyle?) {
         var totalHit = 0
         if (entity is Player) {
             entity.familiarManager.adjustBattleState(state)
+            val styleKey = (state.style ?: type)?.name?.lowercase()
+            if (styleKey != null && state.estimatedHit > 0 && state.secondaryHit < 0) {
+                val chance = GrandLeagueManager.combatExtraHitChance(entity, styleKey)
+                val fraction = GrandLeagueManager.combatExtraHitDamageFraction(entity, styleKey)
+                if (fraction > 0.0 && Math.random() < chance) {
+                    state.secondaryHit = (state.estimatedHit * fraction).toInt().coerceAtLeast(1)
+                }
+            }
         }
         entity.sendImpact(state)
         victim.checkImpact(state)
@@ -587,14 +597,15 @@ abstract class CombatSwingHandler(var type: CombatStyle?) {
             if (player.equipment[3] != null && player.equipment[3].id == 14726 && state.style == CombatStyle.MAGIC) {
                 hit += (hit.toDouble() * 0.15).toInt()
             }
+            val styleKey = (state.style ?: type)?.name?.lowercase()
+            if (styleKey != null && hit > 0) {
+                hit = (hit * GrandLeagueManager.combatDamageMultiplier(player, styleKey)).toInt()
+            }
         }
         if (attacker is Familiar && victim is Player) {
             if (victim.prayer[PrayerType.PROTECT_FROM_SUMMONING]) {
                 hit = 0
             }
-        }
-        if (attacker is Player && hit > 0) {
-            hit = (hit * GrandLeagueManager.damageMultiplier(attacker)).toInt().coerceAtLeast(1)
         }
         return formatHit(victim, hit)
     }

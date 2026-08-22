@@ -1,5 +1,6 @@
 package content.global.skill.hunter.falconry;
 
+import content.global.leagues.GrandLeagueManager;
 import core.game.container.impl.EquipmentContainer;
 import core.game.node.entity.skill.SkillPulse;
 import core.game.node.entity.skill.Skills;
@@ -178,7 +179,8 @@ public final class FalconryCatchPulse extends SkillPulse<NPC> {
 		if (originalLocation != node.getLocation()) {
 			return RandomFunction.random(1, 3) == 2;
 		}
-		return ((RandomFunction.getRandom(3) * player.getSkills().getLevel(Skills.HUNTER)) / 3) > (falconCatch.getLevel() / 2);
+		double effectiveLevel = player.getSkills().getLevel(Skills.HUNTER) * GrandLeagueManager.hunterSuccessMultiplier(player);
+		return ((RandomFunction.getRandom(3) * effectiveLevel) / 3) > (falconCatch.getLevel() / 2);
 	}
 
 }

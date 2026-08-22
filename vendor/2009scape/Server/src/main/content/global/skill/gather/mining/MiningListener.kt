@@ -6,6 +6,8 @@ import content.global.activity.shootingstar.StarBonus
 import core.api.*
 import core.cache.def.impl.ItemDefinition
 import core.game.event.ResourceProducedEvent
+import core.game.event.ResourceActivity
+import core.game.event.ResourceSkill
 import core.game.interaction.IntType
 import core.game.interaction.InteractionListener
 import core.game.node.Node
@@ -65,7 +67,7 @@ class MiningListener : InteractionListener {
             reward = calculateReward(player, resource, isEssence, isGems, reward) // calculate rewards
             rewardAmount = calculateRewardAmount(player, isEssence, reward) // calculate amount
 
-            player.dispatch(ResourceProducedEvent(reward, rewardAmount, node))
+            player.dispatch(ResourceProducedEvent(reward, rewardAmount, node, -1, ResourceActivity.GATHERING, ResourceSkill.MINING))
 
             // Reward mining experience
             val experience = resource!!.experience * rewardAmount

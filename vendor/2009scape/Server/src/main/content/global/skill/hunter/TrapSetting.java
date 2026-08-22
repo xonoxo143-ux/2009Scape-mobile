@@ -1,5 +1,6 @@
 package content.global.skill.hunter;
 
+import content.global.leagues.GrandLeagueManager;
 import core.cache.def.impl.ItemDefinition;
 import core.cache.def.impl.SceneryDefinition;
 import core.game.node.Node;
@@ -346,6 +347,7 @@ public class TrapSetting {
 		double level = player.skills.getStaticLevel(Skills.HUNTER);
 		double req = node.getLevel();
 		double successChance = Math.ceil((level * 50 - req * 17) / req / 3 * 4);
+		successChance = Math.min(100.0, successChance * GrandLeagueManager.hunterSuccessMultiplier(player));
 		int roll = RandomFunction.random(99);
 		if (successChance >= roll) {
 			return true;

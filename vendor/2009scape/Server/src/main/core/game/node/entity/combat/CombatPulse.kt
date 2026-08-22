@@ -154,7 +154,7 @@ class CombatPulse(
                 speed = (speed * 1.5).toInt()
             }
             if (entity is Player) {
-                speed = (speed * GrandLeagueManager.attackSpeedMultiplier(entity)).toInt().coerceAtLeast(1)
+                speed = GrandLeagueManager.combatAttackInterval(entity, handler.type?.name?.lowercase() ?: "melee", speed)
             }
             setNextAttack(speed)
             temporaryHandler = null

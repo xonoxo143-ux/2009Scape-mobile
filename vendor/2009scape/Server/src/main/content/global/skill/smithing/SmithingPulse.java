@@ -1,11 +1,9 @@
 package content.global.skill.smithing;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
 import content.global.skill.skillcapeperks.SkillcapePerks;
 import core.game.event.ResourceProducedEvent;
+import core.game.event.ResourceActivity;
+import core.game.event.ResourceSkill;
 import core.cache.def.impl.ItemDefinition;
 import core.game.node.entity.player.Player;
 import core.game.node.entity.player.link.diary.DiaryType;
@@ -57,7 +55,7 @@ public class SmithingPulse extends SkillPulse<Item> {
     @Override
     public boolean checkRequirements() {
         if (!player.getInventory().contains(bar.getBarType().getBarType(), bar.getSmithingType().getRequired() * amount)) {
-            amount = player.getInventory().getAmount(new Item(bar.getBarType().getBarType())) / bar.getSmithingType().getRequired();
+            amount = player.getInventory().getAmount(new Item(bar.getBarType().getBarType()));
         }
         player.getInterfaceManager().close();
         if (player.getSkills().getLevel(Skills.SMITHING) < bar.getLevel()) {
@@ -94,63 +92,35 @@ public class SmithingPulse extends SkillPulse<Item> {
 
     @Override
     public boolean reward() {
-        LeagueOutputPlan plan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION);
-        boolean instant = plan.getInstantBatch();
-        if (!instant && getDelay() == 1) {
+        if (getDelay() == 1) {
             setDelay(4);
             return false;
         }
-
-        int requiredBars = bar.getSmithingType().getRequired();
-        int availableActions = player.getInventory().getAmount(new Item(bar.getBarType().getBarType())) / requiredBars;
-        int actions = instant ? Math.min(amount, availableActions) : Math.min(1, availableActions);
-        if (actions < 1) {
-            return true;
-        }
-
-        for (int action = 0; action < actions; action++) {
-            if (!processOne()) {
-                return true;
-            }
-            amount--;
-        }
-        return instant || amount < 1;
-    }
-
-    private boolean processOne() {
-        int requiredBars = bar.getSmithingType().getRequired();
-        if (!player.getInventory().remove(new Item(bar.getBarType().getBarType(), requiredBars))) {
-            return false;
-        }
-
-        int productAmount = bar.getSmithingType().getProductAmount();
-        LeagueResolvedOutput leagueOutput = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION);
-        final Item item = new Item(node.getId(), productAmount);
+        player.getInventory().remove(new Item(bar.getBarType().getBarType(), bar.getSmithingType().getRequired()));
+        final Item item = new Item(node.getId(), bar.getSmithingType().getProductAmount());
         player.getInventory().add(item);
-        GrandLeagueManager.deliverBonusOutput(player, item.getId(), leagueOutput, productAmount);
-        player.dispatch(new ResourceProducedEvent(
-                item.getId(),
-                productAmount * leagueOutput.getAmount(),
-                player,
-                bar.getBarType().getBarType()
-        ));
-        double actionExperience = bar.getBarType().getExperience() * requiredBars;
-        player.getSkills().addExperience(Skills.SMITHING, actionExperience * leagueOutput.getExperienceUnits(), true);
-
+        player.dispatch(new ResourceProducedEvent(item.getId(), item.getAmount(), player, bar.getBarType().getBarType(), ResourceActivity.PRODUCTION, ResourceSkill.SMITHING));
+        player.getSkills().addExperience(Skills.SMITHING, bar.getBarType().getExperience() * bar.getSmithingType().getRequired(), true);
         String message = StringUtils.isPlusN(ItemDefinition.forId(bar.getProduct()).getName().toLowerCase()) ? "an" : "a";
         player.getPacketDispatch().sendMessage("You hammer the " + bar.getBarType().getBarName().toLowerCase().replace("smithing", "") + "and make " + message + " " + ItemDefinition.forId(bar.getProduct()).getName().toLowerCase() + ".");
 
         if (bar == Bars.BLURITE_CROSSBOW_LIMBS
-                && player.getLocation().withinDistance(new Location(3000, 3145, 0), 10)) {
+                && player.getLocation().withinDistance(new Location(3000, 3145, 0), 10)) { // near Thurgo's anvil
             player.getAchievementDiaryManager().finishTask(player, DiaryType.FALADOR, 1, 9);
         }
+
+        // Smith a steel longsword on the anvil in the jailhouse<br><br>sewers
         if (bar == Bars.STEEL_LONGSWORD && player.getLocation().withinDistance(Location.create(3112, 9688, 0))) {
             player.getAchievementDiaryManager().finishTask(player, DiaryType.LUMBRIDGE, 2, 0);
         }
+
+        // Smith an adamantite medium helm on the south-east anvil in<br><br>Varrock, next to Aubury's Rune Shop
         if (bar == Bars.ADAMANT_MEDIUM_HELM && player.getLocation().withinDistance(Location.create(3247, 3404, 0))) {
             player.getAchievementDiaryManager().finishTask(player, DiaryType.VARROCK, 2, 3);
         }
-        return true;
+
+        amount--;
+        return amount < 1;
     }
 
     @Override

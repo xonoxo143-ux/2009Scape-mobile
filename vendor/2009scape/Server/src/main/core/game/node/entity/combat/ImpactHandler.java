@@ -1,5 +1,7 @@
 package core.game.node.entity.combat;
 
+import content.global.leagues.GrandLeagueManager;
+import content.global.leagues.core.LeagueLethalHitResult;
 import content.data.EnchantedJewellery;
 import core.game.container.impl.EquipmentContainer;
 import core.game.node.entity.skill.Skills;
@@ -12,6 +14,7 @@ import core.game.node.item.Item;
 import core.game.system.task.Pulse;
 import core.game.bots.AIPlayer;
 import core.game.world.GameWorld;
+import core.game.world.map.RegionManager;
 import core.game.world.map.zone.ZoneType;
 import core.game.world.repository.Repository;
 import org.rs09.consts.Items;
@@ -160,6 +163,39 @@ public final class ImpactHandler {
 			impactQueue.add(impact);
 			return impact;
 		}
+		if (entity instanceof Player && style != null && hit > 0) {
+			hit = GrandLeagueManager.incomingCombatDamage(entity.asPlayer(), style.name().toLowerCase(), hit);
+		}
+		if (entity instanceof core.game.node.entity.npc.NPC && source instanceof Player && style != null && hit > 0) {
+			hit = GrandLeagueManager.combatExecutionDamage(
+				source.asPlayer(), entity.getName(), entity.getSkills().getLifepoints(),
+				entity.getSkills().getMaximumLifepoints(), hit
+			);
+		}
+		if (entity instanceof Player && hit > 0) {
+			Player player = entity.asPlayer();
+			LeagueLethalHitResult interception = GrandLeagueManager.interceptLethalDamage(
+				player, hit, player.getSkills().getStaticLevel(Skills.PRAYER)
+			);
+			if (interception.getIntercepted()) {
+				player.getSkills().setLifepoints(interception.getRestoreHealth());
+				if (interception.getRestorePrayer() > 0) {
+					player.getSkills().setPrayerPoints(interception.getRestorePrayer());
+				}
+				if (interception.getRetaliationDamage() > 0 && interception.getRetaliationRadius() > 0) {
+					for (core.game.node.entity.npc.NPC npc : RegionManager.getLocalNpcs(player, interception.getRetaliationRadius())) {
+						boolean hostile = npc == source
+							|| npc.getProperties().getCombatPulse().getVictim() == player
+							|| player.getProperties().getCombatPulse().getVictim() == npc;
+						if (hostile && !DeathTask.isDead(npc)) {
+							npc.getImpactHandler().manualHit(player, interception.getRetaliationDamage(), HitsplatType.NORMAL);
+						}
+					}
+				}
+				player.getPacketDispatch().sendMessage("Your " + interception.getEffectId() + " prevents a fatal blow.");
+				hit = interception.getAcceptedDamage();
+			}
+		}
 		hit -= entity.getSkills().hit(hit);
 		if (type == null || type == HitsplatType.NORMAL) {
 			if (hit == 0) {
@@ -171,6 +207,15 @@ public final class ImpactHandler {
 			return null;
 		}
 		if (hit > 0) {
+			if (style != null && source instanceof Player) {
+				GrandLeagueManager.applyCombatSustain(source.asPlayer(), style.name().toLowerCase(), hit);
+			}
+			if (style != null && entity instanceof Player && source != null && source != entity) {
+				int reflected = GrandLeagueManager.reflectedCombatDamage(entity.asPlayer(), style.name().toLowerCase(), hit);
+				if (reflected > 0 && !DeathTask.isDead(source)) {
+					source.getImpactHandler().manualHit(entity, reflected, HitsplatType.NORMAL);
+				}
+			}
 			if (source instanceof Player) {
 				int uid = source.asPlayer().getDetails().getUid();
 				Integer value = playerImpactLog.get(uid);

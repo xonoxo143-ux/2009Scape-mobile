@@ -1,7 +1,10 @@
 package content.global.skill.crafting.glass
 
+import content.global.leagues.GrandLeagueManager
 import core.api.*
 import core.game.event.ResourceProducedEvent
+import core.game.event.ResourceActivity
+import core.game.event.ResourceSkill
 import core.game.node.entity.player.Player
 import core.game.node.entity.skill.Skills
 import core.game.system.task.Pulse
@@ -28,12 +31,12 @@ class GlassMakePulse(
             addItem(player, Items.BUCKET_1925)
             addItem(player, Items.MOLTEN_GLASS_1775)
             rewardXP(player, Skills.CRAFTING, 20.0)
-            player.dispatch(ResourceProducedEvent(product, amount, player))
+            player.dispatch(ResourceProducedEvent(product, 1, player, -1, ResourceActivity.PRODUCTION, ResourceSkill.CRAFTING))
 
         } else return true
 
         amount--
-        delay = 2
+        delay = GrandLeagueManager.productionDelay(player, 2)
 
         return false
     }

@@ -1,13 +1,12 @@
 package content.global.skill.gather.woodcutting;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueResolvedOutput;
 import content.data.tables.BirdNest;
 import content.global.skill.farming.FarmingPatch;
 import content.global.skill.farming.Patch;
 import content.global.skill.skillcapeperks.SkillcapePerks;
 import core.game.event.ResourceProducedEvent;
+import core.game.event.ResourceActivity;
+import core.game.event.ResourceSkill;
 import core.cache.def.impl.ItemDefinition;
 import core.game.container.impl.EquipmentContainer;
 import core.game.dialogue.FacialExpression;
@@ -108,7 +107,7 @@ public class WoodcuttingSkillPulse extends Pulse {
             player.getPacketDispatch().sendMessage("You do not have an axe to use.");
             return false;
         }
-        if (player.getInventory().freeSlots() < 1 && !GrandLeagueManager.autoBanksResources(player)) {
+        if (player.getInventory().freeSlots() < 1) {
             player.getDialogueInterpreter().sendDialogue("Your inventory is too full to hold any more " + ItemDefinition.forId(resource.getReward()).getName().toLowerCase() + ".");
             return false;
         }
@@ -160,18 +159,16 @@ public class WoodcuttingSkillPulse extends Pulse {
             reward = calculateReward(reward); // calculate rewards
             rewardAmount = calculateRewardAmount(reward); // calculate amount
 
-            LeagueResolvedOutput leagueOutput = GrandLeagueManager.resolveOutput(player, rewardAmount, LeagueOutputKind.RESOURCE);
-
-            //add experience; League variants can choose whether duplicated logs grant XP
-            double experience = calculateExperience(resource.reward, leagueOutput.getExperienceUnits());
+            //add experience
+            double experience = calculateExperience(resource.reward, rewardAmount);
 
             player.getSkills().addExperience(Skills.WOODCUTTING, experience, true);
 
             //send the message for the resource reward
             player.getPacketDispatch().sendMessage("You get some " + ItemDefinition.forId(reward).getName().toLowerCase() + ".");
             //give the reward
-            GrandLeagueManager.deliverOutput(player, reward, leagueOutput);
-            player.dispatch(new ResourceProducedEvent(reward, leagueOutput.getAmount(), node, -1));
+            player.getInventory().add(new Item(reward, rewardAmount));
+            player.dispatch(new ResourceProducedEvent(reward, rewardAmount, node, -1, ResourceActivity.GATHERING, ResourceSkill.WOODCUTTING));
             int cutLogs = player.getAttribute(STATS_BASE + ":" + STATS_LOGS,0);
             player.setAttribute("/save:" + STATS_BASE + ":" + STATS_LOGS,++cutLogs);
 

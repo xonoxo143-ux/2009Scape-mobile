@@ -255,6 +255,7 @@ public final class Settings {
 			return false;
 		}
 		setSpecialToggled(false);
+		amount = GrandLeagueManager.specialAttackCost(player, amount);
 		if (amount > specialEnergy) {
 			player.getPacketDispatch().sendMessage("You do not have enough special attack energy left.");
 			return false;
@@ -342,9 +343,7 @@ public final class Settings {
 	 * @param drain The drain amount.
 	 */
 	public void updateRunEnergy(double drain) {
-		if (drain > 0) {
-			drain *= GrandLeagueManager.runEnergyDrainMultiplier(player);
-		}
+		drain *= GrandLeagueManager.runEnergyMultiplier(player, drain);
 		runEnergy -= drain;
 		if (runEnergy < 0) {
 			runEnergy = 0.0;

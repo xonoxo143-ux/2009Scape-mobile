@@ -13,6 +13,8 @@ import core.api.*
 import core.cache.def.impl.ItemDefinition
 import core.game.container.impl.EquipmentContainer
 import core.game.event.ResourceProducedEvent
+import core.game.event.ResourceActivity
+import core.game.event.ResourceSkill
 import core.game.interaction.Clocks
 import core.game.interaction.IntType
 import core.game.interaction.InteractionListener
@@ -62,7 +64,7 @@ class WoodcuttingListener : InteractionListener {
         val tool = SkillingTool.getHatchet(player)
 
         if (!finishedMoving(player))
-            return restartScript(player) 
+            return restartScript(player)
 
         if (state == 0) {
             if (!checkWoodcuttingRequirements(player, resource, node)) {
@@ -135,7 +137,7 @@ class WoodcuttingListener : InteractionListener {
 
                 //give the reward
                 player.inventory.add(Item(reward, rewardAmount))
-                player.dispatch(ResourceProducedEvent(reward, rewardAmount, node, -1))
+                player.dispatch(ResourceProducedEvent(reward, rewardAmount, node, -1, ResourceActivity.GATHERING, ResourceSkill.WOODCUTTING))
                 var cutLogs = player.getAttribute("$STATS_BASE:$STATS_LOGS", 0)
                 player.setAttribute("/save:$STATS_BASE:$STATS_LOGS", ++cutLogs)
 

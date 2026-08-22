@@ -1,5 +1,6 @@
 package content.global.skill.hunter.bnet;
 
+import content.global.leagues.GrandLeagueManager;
 import core.game.container.impl.EquipmentContainer;
 import core.game.node.entity.skill.SkillPulse;
 import core.game.node.entity.skill.Skills;
@@ -139,7 +140,7 @@ public final class BNetPulse extends SkillPulse<NPC> {
 	 * @return {@code True} if succesful, {@code false} if not.
 	 */
 	private boolean isSuccessful() {
-		int huntingLevel = player.getSkills().getLevel(Skills.HUNTER);
+		int huntingLevel = (int) Math.ceil(player.getSkills().getLevel(Skills.HUNTER) * GrandLeagueManager.hunterSuccessMultiplier(player));
 		int level = type.getLevel();
 		if (type.hasNet(player)) {
 			Item net = player.getEquipment().get(EquipmentContainer.SLOT_WEAPON);

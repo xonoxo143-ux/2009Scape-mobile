@@ -1,5 +1,6 @@
 package core.game.node.entity.combat.spell;
 
+import content.global.leagues.GrandLeagueManager;
 import content.global.skill.magic.SpellUtils;
 import core.game.event.SpellCastEvent;
 import core.game.node.Node;
@@ -232,6 +233,10 @@ public abstract class MagicSpell implements Plugin<SpellType> {
 			}
 			if (remove) {
 				ArrayList<Item> toRemove = p.getAttribute("spell:runes", new ArrayList<>());
+				if (Math.random() < GrandLeagueManager.magicRuneSaveChance(p)) {
+					p.removeAttribute("spell:runes");
+					return true;
+				}
 				toRemove.forEach(i -> p.getInventory().remove(i));
 				p.removeAttribute("spell:runes");
 			}
@@ -239,7 +244,7 @@ public abstract class MagicSpell implements Plugin<SpellType> {
 		}
 		return true;
 	}
-	
+
 	/**
 	 * Checks the level requirement.
 	 * @param caster The caster.

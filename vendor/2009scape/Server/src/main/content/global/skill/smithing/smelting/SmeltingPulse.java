@@ -1,14 +1,11 @@
 package content.global.skill.smithing.smelting;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
-
 import static core.api.ContentAPIKt.*;
 
 import core.api.Container;
 import core.game.event.ResourceProducedEvent;
+import core.game.event.ResourceActivity;
+import core.game.event.ResourceSkill;
 import core.game.container.impl.EquipmentContainer;
 import core.tools.Log;
 import org.rs09.consts.Items;
@@ -126,89 +123,60 @@ public class SmeltingPulse extends SkillPulse<Item> {
 
     @Override
     public boolean reward() {
-        LeagueOutputPlan plan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION);
-        boolean instant = !superHeat && plan.getInstantBatch();
-        if (!superHeat && !instant && ++ticks % 5 != 0) {
+        if (!superHeat && ++ticks % 5 != 0) {
             return false;
         }
         if (!superHeat) {
             player.getPacketDispatch().sendMessage("You place the required ores and attempt to create a bar of " + StringUtils.formatDisplayName(bar.toString().toLowerCase()) + ".");
         }
-
-        int actions = instant ? Math.min(amount, availableActions()) : 1;
-        if (actions < 1) return true;
-        for (int action = 0; action < actions; action++) {
-            if (!processOneSmelt()) break;
-            amount--;
-        }
-        return instant || amount < 1;
-    }
-
-    private int availableActions() {
-        int actions = amount;
-        for (Item ore : bar.getOres()) {
-            actions = Math.min(actions, player.getInventory().getAmount(new Item(ore.getId())) / ore.getAmount());
-        }
-        return actions;
-    }
-
-    private boolean processOneSmelt() {
-        for (Item ore : bar.getOres()) {
-            if (!player.getInventory().remove(ore)) {
-                return false;
+        for (Item i : bar.getOres()) {
+            if (!player.getInventory().remove(i)) {
+                return true;
             }
         }
+        if (success(player)) {
+            // Varrock Armour secondary reward
+            int amt = (player.getInventory().freeSlots() != 0 && !superHeat
+                    && player.getLocation().withinDistance(Location.create(3107, 3500, 0)) // edgeville furnace
+                    && player.getInventory().containsItems(bar.getOres())
+                    && player.getAchievementDiaryManager().getDiary(DiaryType.VARROCK).getLevel() != -1
+                    && player.getAchievementDiaryManager().checkSmithReward(bar)
+                    && RandomFunction.random(100) <= 10) ? 2 : 1;
+            if (amt != 1) {
+                if (!player.getInventory().remove(bar.getOres())) {
+                    amt = 1;
+                } else {
+                    player.sendMessage("The magic of the Varrock armour enables you to smelt 2 bars at the same time.");
+                }
+            }
+            player.getInventory().add(new Item(bar.getProduct().getId(), amt));
+            player.dispatch(new ResourceProducedEvent(bar.getProduct().getId(), amt, player, -1, ResourceActivity.PRODUCTION, ResourceSkill.SMITHING));
+            double xp = bar.getExperience() * amt;
+            // Goldsmith gauntlets
+            if (((player.getEquipment().get(EquipmentContainer.SLOT_HANDS) != null
+                    && player.getEquipment().get(EquipmentContainer.SLOT_HANDS).getId() == Items.GOLDSMITH_GAUNTLETS_776))
+                    && bar.getProduct().getId() == 2357) {
+                xp = 56.2 * amt;
+            }
+            player.getSkills().addExperience(Skills.SMITHING, xp, true);
+            if (!superHeat) {
+                player.getPacketDispatch().sendMessage("You retrieve a bar of " + bar.getProduct().getName().toLowerCase().replace(" bar", "") + ".");
+            }
 
-        if (!success(player)) {
+            // Smelt a steel bar in the Lumbridge furnace
+            if (bar == Bar.STEEL && player.getLocation().withinDistance(Location.create(3226, 3254, 0))) {
+                player.getAchievementDiaryManager().finishTask(player, DiaryType.LUMBRIDGE, 1, 5);
+            }
+            // Smelt a silver bar in the Lumbridge furnace
+            if (bar == Bar.SILVER && player.getLocation().withinDistance(Location.create(3226, 3254, 0))) {
+                player.getAchievementDiaryManager().finishTask(player, DiaryType.LUMBRIDGE, 2, 7);
+            }
+
+        } else {
             player.getPacketDispatch().sendMessage("The ore is too impure and you fail to refine it.");
-            return true;
         }
-
-        // Varrock Armour secondary reward consumes a second complete ore set and
-        // therefore counts as a second ordinary bar for League bonus/XP purposes.
-        int baseBars = (player.getInventory().freeSlots() != 0 && !superHeat
-                && player.getLocation().withinDistance(Location.create(3107, 3500, 0))
-                && player.getInventory().containsItems(bar.getOres())
-                && player.getAchievementDiaryManager().getDiary(DiaryType.VARROCK).getLevel() != -1
-                && player.getAchievementDiaryManager().checkSmithReward(bar)
-                && RandomFunction.random(100) <= 10) ? 2 : 1;
-        if (baseBars != 1) {
-            if (!player.getInventory().remove(bar.getOres())) {
-                baseBars = 1;
-            } else {
-                player.sendMessage("The magic of the Varrock armour enables you to smelt 2 bars at the same time.");
-            }
-        }
-
-        // Superheat remains a spell action, not an instant Production Prodigy queue.
-        // It still receives the ordinary bar and XP but no League production bonus.
-        LeagueResolvedOutput output = superHeat
-                ? new LeagueResolvedOutput(baseBars, 0, baseBars, false, false, false)
-                : GrandLeagueManager.resolveOutput(player, baseBars, LeagueOutputKind.PRODUCTION);
-
-        player.getInventory().add(new Item(bar.getProduct().getId(), output.getBaseAmount()));
-        GrandLeagueManager.deliverBonusOutput(player, bar.getProduct().getId(), output);
-        player.dispatch(new ResourceProducedEvent(bar.getProduct().getId(), output.getAmount(), player, -1));
-
-        double xpPerBar = bar.getExperience();
-        if ((player.getEquipment().get(EquipmentContainer.SLOT_HANDS) != null
-                && player.getEquipment().get(EquipmentContainer.SLOT_HANDS).getId() == Items.GOLDSMITH_GAUNTLETS_776)
-                && bar.getProduct().getId() == 2357) {
-            xpPerBar = 56.2;
-        }
-        player.getSkills().addExperience(Skills.SMITHING, xpPerBar * output.getExperienceUnits(), true);
-
-        if (!superHeat) {
-            player.getPacketDispatch().sendMessage("You retrieve a bar of " + bar.getProduct().getName().toLowerCase().replace(" bar", "") + ".");
-        }
-
-        if (bar == Bar.STEEL && player.getLocation().withinDistance(Location.create(3226, 3254, 0))) {
-            player.getAchievementDiaryManager().finishTask(player, DiaryType.LUMBRIDGE, 1, 5);
-        }
-        if (bar == Bar.SILVER && player.getLocation().withinDistance(Location.create(3226, 3254, 0))) {
-            player.getAchievementDiaryManager().finishTask(player, DiaryType.LUMBRIDGE, 2, 7);
-        }
-        return true;
+        amount--;
+        return amount < 1;
     }
 
     /**
