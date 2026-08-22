@@ -7,19 +7,25 @@ import core.game.event.*
 import core.game.node.entity.Entity
 import core.game.node.entity.npc.NPC
 import core.game.node.entity.player.Player
+import core.game.node.entity.skill.Skills
 import core.game.node.item.Item
 import org.json.simple.JSONObject
 
 /** Thin 2009Scape adapter around the dependency-free Grand League domain engine. */
-class GrandLeagueManager(private val player: Player? = null) : LoginListener, PersistPlayer {
+class GrandLeagueManager(private val player: Player? = null) : LoginListener, LogoutListener, PersistPlayer {
     private var session: GrandLeagueSession = GrandLeagueSession()
 
     val profile: LeagueProfile
         get() = session.profile
 
-    fun enable(reset: Boolean = false) = session.enable(reset)
+    fun enable(reset: Boolean = false) {
+        session.enable(reset)
+        player?.let { GrandLeagueGuardianController.sync(it) }
+    }
     fun signal(signal: LeagueSignal): LeagueProgressUpdate = session.signal(signal)
-    fun selectRelic(id: String) = session.selectRelic(id)
+    fun selectRelic(id: String): LeagueActionResult = session.selectRelic(id).also { result ->
+        if (result.success) player?.let { GrandLeagueGuardianController.sync(it) }
+    }
     fun unlockRegion(id: String) = session.unlockRegion(id)
     fun unlockFragment(id: String) = session.unlockFragment(id)
     fun equipFragment(id: String) = session.equipFragment(id)
@@ -48,8 +54,14 @@ class GrandLeagueManager(private val player: Player? = null) : LoginListener, Pe
     override fun parsePlayer(player: Player, data: JSONObject) {
         val manager = getInstance(player)
         val raw = getAttribute(player, SAVE_KEY, "")
-        if (raw.isBlank()) return
-        manager.session = GrandLeagueSession(profile = LeagueProfileCodec.decode(raw))
+        if (raw.isNotBlank()) {
+            manager.session = GrandLeagueSession(profile = LeagueProfileCodec.decode(raw))
+        }
+        GrandLeagueGuardianController.sync(player)
+    }
+
+    override fun logout(player: Player) {
+        GrandLeagueGuardianController.clear(player)
     }
 
     private fun installHooks(player: Player) {
@@ -258,8 +270,37 @@ class GrandLeagueManager(private val player: Player? = null) : LoginListener, Pe
         private fun combatModifiers(player: Player, styleKey: String): LeagueCombatModifiers {
             if (player.isArtificial || !isActive(player)) return LeagueCombatModifiers()
             val style = LeagueCombatStyle.fromKey(styleKey) ?: return LeagueCombatModifiers()
-            return getInstance(player).modifiers().combat(style)
+            val manager = getInstance(player)
+            val combat = manager.modifiers().combat(style)
+            val prayer = manager.modifiers().prayer()
+            if (!prayer.enabled || !hasOffensivePrayer(player, style)) return combat
+            return combat.copy(
+                accuracyMultiplier = combat.accuracyMultiplier * prayer.accuracyMultiplier,
+                damageMultiplier = combat.damageMultiplier * prayer.damageMultiplier
+            )
         }
+
+        private fun hasOffensivePrayer(player: Player, style: LeagueCombatStyle? = null): Boolean {
+            val skills = when (style) {
+                LeagueCombatStyle.MELEE -> setOf(Skills.ATTACK, Skills.STRENGTH)
+                LeagueCombatStyle.RANGED -> setOf(Skills.RANGE)
+                LeagueCombatStyle.MAGIC -> setOf(Skills.MAGIC)
+                null -> setOf(Skills.ATTACK, Skills.STRENGTH, Skills.RANGE, Skills.MAGIC)
+            }
+            return player.prayer.active.any { prayer -> prayer.bonuses.any { it.skillId in skills } }
+        }
+
+        @JvmStatic
+        fun prayerDrainMultiplier(player: Player): Double {
+            if (player.isArtificial || !isActive(player) || !hasOffensivePrayer(player)) return 1.0
+            val prayer = getInstance(player).modifiers().prayer()
+            return if (prayer.enabled) prayer.drainMultiplier else 1.0
+        }
+
+        @JvmStatic
+        fun guardianModifiers(player: Player): LeagueGuardianModifiers =
+            if (player.isArtificial || !isActive(player)) LeagueGuardianModifiers()
+            else getInstance(player).modifiers().guardian()
 
         @JvmStatic
         fun combatAccuracyMultiplier(player: Player, styleKey: String): Double =

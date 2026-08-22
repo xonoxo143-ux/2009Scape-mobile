@@ -3,6 +3,9 @@ import content.global.leagues.core.*
 import core.game.event.*
 import core.game.node.entity.npc.NPC
 import core.game.node.entity.player.Player
+import core.game.node.entity.player.link.prayer.PrayerType
+import core.game.node.entity.skill.SkillBonus
+import core.game.node.entity.skill.Skills
 import core.game.node.item.Item
 import org.json.simple.JSONObject
 
@@ -96,6 +99,31 @@ fun main() {
     check(GrandLeagueManager.combatDamageMultiplier(magicPlayer, "magic") == 1.10)
     check(GrandLeagueManager.combatAttackInterval(magicPlayer, "magic", 5) == 3)
     check(GrandLeagueManager.magicRuneSaveChance(magicPlayer) == 0.90)
+
+    val ruinousPlayer = Player("ruinous")
+    plugin.login(ruinousPlayer)
+    val ruinous = GrandLeagueManager.getInstance(ruinousPlayer)
+    ruinous.enable(reset = true)
+    ruinous.profile.tier = 8
+    check(ruinous.selectRelic("ruinous-powers").success)
+    check(GrandLeagueManager.combatAccuracyMultiplier(ruinousPlayer, "ranged") == 1.0)
+    check(GrandLeagueManager.prayerDrainMultiplier(ruinousPlayer) == 1.0)
+    ruinousPlayer.prayer.active += PrayerType(arrayOf(SkillBonus(Skills.RANGE)))
+    check(GrandLeagueManager.combatAccuracyMultiplier(ruinousPlayer, "ranged") == 1.10)
+    check(GrandLeagueManager.combatDamageMultiplier(ruinousPlayer, "ranged") == 1.05)
+    check(GrandLeagueManager.combatAccuracyMultiplier(ruinousPlayer, "melee") == 1.0)
+    check(GrandLeagueManager.prayerDrainMultiplier(ruinousPlayer) == 1.25)
+
+    val guardianPlayer = Player("guardian")
+    plugin.login(guardianPlayer)
+    val guardian = GrandLeagueManager.getInstance(guardianPlayer)
+    guardian.enable(reset = true)
+    guardian.profile.tier = 8
+    check(guardian.selectRelic("guardian").success)
+    check(guardianPlayer.attrs["guardian-enabled"] == true)
+    check(GrandLeagueManager.guardianModifiers(guardianPlayer).accuracyRoll == 45_000)
+    plugin.logout(guardianPlayer)
+    check("guardian-enabled" !in guardianPlayer.attrs)
 
     val berserkerPlayer = Player("berserker")
     plugin.login(berserkerPlayer)

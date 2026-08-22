@@ -64,6 +64,29 @@ fun main() {
     close(snapshot.combat(LeagueCombatStyle.RANGED).defencePenetration, 0.10)
     close(snapshot.combat(LeagueCombatStyle.RANGED).ammoSaveChance, 0.50)
 
+    // Companion and prayer relics resolve into dedicated snapshots rather than leaking
+    // their source ids into gameplay systems.
+    val capstones = LeagueProfile(
+        active = true,
+        tier = 8,
+        selectedRelics = linkedMapOf(6 to "ruinous-powers", 8 to "guardian")
+    )
+    snapshot = LeagueEffectResolver(content).resolve(capstones, emptySet())
+    val prayer = snapshot.prayer()
+    check(prayer.enabled)
+    close(prayer.accuracyMultiplier, 1.10)
+    close(prayer.damageMultiplier, 1.05)
+    close(prayer.drainMultiplier, 1.25)
+    val guardian = snapshot.guardian()
+    check(guardian.enabled)
+    check(guardian.minimumHit == 6 && guardian.maximumHit == 15)
+    check(guardian.attackIntervalTicks == 5)
+    check(guardian.accuracyRoll == 45_000)
+    val evenRolls = LeagueGuardianCombat.hitChance(45_000, 45_000)
+    check(evenRolls in 0.49..0.51)
+    check(LeagueGuardianCombat.isAccurate(45_000, 45_000, 0.49))
+    check(!LeagueGuardianCombat.isAccurate(45_000, 45_000, 0.51))
+
     // Second-wave combat effects cover low-HP scaling, sustain, repeat hits and defence.
     profile.unlockedMasteries.clear()
     profile.unlockedPacts.clear()

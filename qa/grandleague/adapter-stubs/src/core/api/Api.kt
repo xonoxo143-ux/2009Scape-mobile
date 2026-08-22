@@ -4,6 +4,7 @@ import core.game.node.entity.player.Player
 import core.game.node.item.Item
 import org.json.simple.JSONObject
 interface LoginListener { fun login(player:Player) }
+interface LogoutListener { fun logout(player:Player) }
 interface PersistPlayer { fun savePlayer(player:Player, save:JSONObject); fun parsePlayer(player:Player, data:JSONObject) }
 object Event {
     @JvmStatic val ResourceProduced = ResourceProducedEvent::class.java

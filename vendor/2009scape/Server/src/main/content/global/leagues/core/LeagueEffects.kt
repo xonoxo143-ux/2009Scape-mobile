@@ -24,6 +24,8 @@ enum class LeagueEffectScope {
     MINING,
     WOODCUTTING,
     CONSTRUCTION,
+    PRAYER,
+    COMPANION,
     COMBAT,
     MELEE,
     RANGED,
@@ -70,13 +72,24 @@ enum class LeagueModifierKey(val baseValue: Double, val stacking: LeagueStacking
     EXECUTION_THRESHOLD_NORMAL(0.0, LeagueStacking.MAX),
     EXECUTION_THRESHOLD_BOSS(0.0, LeagueStacking.MAX),
 
+    OFFENSIVE_PRAYER_ACCURACY_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    OFFENSIVE_PRAYER_DAMAGE_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+    PRAYER_DRAIN_MULTIPLIER(1.0, LeagueStacking.MULTIPLY),
+
+    GUARDIAN_MIN_HIT(0.0, LeagueStacking.MAX),
+    GUARDIAN_MAX_HIT(0.0, LeagueStacking.MAX),
+    GUARDIAN_ATTACK_INTERVAL_TICKS(0.0, LeagueStacking.MAX),
+    GUARDIAN_ACCURACY_ROLL(0.0, LeagueStacking.MAX),
+
     // Capability-style switches use MAX and values of 0/1.
     BANK_BONUS_RESOURCES(0.0, LeagueStacking.MAX),
     PORTABLE_NOTE(0.0, LeagueStacking.MAX),
     FAIRY_FLIGHT(0.0, LeagueStacking.MAX),
     GLOBETROTTER(0.0, LeagueStacking.MAX),
     FARM_DISEASE_IMMUNITY(0.0, LeagueStacking.MAX),
-    THIEVING_AUTO_REPEAT(0.0, LeagueStacking.MAX)
+    THIEVING_AUTO_REPEAT(0.0, LeagueStacking.MAX),
+    RUINOUS_POWERS(0.0, LeagueStacking.MAX),
+    GUARDIAN_COMPANION(0.0, LeagueStacking.MAX)
 }
 
 data class LeagueEffectDefinition(
@@ -230,6 +243,31 @@ class LeagueModifierSnapshot internal constructor(
         )
     }
 
+    fun prayer(): LeaguePrayerModifiers {
+        val scopes = setOf(LeagueEffectScope.PRAYER)
+        return LeaguePrayerModifiers(
+            enabled = enabled(LeagueModifierKey.RUINOUS_POWERS, scopes),
+            accuracyMultiplier = value(LeagueModifierKey.OFFENSIVE_PRAYER_ACCURACY_MULTIPLIER, scopes),
+            damageMultiplier = value(LeagueModifierKey.OFFENSIVE_PRAYER_DAMAGE_MULTIPLIER, scopes),
+            drainMultiplier = value(LeagueModifierKey.PRAYER_DRAIN_MULTIPLIER, scopes)
+        )
+    }
+
+    fun guardian(): LeagueGuardianModifiers {
+        val scopes = setOf(LeagueEffectScope.COMPANION)
+        val enabled = enabled(LeagueModifierKey.GUARDIAN_COMPANION, scopes)
+        if (!enabled) return LeagueGuardianModifiers()
+        val minimum = value(LeagueModifierKey.GUARDIAN_MIN_HIT, scopes).toInt().coerceAtLeast(0)
+        val maximum = value(LeagueModifierKey.GUARDIAN_MAX_HIT, scopes).toInt().coerceAtLeast(minimum)
+        return LeagueGuardianModifiers(
+            enabled = true,
+            minimumHit = minimum,
+            maximumHit = maximum,
+            attackIntervalTicks = value(LeagueModifierKey.GUARDIAN_ATTACK_INTERVAL_TICKS, scopes).toInt().coerceAtLeast(1),
+            accuracyRoll = value(LeagueModifierKey.GUARDIAN_ACCURACY_ROLL, scopes).toInt().coerceAtLeast(0)
+        )
+    }
+
     /**
      * Equilibrium-style XP is deliberately expressed as a smooth deficit curve instead
      * of a one-off skill patch. At/above average it contributes nothing; at zero XP it
@@ -297,6 +335,21 @@ data class LeagueHunterModifiers(
     val successMultiplier: Double = 1.0
 )
 
+data class LeaguePrayerModifiers(
+    val enabled: Boolean = false,
+    val accuracyMultiplier: Double = 1.0,
+    val damageMultiplier: Double = 1.0,
+    val drainMultiplier: Double = 1.0
+)
+
+data class LeagueGuardianModifiers(
+    val enabled: Boolean = false,
+    val minimumHit: Int = 0,
+    val maximumHit: Int = 0,
+    val attackIntervalTicks: Int = 1,
+    val accuracyRoll: Int = 0
+)
+
 enum class LeagueCombatStyle(val scope: LeagueEffectScope) {
     MELEE(LeagueEffectScope.MELEE),
     RANGED(LeagueEffectScope.RANGED),
@@ -340,6 +393,25 @@ data class LeagueCombatModifiers(
         if (currentHealth <= 0 || maximumHealth <= 0) return false
         val threshold = if (boss) bossExecutionThreshold else normalExecutionThreshold
         return threshold > 0.0 && currentHealth.toDouble() / maximumHealth.toDouble() < threshold
+    }
+}
+
+object LeagueGuardianCombat {
+    /** The same attack-roll curve used by 2009Scape combat, exposed for deterministic companion QA. */
+    fun hitChance(accuracyRoll: Int, defenceRoll: Int): Double {
+        require(accuracyRoll >= 0 && defenceRoll >= 0)
+        val attack = accuracyRoll.toDouble()
+        val defence = defenceRoll.toDouble()
+        return if (attack > defence) {
+            1.0 - ((defence + 2.0) / (2.0 * (attack + 1.0)))
+        } else {
+            attack / (2.0 * (defence + 1.0))
+        }.coerceIn(0.0, 1.0)
+    }
+
+    fun isAccurate(accuracyRoll: Int, defenceRoll: Int, roll: Double): Boolean {
+        require(roll >= 0.0 && roll < 1.0)
+        return roll < hitChance(accuracyRoll, defenceRoll)
     }
 }
 

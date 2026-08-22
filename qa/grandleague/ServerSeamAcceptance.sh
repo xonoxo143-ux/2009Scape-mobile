@@ -67,6 +67,16 @@ require 'GrandLeagueManager.reflectedCombatDamage' "$SERVER/core/game/node/entit
 require 'GrandLeagueManager.specialAttackCost' "$SERVER/core/game/node/entity/player/link/Settings.java"
 require 'GrandLeagueManager.specialEnergyRestore' "$SERVER/core/game/system/timer/impl/SkillRestore.kt"
 
+# Ruinous Powers layers on matching offensive prayers only, and charges its extra drain once
+# through the prayer manager rather than patching individual prayer definitions.
+require 'GrandLeagueManager.prayerDrainMultiplier' "$SERVER/core/game/node/entity/player/link/prayer/Prayer.java"
+require 'hasOffensivePrayer' "$SERVER/content/global/leagues/GrandLeagueManager.kt"
+
+# Guardian lifecycle and combat live in one companion controller driven by resolved modifiers.
+require 'GrandLeagueManager.guardianModifiers' "$SERVER/content/global/leagues/GrandLeagueGuardianController.java"
+require 'LeagueGuardianCombat.INSTANCE.isAccurate' "$SERVER/content/global/leagues/GrandLeagueGuardianController.java"
+require 'getAttackIntervalTicks' "$SERVER/content/global/leagues/GrandLeagueGuardianController.java"
+
 # Production output is modified once, from ResourceProducedEvent in the manager.
 # The discarded branch also modified individual skill handlers, which applied the
 # same bonus a second time and could create a self-feeding Production Prodigy loop.

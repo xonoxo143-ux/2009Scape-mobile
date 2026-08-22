@@ -1,5 +1,6 @@
 package core.game.node.entity.player
 import core.game.node.entity.Entity
+import core.game.node.entity.player.link.prayer.Prayer
 class SkillsStub {
     var totalLevel:Int = 1
     var lifepoints:Int = 100
@@ -15,6 +16,7 @@ class SkillsStub {
 class Player(val username:String="test", val isArtificial:Boolean=false): Entity() {
     val attrs = mutableMapOf<String,Any>()
     val skills = SkillsStub()
+    val prayer = Prayer()
     val inventoryItems = mutableMapOf<Int,Int>()
     val bankItems = mutableMapOf<Int,Int>()
 }

@@ -1,5 +1,6 @@
 package core.game.node.entity.player.link.prayer;
 
+import content.global.leagues.GrandLeagueManager;
 import content.global.skill.skillcapeperks.SkillcapePerks;
 import core.game.node.entity.skill.SkillBonus;
 import core.game.node.entity.skill.Skills;
@@ -151,6 +152,7 @@ public final class Prayer {
 				amountDrain = 0;
 			}
 
+			amountDrain *= GrandLeagueManager.prayerDrainMultiplier(getPlayer());
 			getPlayer().getSkills().decrementPrayerPoints(amountDrain);
 		}
 	}

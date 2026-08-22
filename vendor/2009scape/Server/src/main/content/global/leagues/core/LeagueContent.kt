@@ -359,7 +359,13 @@ object GrandLeagueContent {
                 fx(LeagueModifierKey.FARM_YIELD_MULTIPLIER, 2.0, LeagueEffectScope.FARMING),
                 fx(LeagueModifierKey.FARM_DISEASE_IMMUNITY, 1.0, LeagueEffectScope.FARMING)
             )),
-        LeagueRelicDefinition("ruinous-powers", 6, "Ruinous Powers", LeagueSource.TRAILBLAZER_RELOADED),
+        LeagueRelicDefinition("ruinous-powers", 6, "Ruinous Powers", LeagueSource.TRAILBLAZER_RELOADED,
+            "Offensive prayers gain 10% accuracy and 5% damage while draining Prayer 25% faster.", listOf(
+                fx(LeagueModifierKey.RUINOUS_POWERS, 1.0, LeagueEffectScope.PRAYER),
+                fx(LeagueModifierKey.OFFENSIVE_PRAYER_ACCURACY_MULTIPLIER, 1.10, LeagueEffectScope.PRAYER),
+                fx(LeagueModifierKey.OFFENSIVE_PRAYER_DAMAGE_MULTIPLIER, 1.05, LeagueEffectScope.PRAYER),
+                fx(LeagueModifierKey.PRAYER_DRAIN_MULTIPLIER, 1.25, LeagueEffectScope.PRAYER)
+            )),
         LeagueRelicDefinition("soul-stealer", 7, "Soul Stealer", LeagueSource.TRAILBLAZER_RELOADED,
             "Damage dealt restores Hitpoints and Prayer.", listOf(
                 fx(LeagueModifierKey.LIFESTEAL_FRACTION, 0.10, LeagueEffectScope.COMBAT),
@@ -395,7 +401,14 @@ object GrandLeagueContent {
                 )
             )
         ),
-        LeagueRelicDefinition("guardian", 8, "Guardian", LeagueSource.TRAILBLAZER_RELOADED)
+        LeagueRelicDefinition("guardian", 8, "Guardian", LeagueSource.TRAILBLAZER_RELOADED,
+            "A permanent combat companion attacks your current foe for 6-15 damage every five ticks.", listOf(
+                fx(LeagueModifierKey.GUARDIAN_COMPANION, 1.0, LeagueEffectScope.COMPANION),
+                fx(LeagueModifierKey.GUARDIAN_MIN_HIT, 6.0, LeagueEffectScope.COMPANION),
+                fx(LeagueModifierKey.GUARDIAN_MAX_HIT, 15.0, LeagueEffectScope.COMPANION),
+                fx(LeagueModifierKey.GUARDIAN_ATTACK_INTERVAL_TICKS, 5.0, LeagueEffectScope.COMPANION),
+                fx(LeagueModifierKey.GUARDIAN_ACCURACY_ROLL, 45_000.0, LeagueEffectScope.COMPANION)
+            ))
     )
 
     private fun createRegions() = listOf(
