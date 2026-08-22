@@ -67,6 +67,18 @@ require 'GrandLeagueManager.reflectedCombatDamage' "$SERVER/core/game/node/entit
 require 'GrandLeagueManager.specialAttackCost' "$SERVER/core/game/node/entity/player/link/Settings.java"
 require 'GrandLeagueManager.specialEnergyRestore' "$SERVER/core/game/system/timer/impl/SkillRestore.kt"
 
+# Production output is modified once, from ResourceProducedEvent in the manager.
+# The discarded branch also modified individual skill handlers, which applied the
+# same bonus a second time and could create a self-feeding Production Prodigy loop.
+test ! -e "$SERVER/content/global/leagues/core/LeagueOutput.kt"
+if grep -R -n -E \
+    --include='*.java' --include='*.kt' \
+    'LeagueOutputKind|outputPlan\(|resolveOutput\(|deliverBonusOutput\(' \
+    "$SERVER/content/global/handlers" "$SERVER/content/global/skill"; then
+    echo 'Stale direct League output adapter found; production must use ResourceProducedEvent.' >&2
+    exit 1
+fi
+
 # Guard event-quantity corrections that prevent production relics multiplying batch counters.
 require 'dairy.getProduct().getAmount()' "$SERVER/content/global/skill/cooking/dairy/DairyChurnPulse.java"
 require 'ResourceProducedEvent(product, 1' "$SERVER/content/global/skill/crafting/glass/GlassMakePulse.kt"

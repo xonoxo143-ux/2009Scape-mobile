@@ -1,0 +1,147 @@
+name: Grand Leagues Canonical Java 8 Local Server
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - grand-leagues-canonical
+    paths:
+      - 'vendor/2009scape/Server/**'
+      - 'qa/grandleague/**'
+      - 'scripts/grandleague/prepare_java8_local_server.py'
+      - 'scripts/grandleague/verify_java8_jar.py'
+      - '.github/workflows/canonical-java8-local-server.yml'
+
+concurrency:
+  group: grand-leagues-canonical-java8-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  prove-java8-local-server:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout canonical branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Publish run id
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p ci
+          printf 'run_id=%s\nsha=%s\n' '${{ github.run_id }}' '${{ github.sha }}' > ci/canonical-java8-run-id.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ci/canonical-java8-run-id.txt
+          git commit -m 'Record canonical Java 8 run id' || true
+          git pull --rebase origin grand-leagues-canonical
+          git push origin HEAD:grand-leagues-canonical
+
+      - name: Set up actual JDK 8 compiler and runtime
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '8'
+          cache: maven
+          cache-dependency-path: vendor/2009scape/Server/pom.xml
+
+      - name: Recover cache for the boot probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CACHE_DIR=vendor/2009scape/Server/data/cache
+          rm -rf "$CACHE_DIR"
+          mkdir -p "$CACHE_DIR"
+          curl --fail --location --silent --show-error \
+            'https://api.github.com/repos/2009scape/Singleplayer-Edition-Linux/contents/data/cache?ref=master' \
+            -o /tmp/cache-list.json
+          python3 - <<'PY'
+          import json, pathlib, urllib.request
+          destination = pathlib.Path('vendor/2009scape/Server/data/cache')
+          for item in json.load(open('/tmp/cache-list.json')):
+              url = item.get('download_url')
+              if url:
+                  urllib.request.urlretrieve(url, destination / item['name'])
+          PY
+          test -s "$CACHE_DIR/main_file_cache.dat2"
+          sha256sum "$CACHE_DIR/main_file_cache.dat2" | tee canonical-cache-sha256.txt
+
+      - name: Prepare canonical source for Java 8 and loopback
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 scripts/grandleague/prepare_java8_local_server.py vendor/2009scape/Server
+
+      - name: Compile canonical Grand Leagues on JDK 8
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -version 2>&1 | tee canonical-java8-version.txt
+          test "$(java -XshowSettings:properties -version 2>&1 | sed -n 's/^[[:space:]]*java.specification.version = //p')" = '1.8'
+          cd vendor/2009scape/Server
+          ./mvnw -B -ntp -DskipTests clean package 2>&1 | tee "$GITHUB_WORKSPACE/canonical-java8-maven.log"
+          JAR="$(find target -maxdepth 1 -type f -name '*jar-with-dependencies*.jar' -print -quit)"
+          test -n "$JAR"
+          test -s "$JAR"
+          jar tf "$JAR" | grep -q 'content/global/leagues/core/GrandLeagueSession.class'
+          jar tf "$JAR" | grep -q 'content/global/leagues/core/LeagueLethalHitResult.class'
+          cp "$JAR" "$GITHUB_WORKSPACE/grand-leagues-canonical-java8-server.jar"
+
+      - name: Verify Java 8 classpath bytecode
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 scripts/grandleague/verify_java8_jar.py \
+            grand-leagues-canonical-java8-server.jar \
+            canonical-java8-bytecode-report.txt
+
+      - name: Boot canonical server and prove loopback-only socket
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd vendor/2009scape/Server
+          java -jar "$GITHUB_WORKSPACE/grand-leagues-canonical-java8-server.jar" \
+            worldprops/local-singleplayer.conf > "$GITHUB_WORKSPACE/canonical-java8-smoke.log" 2>&1 &
+          SERVER_PID=$!
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in $(seq 1 120); do
+            if (echo > /dev/tcp/127.0.0.1/43595) 2>/dev/null; then
+              echo 'CANONICAL_JAVA8_LOCAL_SERVER_TCP_READY=1' | tee "$GITHUB_WORKSPACE/canonical-java8-smoke-result.txt"
+              break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              cat "$GITHUB_WORKSPACE/canonical-java8-smoke.log" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          cd "$GITHUB_WORKSPACE"
+          grep -q 'CANONICAL_JAVA8_LOCAL_SERVER_TCP_READY=1' canonical-java8-smoke-result.txt
+          ss -ltnp | tee canonical-java8-listeners.txt
+          grep -Eq '(127\.0\.0\.1|\[::ffff:127\.0\.0\.1\]):43595' canonical-java8-listeners.txt
+          ! grep -Eq '(0\.0\.0\.0|\[::\]|\*):43595' canonical-java8-listeners.txt
+          tail -200 canonical-java8-smoke.log
+
+      - name: Upload proven canonical Java 8 local server
+        uses: actions/upload-artifact@v4
+        with:
+          name: grand-leagues-canonical-java8-local-server
+          path: |
+            grand-leagues-canonical-java8-server.jar
+            canonical-java8-version.txt
+            canonical-java8-maven.log
+            canonical-java8-bytecode-report.txt
+            canonical-java8-smoke.log
+            canonical-java8-smoke-result.txt
+            canonical-java8-listeners.txt
+            canonical-cache-sha256.txt
+            vendor/2009scape/Server/worldprops/local-singleplayer.conf
+          if-no-files-found: error
+          retention-days: 14

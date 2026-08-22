@@ -10,6 +10,10 @@ on:
       - 'qa/grandleague/**'
       - '.github/workflows/canonical-server-ci.yml'
 
+concurrency:
+  group: grand-leagues-canonical-server-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -20,6 +24,8 @@ jobs:
     steps:
       - name: Checkout canonical branch
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Publish run id
         if: github.event_name == 'push'
@@ -32,6 +38,7 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add ci/canonical-server-run-id.txt
           git commit -m 'Record canonical server run id' || true
+          git pull --rebase origin grand-leagues-canonical
           git push origin HEAD:grand-leagues-canonical
 
       - name: Set up JDK 11
