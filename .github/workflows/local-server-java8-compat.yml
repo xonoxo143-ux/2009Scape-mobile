@@ -31,11 +31,11 @@ jobs:
           git commit -m 'Record Java 8 server run id' || true
           git push origin HEAD:local-server-spike
 
-      - name: Set up JDK 11 compiler
-        uses: actions/setup-java@v4
+      - name: Set up JDK 8 compiler and runtime
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '11'
+          java-version: '8'
 
       - name: Clone current server without LFS smudge
         shell: bash
@@ -80,7 +80,8 @@ jobs:
               assert old in s, f'missing expected text in {path}: {old!r}'
               p.write_text(s.replace(old, new, count))
 
-          # Build bytecode compatible with the JRE already used by the Android client.
+          # Build on JDK 8 itself so javac and kotlinc cannot link Java 9+ API
+          # signatures while merely emitting Java 8 class-file versions.
           replace('pom.xml', '<kotlin.compiler.jvmTarget>11</kotlin.compiler.jvmTarget>', '<kotlin.compiler.jvmTarget>1.8</kotlin.compiler.jvmTarget>')
           replace('pom.xml', '<maven.compiler.source>11</maven.compiler.source>', '<maven.compiler.source>1.8</maven.compiler.source>')
           replace('pom.xml', '<maven.compiler.target>11</maven.compiler.target>', '<maven.compiler.target>1.8</maven.compiler.target>')
@@ -119,10 +120,12 @@ jobs:
           conf.write_text(s)
           PY
 
-      - name: Compile Java-8-targeted fat JAR
+      - name: Compile against the Java 8 API surface
         shell: bash
         run: |
           set -euxo pipefail
+          java -version 2>&1 | tee java8-compiler-version.txt
+          test "$(java -XshowSettings:properties -version 2>&1 | sed -n 's/^[[:space:]]*java.specification.version = //p')" = '1.8'
           cd server-source/Server
           ./mvnw -DskipTests clean package 2>&1 | tee ../../maven-java8-compat.log
           JAR="$(find target -maxdepth 1 -type f -name '*jar-with-dependencies*.jar' -print -quit)"
@@ -217,12 +220,6 @@ jobs:
           echo "Multi-release Java 9+ entries (reported but not Java 8 classpath entries): ${{ steps.bytecode.outputs.multi_release_bad_count }}"
           exit 1
 
-      - name: Set up Java 8 runtime
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '8'
-
       - name: Boot on Java 8 and prove loopback-only socket
         shell: bash
         run: |
@@ -259,6 +256,7 @@ jobs:
             server-source-sha.txt
             archived-cache-sha256.txt
             maven-java8-compat.log
+            java8-compiler-version.txt
             java8-version.txt
             server-java8-smoke.log
             smoke-result.txt
