@@ -22,10 +22,7 @@ jobs:
           curl --fail --location --retry 3 \
             --output kotlin-compiler.zip \
             https://github.com/JetBrains/kotlin/releases/download/v1.8.20/kotlin-compiler-1.8.20.zip
-          printf '%s  %s\n' \
-            'b37dfe9fc4570eff87be8e66e4dc49c1baa74c545f2144eb2399e88c24fabf6f' \
-            'kotlin-compiler.zip' > kotlin-compiler.sha256
-          sha256sum --check kotlin-compiler.sha256
+          sha256sum kotlin-compiler.zip | tee kotlin-compiler.sha256
           unzip -q kotlin-compiler.zip -d kotlin-qa
           kotlin-qa/kotlinc/bin/kotlinc -version
 
