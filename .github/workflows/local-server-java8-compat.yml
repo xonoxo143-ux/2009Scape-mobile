@@ -92,6 +92,11 @@ jobs:
           replace('src/main/content/region/misthalin/varrock/quest/whatliesbelow/WhatLiesBelow.java', 'var line = 12;', 'int line = 12;')
           replace('src/main/content/region/asgarnia/taverley/quest/WolfWhistle.java', 'var line = 12;', 'int line = 12;')
 
+          # Java 9 added Matcher overloads for StringBuilder; Java 8 requires StringBuffer.
+          replace('src/main/core/game/dialogue/DialogueBuilder.kt', 'var graphSb = StringBuilder("digraph {\\n")', 'var graphSb = StringBuffer("digraph {\\n")')
+          replace('src/main/core/game/dialogue/DialogueBuilder.kt', 'var clauseSb = StringBuilder()', 'var clauseSb = StringBuffer()')
+          replace('src/main/core/game/dialogue/DialogueBuilder.kt', 'var tmpSb = StringBuilder()', 'var tmpSb = StringBuffer()')
+
           # Add an address-aware NIO constructor while preserving the normal public API.
           p = root / 'src/main/core/net/NioReactor.java'
           s = p.read_text()
