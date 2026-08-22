@@ -9,12 +9,28 @@ on:
       - '.github/workflows/kotlin-qa-toolchain.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   package:
     runs-on: ubuntu-22.04
     steps:
+      - name: Checkout runner branch
+        uses: actions/checkout@v4
+
+      - name: Publish run id
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p ci
+          printf 'run_id=%s\nsha=%s\n' '${{ github.run_id }}' '${{ github.sha }}' > ci/kotlin-qa-run-id.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ci/kotlin-qa-run-id.txt
+          git commit -m 'Record Kotlin QA toolchain run id' || true
+          git push origin HEAD:local-server-spike
+
       - name: Download pinned Kotlin compiler
         shell: bash
         run: |
