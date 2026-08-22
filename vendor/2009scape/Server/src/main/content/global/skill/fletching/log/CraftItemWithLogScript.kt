@@ -1,13 +1,10 @@
 package content.global.skill.fletching.log
 
-import content.global.leagues.GrandLeagueManager
-import content.global.leagues.core.LeagueOutputKind
 import content.global.skill.fletching.AchievementDiaryAttributeKeys
 import content.global.skill.fletching.Zones
 import content.global.skill.fletching.log.GrammarHelpers.aOrAn
 import content.global.skill.fletching.log.GrammarHelpers.makeFriendlyName
 import core.api.*
-import core.game.event.ResourceProducedEvent
 import core.game.interaction.Clocks
 import core.game.node.entity.player.Player
 import core.game.node.entity.player.link.diary.DiaryType
@@ -38,22 +35,42 @@ class CraftItemWithLogScript(
     private val carveLogAnimation = Animation(1248)
 
     fun invoke() {
-        val productionPlan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION)
         queueScript(player, initialDelay) { stage ->
             if (!clockReady(player, Clocks.SKILLING)) return@queueScript keepRunning(player)
 
-            if (productionPlan.instantBatch) {
-                var crafted = 0
-                while (crafted < amount) {
-                    if (!canCraftCurrentLevel()) return@queueScript stopExecuting(player)
-                    if (!craftOne()) break
-                    crafted++
-                }
-                return@queueScript stopExecuting(player)
+            if (getDynLevel(player, Skills.FLETCHING) < logCraftInfo.level) {
+                LogCraftableListeners.sendLevelCheckFailDialog(player, logCraftInfo)
+                return@queueScript stopExecuting(player) // Check each iteration since dynLevel can change (status effects ending, skill assist session end...)
             }
 
-            if (!canCraftCurrentLevel()) return@queueScript stopExecuting(player)
-            if (!craftOne()) return@queueScript stopExecuting(player)
+            if (removeItem(player, logCraftInfo.logItemId.asItem())) {
+                player.animate(carveLogAnimation)
+
+                val finishedItemName = makeFriendlyName(Item(logCraftInfo.finishedItemId).name)
+
+                val amountToCraft = when (logCraftInfo) {
+                    LogCraftInfo.OGRE_ARROW_SHAFT -> RandomFunction.random(2, 6)
+                    LogCraftInfo.ARROW_SHAFT -> 15
+                    else -> 1
+                }
+
+                if (logCraftInfo == LogCraftInfo.OGRE_COMP_BOW) {
+                    if (!removeItem(player, Items.WOLF_BONES_2859)) {
+                        return@queueScript stopExecuting(player)
+                    }
+                }
+
+                sendCraftMessageToPlayer(amountToCraft, finishedItemName)
+
+                addItem(player, logCraftInfo.finishedItemId, amountToCraft)
+                rewardXP(player, Skills.FLETCHING, logCraftInfo.experience)
+
+                if (logCraftInfo == LogCraftInfo.MAGIC_SHORTBOW) {
+                    handleSeersMagicShortbowAchievement()
+                }
+            } else {
+                return@queueScript stopExecuting(player)
+            }
 
             if (stage >= amount - 1) {
                 return@queueScript stopExecuting(player)
@@ -61,47 +78,6 @@ class CraftItemWithLogScript(
 
             return@queueScript delayClock(player, Clocks.SKILLING, subsequentDelay, true)
         }
-    }
-
-    private fun canCraftCurrentLevel(): Boolean {
-        if (getDynLevel(player, Skills.FLETCHING) >= logCraftInfo.level) return true
-        LogCraftableListeners.sendLevelCheckFailDialog(player, logCraftInfo)
-        return false
-    }
-
-    private fun craftOne(): Boolean {
-        if (!removeItem(player, logCraftInfo.logItemId.asItem())) return false
-
-        player.animate(carveLogAnimation)
-        val finishedItemName = makeFriendlyName(Item(logCraftInfo.finishedItemId).name)
-        val amountToCraft = when (logCraftInfo) {
-            LogCraftInfo.OGRE_ARROW_SHAFT -> RandomFunction.random(2, 6)
-            LogCraftInfo.ARROW_SHAFT -> 15
-            else -> 1
-        }
-
-        if (logCraftInfo == LogCraftInfo.OGRE_COMP_BOW && !removeItem(player, Items.WOLF_BONES_2859)) {
-            return false
-        }
-
-        val output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION)
-        sendCraftMessageToPlayer(amountToCraft, finishedItemName)
-        addItem(player, logCraftInfo.finishedItemId, amountToCraft * output.baseAmount)
-        GrandLeagueManager.deliverBonusOutput(player, logCraftInfo.finishedItemId, output, amountToCraft)
-        player.dispatch(
-            ResourceProducedEvent(
-                logCraftInfo.finishedItemId,
-                amountToCraft * output.amount,
-                player,
-                logCraftInfo.logItemId
-            )
-        )
-        rewardXP(player, Skills.FLETCHING, logCraftInfo.experience * output.experienceUnits)
-
-        if (logCraftInfo == LogCraftInfo.MAGIC_SHORTBOW) {
-            handleSeersMagicShortbowAchievement()
-        }
-        return true
     }
 
     private fun handleSeersMagicShortbowAchievement() {

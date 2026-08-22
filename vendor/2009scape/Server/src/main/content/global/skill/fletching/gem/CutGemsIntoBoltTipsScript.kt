@@ -1,9 +1,6 @@
 package content.global.skill.fletching.gem
 
-import content.global.leagues.GrandLeagueManager
-import content.global.leagues.core.LeagueOutputKind
 import core.api.*
-import core.game.event.ResourceProducedEvent
 import core.game.interaction.Clocks
 import core.game.node.entity.player.Player
 import core.game.node.entity.skill.Skills
@@ -39,29 +36,26 @@ class CutGemsIntoBoltTipsScript(
     }
 
     private fun invokeCraftLoop() {
-        val productionPlan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION)
         queueScript(player, 0) { stage ->
             if (!clockReady(player, Clocks.SKILLING)) return@queueScript keepRunning(player)
 
-            if (productionPlan.instantBatch) {
-                var crafted = 0
-                while (crafted < amount) {
-                    if (!canCraftCurrentLevel()) {
-                        craftingFinished = true
-                        return@queueScript stopExecuting(player)
-                    }
-                    if (!craftOne()) break
-                    crafted++
-                }
+            if (getDynLevel(player, Skills.FLETCHING) < gemBoltCraftInfo.level) {
                 craftingFinished = true
-                return@queueScript stopExecuting(player)
+                GemBoltListeners.sendGemTipCutLevelCheckFailDialog(player, gemBoltCraftInfo.level)
+                return@queueScript stopExecuting(player) // Check each iteration since dynLevel can change (status effects ending, skill assist session end...)
             }
 
-            if (!canCraftCurrentLevel()) {
-                craftingFinished = true
-                return@queueScript stopExecuting(player)
+            val amountOfTipsToCraft = when (gemBoltCraftInfo) {
+                GemBoltsCraftInfo.PEARLS -> 24
+                GemBoltsCraftInfo.PEARL -> 6
+                GemBoltsCraftInfo.ONYX -> 24
+                else -> 12
             }
-            if (!craftOne()) {
+
+            if (removeItem(player, Item(gemBoltCraftInfo.gemItemId))) {
+                addItem(player, gemBoltCraftInfo.tipItemId, amountOfTipsToCraft)
+                rewardXP(player, Skills.FLETCHING, gemBoltCraftInfo.experience)
+            } else {
                 craftingFinished = true
                 return@queueScript stopExecuting(player)
             }
@@ -73,37 +67,6 @@ class CutGemsIntoBoltTipsScript(
 
             return@queueScript delayClock(player, Clocks.SKILLING, craftDelay, true)
         }
-    }
-
-    private fun canCraftCurrentLevel(): Boolean {
-        if (getDynLevel(player, Skills.FLETCHING) >= gemBoltCraftInfo.level) return true
-        GemBoltListeners.sendGemTipCutLevelCheckFailDialog(player, gemBoltCraftInfo.level)
-        return false
-    }
-
-    private fun craftOne(): Boolean {
-        val amountOfTipsToCraft = when (gemBoltCraftInfo) {
-            GemBoltsCraftInfo.PEARLS -> 24
-            GemBoltsCraftInfo.PEARL -> 6
-            GemBoltsCraftInfo.ONYX -> 24
-            else -> 12
-        }
-
-        if (!removeItem(player, Item(gemBoltCraftInfo.gemItemId))) return false
-
-        val output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION)
-        addItem(player, gemBoltCraftInfo.tipItemId, amountOfTipsToCraft * output.baseAmount)
-        GrandLeagueManager.deliverBonusOutput(player, gemBoltCraftInfo.tipItemId, output, amountOfTipsToCraft)
-        rewardXP(player, Skills.FLETCHING, gemBoltCraftInfo.experience * output.experienceUnits)
-        player.dispatch(
-            ResourceProducedEvent(
-                gemBoltCraftInfo.tipItemId,
-                amountOfTipsToCraft * output.amount,
-                player,
-                gemBoltCraftInfo.gemItemId
-            )
-        )
-        return true
     }
 
     fun invoke() {

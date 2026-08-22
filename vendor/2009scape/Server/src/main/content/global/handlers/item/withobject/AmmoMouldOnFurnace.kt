@@ -1,9 +1,6 @@
 package content.global.handlers.item.withobject
 
 import content.data.Quests
-import content.global.leagues.GrandLeagueManager
-import content.global.leagues.core.LeagueOutputKind
-import core.game.event.ResourceProducedEvent
 import core.api.*
 import core.game.node.Node
 import core.game.node.entity.player.Player
@@ -35,21 +32,9 @@ class AmmoMouldOnFurnace : InteractionListener {
             return true
         }
 
-        val productionPlan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION)
         val cannonBallPulse = object : Pulse() {
             private var tick = 0
             var amount = 0
-
-            private fun makeOne(): Boolean {
-                if (!removeItem(player, Items.STEEL_BAR_2353)) return false
-                val output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION)
-                addItem(player, Items.CANNONBALL_2, 4 * output.baseAmount)
-                GrandLeagueManager.deliverBonusOutput(player, Items.CANNONBALL_2, output, 4)
-                player.dispatch(ResourceProducedEvent(Items.CANNONBALL_2, 4 * output.amount, player, Items.STEEL_BAR_2353))
-                rewardXP(player, Skills.SMITHING, 25.6 * output.experienceUnits)
-                return true
-            }
-
             override fun pulse(): Boolean {
                 when(tick++){
                     0 -> {
@@ -65,15 +50,10 @@ class AmmoMouldOnFurnace : InteractionListener {
                         sendMessage(player,"The molten metal cools slowly to form 4 cannonballs.")
                     }
                     7 -> {
-                        if (productionPlan.instantBatch) {
-                            while (amount > 0 && inInventory(player, Items.STEEL_BAR_2353)) {
-                                if (!makeOne()) break
-                                amount--
-                            }
-                            animate(player, 827)
-                            return true
+                        if (removeItem(player, used.asItem())) {
+                            addItem(player, Items.CANNONBALL_2, 4)
+                            rewardXP(player, Skills.SMITHING, 25.6)
                         }
-                        makeOne()
                         animate(player, 827)
                     }
                     10 -> {

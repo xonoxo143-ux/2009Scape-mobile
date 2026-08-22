@@ -1,9 +1,6 @@
 package content.global.skill.herblore
 
-import content.global.leagues.GrandLeagueManager
-import content.global.leagues.core.LeagueOutputKind
 import core.api.*
-import core.game.event.ResourceProducedEvent
 import core.game.interaction.IntType
 import core.game.interaction.InteractionListener
 import core.game.node.entity.skill.Skills
@@ -28,22 +25,8 @@ class HerbCleanListener : InteractionListener {
             }
 
             val exp = herb.experience
-            val productionPlan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION)
-            if (productionPlan.instantBatch) {
-                val grimyId = node.id
-                val baseAmount = amountInInventory(player, grimyId)
-                val output = GrandLeagueManager.resolveOutput(player, baseAmount, LeagueOutputKind.PRODUCTION)
-                if (baseAmount > 0 && removeItem(player, Item(grimyId, baseAmount))) {
-                    addItem(player, herb.product.id, output.baseAmount)
-                    GrandLeagueManager.deliverBonusOutput(player, herb.product.id, output)
-                    player.dispatch(ResourceProducedEvent(herb.product.id, output.amount, player, grimyId))
-                    rewardXP(player, Skills.HERBLORE, exp * output.experienceUnits)
-                }
-            } else {
-                replaceSlot(player, node.asItem().slot, herb.product, node.asItem())
-                rewardXP(player, Skills.HERBLORE, exp)
-                player.dispatch(ResourceProducedEvent(herb.product.id, 1, player, node.id))
-            }
+            replaceSlot(player, node.asItem().slot, herb.product, node.asItem())
+            rewardXP(player, Skills.HERBLORE, exp)
             playAudio(player, 5153)
             sendMessage(player, "You clean the dirt from the " + herb.product.name.lowercase(Locale.getDefault()).replace("clean", "").trim { it <= ' ' } + " leaf.")
             return@on true

@@ -1,9 +1,6 @@
 package content.global.skill.crafting
 
-import content.global.leagues.GrandLeagueManager
-import content.global.leagues.core.LeagueOutputKind
 import core.api.*
-import core.game.event.ResourceProducedEvent
 import core.game.interaction.IntType
 import core.game.interaction.InteractionListener
 import core.game.node.entity.player.link.diary.DiaryType
@@ -20,27 +17,8 @@ class BattlestaffListener : InteractionListener {
         onUseWith(IntType.ITEM, orbs, battlestaff) { player, used, with ->
             val product = BattlestaffProduct.productMap[used.id] ?: return@onUseWith true
 
-            fun getMaxAmount(_unused: Int = 0): Int =
-                min(amountInInventory(player, with.id), amountInInventory(player, used.id))
-
-            fun craftOne(): Boolean {
-                if (!removeItem(player, product.requiredOrbItemId) || !removeItem(player, Items.BATTLESTAFF_1391)) return false
-                val output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION)
-                addItem(player, product.producedItemId, product.amountProduced * output.baseAmount)
-                GrandLeagueManager.deliverBonusOutput(player, product.producedItemId, output, product.amountProduced)
-                rewardXP(player, Skills.CRAFTING, product.experience * output.experienceUnits)
-                player.dispatch(
-                    ResourceProducedEvent(
-                        product.producedItemId,
-                        product.amountProduced * output.amount,
-                        player,
-                        product.requiredOrbItemId
-                    )
-                )
-                if (product.producedItemId == Items.AIR_BATTLESTAFF_1397) {
-                    player.achievementDiaryManager.finishTask(player, DiaryType.VARROCK, 2, 6)
-                }
-                return true
+            fun getMaxAmount(_unused: Int = 0): Int {
+                return min(amountInInventory(player, with.id), amountInInventory(player, used.id))
             }
 
             if (!hasLevelDyn(player, Skills.CRAFTING, product.minimumLevel)) {
@@ -48,25 +26,36 @@ class BattlestaffListener : InteractionListener {
                 return@onUseWith true
             }
 
-            val plan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION)
+            // Avoids sending dialogue if only one can be created
+            if (amountInInventory(player, used.id) == 1 || amountInInventory(player, with.id) == 1) {
 
-            if (getMaxAmount() == 1) {
-                craftOne()
+                if (removeItem(player, product.requiredOrbItemId) && removeItem(player, Items.BATTLESTAFF_1391)) {
+                    addItem(player, product.producedItemId, product.amountProduced)
+                    rewardXP(player, Skills.CRAFTING, product.experience)
+                }
+
+                if (product.producedItemId == Items.AIR_BATTLESTAFF_1397) {
+                    player.achievementDiaryManager.finishTask(player, DiaryType.VARROCK, 2, 6)
+                }
+
                 return@onUseWith true
             }
 
             sendSkillDialogue(player) {
                 withItems(product.producedItemId)
                 create { _, amount ->
-                    val requested = min(amount, getMaxAmount())
-                    if (plan.instantBatch) {
-                        var remaining = requested
-                        while (remaining-- > 0 && craftOne()) { }
-                    } else {
-                        runTask(player, 2, requested) {
-                            if (amount < 1) return@runTask
-                            if (!craftOne()) return@runTask
+
+                    runTask(player, 2, min(amount, getMaxAmount())) {
+                        if (amount < 1) return@runTask
+
+                        if (removeItem(player, product.requiredOrbItemId) && removeItem(player, Items.BATTLESTAFF_1391)) {
+                            addItem(player, product.producedItemId, product.amountProduced)
+                            rewardXP(player, Skills.CRAFTING, product.experience)
                         }
+
+                        if (product.producedItemId == Items.AIR_BATTLESTAFF_1397) {
+                            player.achievementDiaryManager.finishTask(player, DiaryType.VARROCK, 2, 6)
+                        } else return@runTask
                     }
                 }
 
