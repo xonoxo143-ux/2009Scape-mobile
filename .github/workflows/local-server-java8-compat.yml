@@ -269,8 +269,8 @@ jobs:
           done
           grep -q 'JAVA8_LOCAL_SERVER_TCP_READY=1' ../../smoke-result.txt
           ss -ltnp | tee ../../listeners.txt
-          grep -Eq '127\.0\.0\.1:43595' ../../listeners.txt
-          ! grep -Eq '(0\.0\.0\.0|\*):43595' ../../listeners.txt
+          grep -Eq '(127\.0\.0\.1|\[::ffff:127\.0\.0\.1\]):43595' ../../listeners.txt
+          ! grep -Eq '(0\.0\.0\.0|\[::\]|\*):43595' ../../listeners.txt
           tail -200 ../../server-java8-smoke.log
 
       - name: Upload proven Java 8 localhost server
