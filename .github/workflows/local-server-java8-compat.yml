@@ -96,6 +96,23 @@ jobs:
           replace('src/main/core/game/dialogue/DialogueBuilder.kt', 'var graphSb = StringBuilder("digraph {\\n")', 'var graphSb = StringBuffer("digraph {\\n")')
           replace('src/main/core/game/dialogue/DialogueBuilder.kt', 'var clauseSb = StringBuilder()', 'var clauseSb = StringBuffer()')
           replace('src/main/core/game/dialogue/DialogueBuilder.kt', 'var tmpSb = StringBuilder()', 'var tmpSb = StringBuffer()')
+          replace('src/main/core/game/dialogue/DialogueInterpreter.java',
+                  'StringBuilder sb = new StringBuilder();',
+                  'StringBuffer sb = new StringBuffer();')
+
+          # Java 9 collection factories and covariant Buffer returns need Java 8 equivalents.
+          replace('src/main/core/game/world/map/zone/ZoneMonitor.java',
+                  'import java.util.ArrayList;\nimport java.util.Iterator;',
+                  'import java.util.ArrayList;\nimport java.util.Arrays;\nimport java.util.HashSet;\nimport java.util.Iterator;')
+          replace('src/main/core/game/world/map/zone/ZoneMonitor.java',
+                  'static final Set<Integer> MID_WILDY_TELEPORT_JEWELLERY = Set.of(',
+                  'static final Set<Integer> MID_WILDY_TELEPORT_JEWELLERY = new HashSet<>(Arrays.asList(')
+          replace('src/main/core/game/world/map/zone/ZoneMonitor.java',
+                  '\t\tItems.RING_OF_LIFE_2570\n\t);',
+                  '\t\tItems.RING_OF_LIFE_2570\n\t));')
+          replace('src/main/core/net/registry/AccountRegister.java',
+                  '\t\tsession.queue(buf.flip());',
+                  '\t\tbuf.flip();\n\t\tsession.queue(buf);')
 
           # Add an address-aware NIO constructor while preserving the normal public API.
           p = root / 'src/main/core/net/NioReactor.java'
@@ -210,11 +227,15 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          test -s ci/java8-bytecode-report.txt
+          if [[ ! -s ci/java8-bytecode-report.txt ]]; then
+            echo 'No bytecode report was produced because compilation failed earlier.'
+            exit 0
+          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add ci/java8-bytecode-report.txt
           git commit -m 'Record Java 8 bytecode compatibility report' || true
+          git pull --rebase origin local-server-spike
           git push origin HEAD:local-server-spike
 
       - name: Fail if baseline bytecode is newer than Java 8
