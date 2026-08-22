@@ -1,0 +1,40 @@
+name: Kotlin QA Toolchain
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - local-server-spike
+    paths:
+      - '.github/workflows/kotlin-qa-toolchain.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download pinned Kotlin compiler
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl --fail --location --retry 3 \
+            --output kotlin-compiler.zip \
+            https://github.com/JetBrains/kotlin/releases/download/v1.8.20/kotlin-compiler-1.8.20.zip
+          printf '%s  %s\n' \
+            'b37dfe9fc4570eff87be8e66e4dc49c1baa74c545f2144eb2399e88c24fabf6f' \
+            'kotlin-compiler.zip' > kotlin-compiler.sha256
+          sha256sum --check kotlin-compiler.sha256
+          unzip -q kotlin-compiler.zip -d kotlin-qa
+          kotlin-qa/kotlinc/bin/kotlinc -version
+
+      - name: Upload verified compiler
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotlin-compiler-1.8.20
+          path: |
+            kotlin-qa/kotlinc
+            kotlin-compiler.sha256
+          if-no-files-found: error
+          retention-days: 14
