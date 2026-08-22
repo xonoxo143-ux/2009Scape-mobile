@@ -35,3 +35,17 @@ The mobile branch `local-server-spike` compiles the modern server on JDK 8,
 loads the cache on JDK 8, and verifies that the listener is restricted to
 `127.0.0.1`. This catches both newer bytecode and accidental linkage against
 newer JDK APIs.
+
+## Proven canonical server milestone
+
+The isolated GitHub branch `grand-leagues-canonical` passed a complete JDK 11
+Maven build in run `32550319524`. It then passed the actual Android server
+contract in run `32550786470`: JDK 8 compilation, zero Java 9+ ordinary
+classpath entries across 16,371 classes, real cache loading, and a loopback-only
+listener on port 43595. The source milestone for that proof is
+`62f9dcd9a204f5674319af82f710a751fc5af67e`.
+
+Reusable preparation and bytecode checks live under `scripts/grandleague/`.
+The proof workflow is `.github/workflows/canonical-java8-local-server.yml` in
+the GitHub repository (stored as `ci/canonical-java8-local-server.yml` in this
+local recovery workspace).

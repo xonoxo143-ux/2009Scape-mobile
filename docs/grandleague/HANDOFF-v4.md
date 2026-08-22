@@ -805,3 +805,104 @@ Highest-value remaining combat mechanics:
 5. remaining conditional fragments (Unholy trio, Slayer targeting, Divine Restoration, Venomaster, Fast Metabolism).
 6. remaining conditional Pact mechanics: Brutal Rhythm, Crushing Momentum, Windstep, Deadeye, Overcharge, Soulfire, Life Ward, Reprisal, Unyielding, Culling Spree, Evil Eye, Flask of Fervour, Executioner's Mark, etc.
 7. then build the Echo boss runtime and Normal -> Echo -> Greater Echo -> Grand Echo escalation on top of these combat primitives.
+
+---
+
+## 19. Recovery checkpoint — canonical source and Android server proof (2026-08-22)
+
+This section supersedes the infrastructure caveats and first two pending items in section 18.
+
+### Canonical repository line
+
+The recovered v4 gameplay line now lives on the isolated GitHub branch:
+
+```text
+xonoxo143-ux/2009Scape-mobile:grand-leagues-canonical
+source milestone: 62f9dcd9a204f5674319af82f710a751fc5af67e
+```
+
+It is based on the supplied/pinned 2009Scape source rather than the divergent
+gameplay engine bundled in the old Grand Leagues APK. The APK-era mobile
+connector is packaging evidence only until it is separately audited.
+
+Nineteen stale direct-output handler changes inherited from the discarded
+branch were reset byte-for-byte to the supplied upstream source. League
+production output is again modified only from the central
+`ResourceProducedEvent` path. `ServerSeamAcceptance.sh` now fails if the old
+`LeagueOutputKind` / `outputPlan` / `deliverBonusOutput` adapter pattern returns.
+
+### Combat capstones now live
+
+- Executioner: triggers strictly below 20% HP for ordinary enemies and strictly
+  below 10% HP for bosses.
+- Undying Retribution: intercepts lethal damage, restores full HP and Prayer,
+  retaliates in radius 3 for twice the damage avoided, and has a three-minute
+  persistent cooldown.
+- Immortal Shell: lower-priority lethal fallback, restores 25% HP, and has a
+  five-minute persistent cooldown.
+- trigger priority and cooldown expiry are deterministic; cooldown state uses
+  profile codec v2 while v1 saves remain readable.
+
+These values are the explicit initial Grand League tuning selected during this
+recovery; they were not recovered as previously agreed numeric values.
+
+### Automated proofs
+
+Dependency-free local gate:
+
+```text
+157 tasks
+22 relics
+24 fragments
+19 masteries
+31 pacts
+12 echoes
+2,500-task / 250,000-signal stress pass
+modifier, combat-capstone, adapter, and source-seam passes
+```
+
+Complete canonical JDK 11 server build:
+
+```text
+run: 32550319524
+result: success
+artifact: grand-leagues-canonical-server
+artifact digest: sha256:532b70d263f9db19dd9b6e4ead04e6c0a434ece27e9bd00f73ea56cb6e60f49c
+```
+
+Vanilla Java 8 compatibility/loopback proof:
+
+```text
+run: 32550354560
+result: success
+artifact: local-server-java8-proven
+artifact digest: sha256:ba6566d034673683b3c7f32ada94304b3e2b96d48c62f3b85a406ff55e0f5c02
+```
+
+Canonical Grand Leagues Java 8 compatibility/loopback proof:
+
+```text
+run: 32550786470
+source: 62f9dcd9a204f5674319af82f710a751fc5af67e
+result: success
+class count: 16,371
+ordinary Java 9+ classpath offenders: 0
+socket: [::ffff:127.0.0.1]:43595 (mapped IPv4 loopback; no wildcard bind)
+artifact: grand-leagues-canonical-java8-local-server
+artifact digest: sha256:a354cdb2a7dca108342f4a6dbedbfc11a364544534db28f9884d83432592baa5
+```
+
+The two Java 9 entries reported under `META-INF/versions/` are multi-release
+resources ignored by a Java 8 runtime; they are not ordinary classpath entries.
+
+### Current next work
+
+Do not make an APK merely because the server contract now passes. Resume the
+gameplay order already agreed:
+
+1. Guardian companion behavior.
+2. Ruinous Powers and Prayer-drain semantics.
+3. remaining conditional fragments and Pact effects.
+4. Echo runtime and Normal -> Echo -> Greater Echo -> Grand Echo escalation.
+5. deliberate milestone APK using the proven Java 8 loopback recipe and the
+   unchanged vanilla RT4 client unless a client-facing feature requires a patch.
