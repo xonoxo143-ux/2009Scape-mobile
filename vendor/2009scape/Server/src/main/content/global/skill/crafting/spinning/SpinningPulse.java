@@ -1,10 +1,5 @@
 package content.global.skill.crafting.spinning;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
-import core.game.event.ResourceProducedEvent;
 import core.cache.def.impl.ItemDefinition;
 import core.game.container.impl.EquipmentContainer;
 import core.game.node.entity.player.link.diary.DiaryType;
@@ -81,16 +76,6 @@ public final class SpinningPulse extends SkillPulse<Item> {
 
     @Override
     public boolean reward() {
-        boolean eligible = type == SpinningItem.FLAX || type == SpinningItem.WOOL;
-        LeagueOutputPlan plan = eligible ? GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION) : null;
-        if (eligible && plan.getInstantBatch()) {
-            while (ammount > 0 && checkRequirements()) {
-                if (!spinOne(true)) break;
-                ammount--;
-            }
-            return true;
-        }
-
 		int tickThreshhold = 4;
 		if (player.getAchievementDiaryManager().getDiary(DiaryType.SEERS_VILLAGE).isComplete(2)
 				&& player.getLocation().withinDistance(Location.create(2711,3471,1))
@@ -98,35 +83,27 @@ public final class SpinningPulse extends SkillPulse<Item> {
 				&& player.getEquipment().get(EquipmentContainer.SLOT_HAT).getId() == 14631) {
 			tickThreshhold = 2;
 		}
-        if (++ticks % tickThreshhold != 0) return false;
-        if (spinOne(eligible)) ammount--;
-        return ammount < 1;
-    }
-
-    private boolean spinOne(boolean eligible) {
-        if (!player.getInventory().remove(new Item(type.getNeed(), 1))) return false;
-        final Item item = new Item(type.getProduct(), 1);
-        if (eligible) {
-            LeagueResolvedOutput output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION);
-            player.getInventory().add(new Item(item.getId(), output.getBaseAmount()));
-            GrandLeagueManager.deliverBonusOutput(player, item.getId(), output);
-            player.dispatch(new ResourceProducedEvent(item.getId(), output.getAmount(), player, type.getNeed()));
-            player.getSkills().addExperience(Skills.CRAFTING, type.getExp() * output.getExperienceUnits(), true);
-        } else {
+        if (++ticks % tickThreshhold != 0) {
+            return false;
+        }
+        if (player.getInventory().remove(new Item(type.getNeed(), 1))) {
+            final Item item = new Item(type.getProduct(), 1);
             player.getInventory().add(item);
             player.getSkills().addExperience(Skills.CRAFTING, type.getExp(), true);
-        }
 
-        if (player.getViewport().getRegion().getId() == 10806
-                && !player.getAchievementDiaryManager().getDiary(DiaryType.SEERS_VILLAGE).isComplete(0, 4)) {
-            if (player.getAttribute("diary:seers:bowstrings-spun", 0) >= 4) {
-                player.setAttribute("/save:diary:seers:bowstrings-spun", 5);
-                player.getAchievementDiaryManager().finishTask(player, DiaryType.SEERS_VILLAGE, 0, 4);
-            } else {
-                player.setAttribute("/save:diary:seers:bowstrings-spun", player.getAttribute("diary:seers:bowstrings-spun", 0) + 1);
+            // Seers achievement diary
+            if (player.getViewport().getRegion().getId() == 10806
+                    && !player.getAchievementDiaryManager().getDiary(DiaryType.SEERS_VILLAGE).isComplete(0, 4)) {
+                if (player.getAttribute("diary:seers:bowstrings-spun", 0) >= 4) {
+                    player.setAttribute("/save:diary:seers:bowstrings-spun", 5);
+                    player.getAchievementDiaryManager().finishTask(player, DiaryType.SEERS_VILLAGE, 0, 4);
+                } else {
+                    player.setAttribute("/save:diary:seers:bowstrings-spun", player.getAttribute("diary:seers:bowstrings-spun", 0) + 1);
+                }
             }
         }
-        return true;
+        ammount--;
+        return ammount < 1;
     }
 
     @Override

@@ -1,10 +1,5 @@
 package content.global.skill.crafting.armour;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
-import core.game.event.ResourceProducedEvent;
 import core.cache.def.impl.ItemDefinition;
 import core.game.node.entity.skill.SkillPulse;
 import core.game.node.entity.skill.Skills;
@@ -87,33 +82,22 @@ public final class DragonCraftPulse extends SkillPulse<Item> {
 
 	@Override
 	public boolean reward() {
-		LeagueOutputPlan plan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION);
-		if (plan.getInstantBatch()) {
-			while (amount > 0 && checkRequirements()) {
-				if (!craftOne()) break;
-				amount--;
+		if (++ticks % 5 != 0) {
+			return false;
+		}
+		if (player.getInventory().remove(new Item(hide.getLeather(), hide.getAmount()))) {
+			if (hide.name().contains("VAMBS")) {
+				player.getPacketDispatch().sendMessage("You make a pair of " + ItemDefinition.forId(hide.getProduct()).getName().toLowerCase() + "'s.");
+			} else {
+				player.getPacketDispatch().sendMessage("You make " + (StringUtils.isPlusN(ItemDefinition.forId(hide.getProduct()).getName().toLowerCase()) ? "an" : "a") + " " + ItemDefinition.forId(hide.getProduct()).getName().toLowerCase() + ".");
 			}
-			return true;
+			Item item = new Item(hide.getProduct());
+			player.getInventory().add(item);
+			player.getSkills().addExperience(Skills.CRAFTING, hide.getExperience(), true);
+			LeatherCrafting.decayThread(player);
+			amount--;
 		}
-		if (++ticks % 5 != 0) return false;
-		if (craftOne()) amount--;
 		return amount < 1;
-	}
-
-	private boolean craftOne() {
-		if (!player.getInventory().remove(new Item(hide.getLeather(), hide.getAmount()))) return false;
-		if (hide.name().contains("VAMBS")) {
-			player.getPacketDispatch().sendMessage("You make a pair of " + ItemDefinition.forId(hide.getProduct()).getName().toLowerCase() + "'s.");
-		} else {
-			player.getPacketDispatch().sendMessage("You make " + (StringUtils.isPlusN(ItemDefinition.forId(hide.getProduct()).getName().toLowerCase()) ? "an" : "a") + " " + ItemDefinition.forId(hide.getProduct()).getName().toLowerCase() + ".");
-		}
-		LeagueResolvedOutput output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION);
-		player.getInventory().add(new Item(hide.getProduct(), output.getBaseAmount()));
-		GrandLeagueManager.deliverBonusOutput(player, hide.getProduct(), output);
-		player.dispatch(new ResourceProducedEvent(hide.getProduct(), output.getAmount(), player, hide.getLeather()));
-		player.getSkills().addExperience(Skills.CRAFTING, hide.getExperience() * output.getExperienceUnits(), true);
-		LeatherCrafting.decayThread(player);
-		return true;
 	}
 
 	@Override

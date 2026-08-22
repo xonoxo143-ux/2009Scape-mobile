@@ -1,10 +1,5 @@
 package content.global.skill.crafting.jewellery;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
-import core.game.event.ResourceProducedEvent;
 import core.game.node.entity.skill.SkillPulse;
 import core.game.node.entity.skill.Skills;
 import core.game.node.entity.player.Player;
@@ -69,28 +64,16 @@ public final class JewelleryPulse extends SkillPulse<Item> {
 
 	@Override
 	public boolean reward() {
-		LeagueOutputPlan plan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION);
-		if (plan.getInstantBatch()) {
-			while (amount > 0 && checkRequirements()) {
-				if (!craftOne()) break;
-				amount--;
-			}
-			return true;
+		if (++ticks % 5 != 0) {
+			return false;
 		}
-		if (++ticks % 5 != 0) return false;
-		if (craftOne()) amount--;
+		if (player.getInventory().remove(getItems())) {
+			final Item item = new Item(type.getSendItem());
+		    player.getInventory().add(item);
+			player.getSkills().addExperience(Skills.CRAFTING, type.getExperience(), true);
+		}
+		amount--;
 		return amount < 1;
-	}
-
-	private boolean craftOne() {
-		if (!player.getInventory().remove(getItems())) return false;
-		final Item item = new Item(type.getSendItem());
-		LeagueResolvedOutput output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION);
-		player.getInventory().add(new Item(item.getId(), output.getBaseAmount()));
-		GrandLeagueManager.deliverBonusOutput(player, item.getId(), output);
-		player.dispatch(new ResourceProducedEvent(item.getId(), output.getAmount(), player, JewelleryCrafting.GOLD_BAR));
-		player.getSkills().addExperience(Skills.CRAFTING, type.getExperience() * output.getExperienceUnits(), true);
-		return true;
 	}
 
 	/**

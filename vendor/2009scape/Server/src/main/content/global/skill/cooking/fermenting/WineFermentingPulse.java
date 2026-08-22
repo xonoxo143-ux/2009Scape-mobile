@@ -1,6 +1,5 @@
 package content.global.skill.cooking.fermenting;
 
-import core.game.event.ResourceProducedEvent;
 import core.game.node.entity.skill.Skills;
 import core.game.node.entity.player.Player;
 import core.game.node.item.Item;
@@ -37,43 +36,36 @@ public final class WineFermentingPulse extends Pulse {
 	public boolean pulse() {
 		if (count++ >= 16) {
 			int rand = RandomFunction.random(1, 3);
-			if (rand == 1) {
-				if (replaceOne(1991)) {
-					player.dispatch(new ResourceProducedEvent(1991, 1, player, 1995));
+			switch (rand) {
+			case 1:
+				if (player.getInventory().contains(1995, 1)) {
+					player.getInventory().replace(new Item(1991, 1), player.getInventory().getSlot(new Item(1995, 1)));
+				} else if (player.getBank().contains(1995, 1)) {
+					player.getBank().replace(new Item(1991, 1), player.getBank().getSlot(new Item(1995, 1)));
 				}
 				return true;
-			}
-
-			if (replaceOne(1993)) {
-				player.getSkills().addExperience(Skills.COOKING, 200, true);
-				player.dispatch(new ResourceProducedEvent(1993, 1, player, 1995));
+			case 2:
+				if (player.getInventory().contains(1995, 1)) {
+					player.getInventory().replace(new Item(1993, 1), player.getInventory().getSlot(new Item(1995, 1)));
+					player.getSkills().addExperience(Skills.COOKING, 200, true);
+				} else if (player.getBank().contains(1995, 1)) {
+					player.getBank().replace(new Item(1993, 1), player.getBank().getSlot(new Item(1995, 1)));
+					player.getSkills().addExperience(Skills.COOKING, 200);
+				}
+				return true;
+			case 3:
+				if (player.getInventory().contains(1995, 1)) {
+					player.getInventory().replace(new Item(1993, 1), player.getInventory().getSlot(new Item(1995, 1)));
+					player.getSkills().addExperience(Skills.COOKING, 200);
+				} else if (player.getBank().contains(1995, 1)) {
+					player.getBank().replace(new Item(1993, 1), player.getBank().getSlot(new Item(1995, 1)));
+					player.getSkills().addExperience(Skills.COOKING, 200);
+				}
+				return true;
 			}
 			return true;
 		}
 		count++;
-		return false;
-	}
-
-	/** Replace one unfermented wine regardless of which bank tab is active. */
-	private boolean replaceOne(int productId) {
-		Item unfermented = new Item(1995, 1);
-		Item product = new Item(productId, 1);
-		if (player.getInventory().contains(1995, 1)) {
-			player.getInventory().replace(product, player.getInventory().getSlot(unfermented));
-			return true;
-		}
-		if (player.getBank().contains(1995, 1)) {
-			player.getBank().replace(product, player.getBank().getSlot(unfermented));
-			return true;
-		}
-		if (player.getBankPrimary().contains(1995, 1)) {
-			player.getBankPrimary().replace(product, player.getBankPrimary().getSlot(unfermented));
-			return true;
-		}
-		if (player.getBankSecondary().contains(1995, 1)) {
-			player.getBankSecondary().replace(product, player.getBankSecondary().getSlot(unfermented));
-			return true;
-		}
 		return false;
 	}
 

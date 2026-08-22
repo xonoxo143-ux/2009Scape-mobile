@@ -1,10 +1,5 @@
 package content.global.skill.herblore;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
-import core.game.event.ResourceProducedEvent;
 import core.game.node.entity.skill.SkillPulse;
 import core.game.node.entity.skill.Skills;
 import core.game.node.entity.player.Player;
@@ -95,21 +90,6 @@ public final class HerblorePulse extends SkillPulse<Item> {
 
 	@Override
 	public boolean reward() {
-		LeagueOutputPlan plan = isProductionRelicEligible()
-				? GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION)
-				: new LeagueOutputPlan(1, 1, 0.0, false, false, false, false);
-		if (plan.getInstantBatch()) {
-			while (amount > 0 && checkRequirements()) {
-				if (potion.getBase().getId() == VIAL_OF_WATER.getId()) {
-					handleUnfinished();
-				} else {
-					handleFinished();
-				}
-				amount--;
-			}
-			return true;
-		}
-
 		if (potion.getBase().getId() == VIAL_OF_WATER.getId()) {
 			if (initialAmount == 1 && getDelay() == 1) {
 				player.animate(ANIMATION);
@@ -134,17 +114,6 @@ public final class HerblorePulse extends SkillPulse<Item> {
 		return amount == 0;
 	}
 
-	private boolean isProductionRelicEligible() {
-		return !potion.getIngredient().getDefinition().isStackable();
-	}
-
-	private LeagueResolvedOutput resolveProductionOutput(int baseAmount) {
-		if (!isProductionRelicEligible()) {
-			return new LeagueResolvedOutput(baseAmount, 0, baseAmount, false, false, false);
-		}
-		return GrandLeagueManager.resolveOutput(player, baseAmount, LeagueOutputKind.PRODUCTION);
-	}
-
 	/**
 	 * Method used to handle the potion making of an unf-potion.
 	 */
@@ -154,10 +123,7 @@ public final class HerblorePulse extends SkillPulse<Item> {
 		}
 		if ((player.getInventory().containsItem(potion.getBase()) && player.getInventory().containsItem(potion.getIngredient())) && player.getInventory().remove(potion.getBase(), potion.getIngredient())) {
 			final Item item = potion.getProduct();
-			LeagueResolvedOutput output = resolveProductionOutput(item.getAmount());
-		    player.getInventory().add(new Item(item.getId(), output.getBaseAmount()));
-			GrandLeagueManager.deliverBonusOutput(player, item.getId(), output);
-			player.dispatch(new ResourceProducedEvent(item.getId(), output.getAmount(), player, potion.getIngredient().getId()));
+		    player.getInventory().add(item);
 			player.getPacketDispatch().sendMessage("You put the" + StringUtils.formatDisplayName(potion.getIngredient().getName().toLowerCase().replace("clean", "")) + " leaf into the vial of water.");
             playAudio(player, Sounds.GRIND_2608);
 			if (cycles++ == 3) {
@@ -181,11 +147,8 @@ public final class HerblorePulse extends SkillPulse<Item> {
                                 player.sendMessage ("Due to your expertise, you manage to make an extra dose.");
                             }
                         }
-			LeagueResolvedOutput output = resolveProductionOutput(item.getAmount());
-		    player.getInventory().add(new Item(item.getId(), output.getBaseAmount()));
-			GrandLeagueManager.deliverBonusOutput(player, item.getId(), output);
-			player.dispatch(new ResourceProducedEvent(item.getId(), output.getAmount(), player, potion.getIngredient().getId()));
-			player.getSkills().addExperience(Skills.HERBLORE, potion.getExperience() * output.getExperienceUnits(), true);
+		    player.getInventory().add(item);
+			player.getSkills().addExperience(Skills.HERBLORE, potion.getExperience(), true);
 			player.getPacketDispatch().sendMessage("You mix the " + potion.getIngredient().getName().toLowerCase() + " into your potion.");
             playAudio(player, Sounds.GRIND_2608);
 			player.animate(ANIMATION);

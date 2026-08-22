@@ -1,10 +1,5 @@
 package content.global.skill.crafting.gem;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
-import core.game.event.ResourceProducedEvent;
 import core.game.node.entity.skill.SkillPulse;
 import core.game.node.entity.skill.Skills;
 import core.game.node.entity.player.Player;
@@ -76,26 +71,12 @@ public final class GemCutPulse extends SkillPulse<Item> {
 
 	@Override
 	public boolean reward() {
-		LeagueOutputPlan plan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION);
-		if (plan.getInstantBatch()) {
-			while (amount > 0 && checkRequirements()) {
-				if (!cutOne()) break;
-				amount--;
-			}
-			return true;
+		if (player.getInventory().remove(gem.getUncut())) {
+			final Item item = gem.getGem();
+		    player.getInventory().add(item);
+			player.getSkills().addExperience(Skills.CRAFTING, gem.getExp(), true);
 		}
-		if (cutOne()) amount--;
+		amount--;
 		return amount < 1;
-	}
-
-	private boolean cutOne() {
-		if (!player.getInventory().remove(gem.getUncut())) return false;
-		final Item item = gem.getGem();
-		LeagueResolvedOutput output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION);
-		player.getInventory().add(new Item(item.getId(), output.getBaseAmount()));
-		GrandLeagueManager.deliverBonusOutput(player, item.getId(), output);
-		player.dispatch(new ResourceProducedEvent(item.getId(), output.getAmount(), player, gem.getUncut().getId()));
-		player.getSkills().addExperience(Skills.CRAFTING, gem.getExp() * output.getExperienceUnits(), true);
-		return true;
 	}
 }

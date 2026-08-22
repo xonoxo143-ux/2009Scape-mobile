@@ -1,10 +1,5 @@
 package content.global.skill.crafting.pottery;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
-import core.game.event.ResourceProducedEvent;
 import core.game.world.map.Location;
 import core.game.node.entity.skill.SkillPulse;
 import core.game.node.entity.skill.Skills;
@@ -76,39 +71,30 @@ public final class FirePotteryPulse extends SkillPulse<Item> {
 
     @Override
     public boolean reward() {
-        LeagueOutputPlan plan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION);
-        if (plan.getInstantBatch()) {
-            while (amount > 0 && checkRequirements()) {
-                if (!fireOne()) break;
-                amount--;
+        if (++ticks % 5 != 0) {
+            return false;
+        }
+        if (player.getInventory().remove(pottery.getUnfinished())) {
+            final Item item = pottery.getProduct();
+            player.getInventory().add(item);
+            player.getSkills().addExperience(Skills.CRAFTING, pottery.getFireExp(), true);
+            player.getPacketDispatch().sendMessage("You put the " + pottery.getUnfinished().getName().toLowerCase() + " in the oven.");
+            player.getPacketDispatch().sendMessage("You remove a " + pottery.getProduct().getName().toLowerCase() + " from the oven.");
+
+            // Spin a bowl on the pottery wheel and fire it in the oven in<br><br>Barbarian Village
+            if (pottery == PotteryItem.BOWL
+                    && player.getLocation().withinDistance(Location.create(3085,3408,0))
+                    && player.getAttribute("diary:varrock:spun-bowl", false)) {
+                player.getAchievementDiaryManager().finishTask(player, DiaryType.VARROCK, 0, 9);
             }
-            return true;
+
+            // Fire a pot in the kiln in the Barbarian Village potter's<br><br>house
+            if (pottery == PotteryItem.POT && player.getLocation().withinDistance(Location.create(3085,3408,0))) {
+                player.getAchievementDiaryManager().finishTask(player, DiaryType.LUMBRIDGE, 0, 7);
+            }
         }
-        if (++ticks % 5 != 0) return false;
-        if (fireOne()) amount--;
+        amount--;
         return amount < 1;
-    }
-
-    private boolean fireOne() {
-        if (!player.getInventory().remove(pottery.getUnfinished())) return false;
-        final Item item = pottery.getProduct();
-        LeagueResolvedOutput output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION);
-        player.getInventory().add(new Item(item.getId(), output.getBaseAmount()));
-        GrandLeagueManager.deliverBonusOutput(player, item.getId(), output);
-        player.dispatch(new ResourceProducedEvent(item.getId(), output.getAmount(), player, pottery.getUnfinished().getId()));
-        player.getSkills().addExperience(Skills.CRAFTING, pottery.getFireExp() * output.getExperienceUnits(), true);
-        player.getPacketDispatch().sendMessage("You put the " + pottery.getUnfinished().getName().toLowerCase() + " in the oven.");
-        player.getPacketDispatch().sendMessage("You remove a " + pottery.getProduct().getName().toLowerCase() + " from the oven.");
-
-        if (pottery == PotteryItem.BOWL
-                && player.getLocation().withinDistance(Location.create(3085,3408,0))
-                && player.getAttribute("diary:varrock:spun-bowl", false)) {
-            player.getAchievementDiaryManager().finishTask(player, DiaryType.VARROCK, 0, 9);
-        }
-        if (pottery == PotteryItem.POT && player.getLocation().withinDistance(Location.create(3085,3408,0))) {
-            player.getAchievementDiaryManager().finishTask(player, DiaryType.LUMBRIDGE, 0, 7);
-        }
-        return true;
     }
 
 }

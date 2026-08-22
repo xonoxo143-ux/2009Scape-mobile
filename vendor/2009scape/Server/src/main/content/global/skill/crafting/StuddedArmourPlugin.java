@@ -1,10 +1,5 @@
 package content.global.skill.crafting;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
-import core.game.event.ResourceProducedEvent;
 import core.plugin.Initializable;
 import core.game.dialogue.SkillDialogueHandler;
 import core.game.dialogue.SkillDialogueHandler.SkillDialogue;
@@ -225,28 +220,16 @@ public final class StuddedArmourPlugin extends UseWithHandler {
 
 		@Override
 		public boolean reward() {
-			LeagueOutputPlan plan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION);
-			if (plan.getInstantBatch()) {
-				while (amount > 0 && checkRequirements()) {
-					if (!craftOne()) break;
-					amount--;
-				}
-				return true;
+			if (++ticks % 5 != 0) {
+				return false;
 			}
-			if (++ticks % 5 != 0) return false;
-			if (craftOne()) amount--;
+			if (player.getInventory().remove(armour.getItem(), STEEL_STUDS)) {
+				player.getInventory().add(armour.getStudded());
+				player.getSkills().addExperience(Skills.CRAFTING, armour.getExperience(), true);
+				player.getPacketDispatch().sendMessage("You make a " + armour.getStudded().getName().toLowerCase() + ".");
+			}
+			amount--;
 			return amount < 1;
-		}
-
-		private boolean craftOne() {
-			if (!player.getInventory().remove(armour.getItem(), STEEL_STUDS)) return false;
-			LeagueResolvedOutput output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION);
-			player.getInventory().add(new Item(armour.getStudded().getId(), output.getBaseAmount()));
-			GrandLeagueManager.deliverBonusOutput(player, armour.getStudded().getId(), output);
-			player.dispatch(new ResourceProducedEvent(armour.getStudded().getId(), output.getAmount(), player, armour.getItem().getId()));
-			player.getSkills().addExperience(Skills.CRAFTING, armour.getExperience() * output.getExperienceUnits(), true);
-			player.getPacketDispatch().sendMessage("You make a " + armour.getStudded().getName().toLowerCase() + ".");
-			return true;
 		}
 
 		@Override

@@ -1,10 +1,5 @@
 package content.global.skill.crafting.pottery;
 
-import content.global.leagues.GrandLeagueManager;
-import content.global.leagues.core.LeagueOutputKind;
-import content.global.leagues.core.LeagueOutputPlan;
-import content.global.leagues.core.LeagueResolvedOutput;
-import core.game.event.ResourceProducedEvent;
 import core.game.world.map.Location;
 import core.game.node.entity.skill.SkillPulse;
 import core.game.node.entity.skill.Skills;
@@ -79,32 +74,20 @@ public final class PotteryPulse extends SkillPulse<Item> {
 
 	@Override
 	public boolean reward() {
-		LeagueOutputPlan plan = GrandLeagueManager.outputPlan(player, 1, LeagueOutputKind.PRODUCTION);
-		if (plan.getInstantBatch()) {
-			while (amount > 0 && checkRequirements()) {
-				if (!craftOne()) break;
-				amount--;
+		if (++ticks % 5 != 0) {
+			return false;
+		}
+		if (player.getInventory().remove(SOFT_CLAY)) {
+			if (pottery == PotteryItem.BOWL && player.getLocation().withinDistance(Location.create(3086,3410,0))) {
+				player.setAttribute("/save:diary:varrock:spun-bowl", true);
 			}
-			return true;
+			final Item item = pottery.getUnfinished();
+		    player.getInventory().add(item);
+			player.getSkills().addExperience(Skills.CRAFTING, pottery.getExp(), true);
+			player.getPacketDispatch().sendMessage("You make the soft clay into " + (StringUtils.isPlusN(pottery.getUnfinished().getName()) ? "an" : "a") + " " + pottery.getUnfinished().getName().toLowerCase() + ".");
 		}
-		if (++ticks % 5 != 0) return false;
-		if (craftOne()) amount--;
+		amount--;
 		return amount < 1;
-	}
-
-	private boolean craftOne() {
-		if (!player.getInventory().remove(SOFT_CLAY)) return false;
-		if (pottery == PotteryItem.BOWL && player.getLocation().withinDistance(Location.create(3086,3410,0))) {
-			player.setAttribute("/save:diary:varrock:spun-bowl", true);
-		}
-		final Item item = pottery.getUnfinished();
-		LeagueResolvedOutput output = GrandLeagueManager.resolveOutput(player, 1, LeagueOutputKind.PRODUCTION);
-		player.getInventory().add(new Item(item.getId(), output.getBaseAmount()));
-		GrandLeagueManager.deliverBonusOutput(player, item.getId(), output);
-		player.dispatch(new ResourceProducedEvent(item.getId(), output.getAmount(), player, SOFT_CLAY.getId()));
-		player.getSkills().addExperience(Skills.CRAFTING, pottery.getExp() * output.getExperienceUnits(), true);
-		player.getPacketDispatch().sendMessage("You make the soft clay into " + (StringUtils.isPlusN(pottery.getUnfinished().getName()) ? "an" : "a") + " " + pottery.getUnfinished().getName().toLowerCase() + ".");
-		return true;
 	}
 
 }
