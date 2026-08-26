@@ -39,7 +39,135 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build self-contained debug APK
+      - name: Fetch current 2009Scape server
+        run: |
+          git clone --depth 1 https://gitlab.com/2009scape/2009scape.git upstream-server
+          git -C upstream-server rev-parse HEAD | tee upstream-server-commit.txt
+
+      - name: Prepare Android single-player server
+        shell: python
+        run: |
+          from pathlib import Path
+          import re, shutil
+
+          root = Path('upstream-server/Server')
+          pom = root / 'pom.xml'
+          text = pom.read_text()
+          text = text.replace('<kotlin.compiler.jvmTarget>11</kotlin.compiler.jvmTarget>', '<kotlin.compiler.jvmTarget>1.8</kotlin.compiler.jvmTarget>')
+          text = text.replace('<maven.compiler.source>11</maven.compiler.source>', '<maven.compiler.source>8</maven.compiler.source>')
+          text = text.replace('<maven.compiler.target>11</maven.compiler.target>', '<maven.compiler.target>8</maven.compiler.target>')
+          pom.write_text(text)
+
+          replacements = {
+              'src/main/content/region/asgarnia/taverley/quest/witchshouse/WitchsHouse.java': [('var line = 12;', 'int line = 12;')],
+              'src/main/content/region/asgarnia/taverley/quest/WolfWhistle.java': [('var line = 12;', 'int line = 12;')],
+              'src/main/content/region/misthalin/varrock/quest/whatliesbelow/WhatLiesBelow.java': [('var line = 12;', 'int line = 12;')],
+              'src/main/core/game/node/entity/player/link/quest/QuestRepository.java': [('var theQuest = QUESTS.get(quest);', 'Quest theQuest = QUESTS.get(quest);')],
+          }
+          for rel, pairs in replacements.items():
+              path = root / rel
+              source = path.read_text()
+              for old, new in pairs:
+                  if old not in source:
+                      raise SystemExit(f'Expected Java syntax not found in {rel}: {old}')
+                  source = source.replace(old, new)
+              path.write_text(source)
+
+          control_src = Path('singleplayer/server-patches/LocalControlServer.kt')
+          control_dst = root / 'src/main/core/control/LocalControlServer.kt'
+          control_dst.parent.mkdir(parents=True, exist_ok=True)
+          shutil.copy2(control_src, control_dst)
+
+          server = root / 'src/main/core/Server.kt'
+          source = server.read_text()
+          needle = 'reactor!!.start()'
+          if needle not in source:
+              raise SystemExit('Could not locate server networking startup hook')
+          source = source.replace(needle, needle + '\n            core.control.LocalControlServer.start()', 1)
+          server.write_text(source)
+
+          conf = (root / 'worldprops/default.conf').read_text()
+          replacements = {
+              'name = "2009Scape"': 'name = "2009Scape Single Player"',
+              'name_ge = "2009Scape"': 'name_ge = "2009Scape Single Player"',
+              'activity = "2009Scape Classic."': 'activity = "Single Player"',
+              'enable_default_clan = true': 'enable_default_clan = false',
+              'watchdog_enabled = true': 'watchdog_enabled = false',
+              'daily_accounts_per_ip = 3': 'daily_accounts_per_ip = 1',
+              'player_commands = false': 'player_commands = true',
+          }
+          for old, new in replacements.items():
+              conf = conf.replace(old, new)
+          conf = re.sub(r'(?m)^use_auth\\s*=.*$', 'use_auth = false', conf)
+          conf = re.sub(r'(?m)^persist_accounts\\s*=.*$', 'persist_accounts = false', conf)
+          conf = re.sub(r'(?m)^noauth_default_admin\\s*=.*$', 'noauth_default_admin = true', conf)
+          conf = re.sub(r'(?m)^show_rules\\s*=.*$', 'show_rules = false', conf)
+          Path('singleplayer-generated.conf').write_text(conf)
+
+      - name: Build current server for Java 8
+        working-directory: upstream-server/Server
+        run: |
+          chmod +x mvnw
+          ./mvnw clean package -DskipTests -Dmaven.compiler.release=8
+
+      - name: Verify server bytecode is Java 8
+        run: |
+          python3 - <<'PY'
+          import glob, struct, zipfile
+          jars = glob.glob('upstream-server/Server/target/*-jar-with-dependencies.jar')
+          if not jars:
+              jars = glob.glob('upstream-server/Server/target/*-with-dependencies.jar')
+          if len(jars) != 1:
+              raise SystemExit(f'Expected one server fat jar, got: {jars}')
+          bad = []
+          highest = 0
+          with zipfile.ZipFile(jars[0]) as z:
+              for name in z.namelist():
+                  if not name.endswith('.class'):
+                      continue
+                  data = z.read(name)
+                  if data[:4] != b'\xca\xfe\xba\xbe':
+                      continue
+                  major = struct.unpack('>H', data[6:8])[0]
+                  highest = max(highest, major)
+                  if major > 52:
+                      bad.append((name, major))
+          print('Highest classfile version:', highest)
+          if bad:
+              print('Classes newer than Java 8:')
+              for name, major in bad[:50]:
+                  print(major, name)
+              raise SystemExit(1)
+          PY
+
+      - name: Package single-player server assets
+        run: |
+          set -euxo pipefail
+          ASSET_DIR="app_pojavlauncher/src/main/assets/singleplayer"
+          mkdir -p "$ASSET_DIR"
+          SERVER_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) | head -n 1)
+          test -n "$SERVER_JAR"
+          cp "$SERVER_JAR" "$ASSET_DIR/server.jar"
+          cp singleplayer-generated.conf "$ASSET_DIR/server-default.conf"
+          cp upstream-server-commit.txt "$ASSET_DIR/server-version.txt"
+          rm -f "$ASSET_DIR/server-data.zip"
+          (cd upstream-server/Server && zip -qr "$GITHUB_WORKSPACE/$ASSET_DIR/server-data.zip" data)
+          ls -lh "$ASSET_DIR"
+
+      - name: Build single-player auto-login plugin
+        run: |
+          set -euxo pipefail
+          rm -rf build/singleplayer-plugin
+          mkdir -p build/singleplayer-plugin
+          javac --release 8 \
+            -cp app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/singleplayer-plugin \
+            singleplayer/client-plugin/LocalSinglePlayerLogin.java
+          rm -f app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
+          (cd build/singleplayer-plugin && zip -qr "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip" LocalSinglePlayerLogin)
+          unzip -l app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
+
+      - name: Build self-contained single-player APK
         run: |
           gradle :app_pojavlauncher:assembleDebug
           mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
