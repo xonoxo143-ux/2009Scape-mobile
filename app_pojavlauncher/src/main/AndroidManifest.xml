@@ -95,5 +95,10 @@
         </provider>
 
         <service android:name=".services.ProgressService" />
+        <service
+            android:name=".LocalServerService"
+            android:exported="false"
+            android:process=":server"
+            android:stopWithTask="false" />
     </application>
 </manifest>
