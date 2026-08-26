@@ -1,119 +1,121 @@
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#231c09"
-    tools:context=".ScapeLauncher">
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:padding="24dp"
+    android:background="#231c09">
 
-    <ImageView
-        android:id="@+id/imageView4"
-        android:layout_width="0dp"
-        android:layout_height="31dp"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:srcCompat="@drawable/plack" />
-
-    <ImageView
-        android:id="@+id/imageView2"
+    <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:srcCompat="@drawable/detail_select" />
+        android:text="2009Scape"
+        android:textColor="#E2C887"
+        android:textStyle="bold"
+        android:textSize="28sp" />
 
-    <androidx.constraintlayout.widget.Guideline
-        android:id="@+id/guideline"
+    <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        app:layout_constraintGuide_percent="0.5" />
+        android:layout_marginTop="2dp"
+        android:text="Single Player"
+        android:textColor="#B8A078"
+        android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/serverStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="Server: stopped"
+        android:textColor="#D8D0B0"
+        android:textSize="13sp" />
 
     <Button
-        android:id="@+id/playHD"
-        android:layout_width="230dp"
-        android:layout_height="193dp"
-        android:layout_marginStart="64dp"
-        android:background="@android:color/transparent"
-        android:visibility="visible"
-        app:layout_constraintBottom_toBottomOf="@+id/imageView2"
-        app:layout_constraintStart_toStartOf="@+id/guideline"
-        app:layout_constraintTop_toTopOf="@+id/imageView2" />
+        android:id="@+id/playSinglePlayer"
+        android:layout_width="320dp"
+        android:layout_height="72dp"
+        android:layout_marginTop="18dp"
+        android:text="PLAY"
+        android:textAllCaps="true"
+        android:textSize="22sp"
+        android:textStyle="bold" />
 
-    <Button
-        android:id="@+id/playSD"
-        android:layout_width="339dp"
-        android:layout_height="191dp"
-        android:layout_marginEnd="-44dp"
-        android:background="@android:color/transparent"
-        android:visibility="visible"
-        app:layout_constraintBottom_toBottomOf="@+id/imageView2"
-        app:layout_constraintEnd_toEndOf="@+id/guideline"
-        app:layout_constraintTop_toTopOf="@+id/imageView2"
-        app:layout_constraintVertical_bias="0.504" />
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/worldSettings"
+            android:layout_width="170dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="8dp"
+            android:text="World Settings"
+            android:textAllCaps="false" />
+
+        <Button
+            android:id="@+id/playerSettings"
+            android:layout_width="170dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:text="Player Settings"
+            android:textAllCaps="false" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/serverFiles"
+            android:layout_width="170dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="8dp"
+            android:text="Server Files"
+            android:textAllCaps="false" />
+
+        <Button
+            android:id="@+id/updateFromGitHub"
+            android:layout_width="170dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:text="Update Game"
+            android:textAllCaps="false" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/updateStatus"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="4dp"
-        android:maxWidth="280dp"
+        android:layout_marginTop="10dp"
+        android:gravity="center"
+        android:maxLines="2"
         android:text=""
         android:textColor="#B8A078"
-        android:textSize="12sp"
-        app:layout_constraintBottom_toTopOf="@+id/updateFromGitHub"
-        app:layout_constraintEnd_toEndOf="parent" />
+        android:textSize="12sp" />
 
-    <Button
-        android:id="@+id/serverFiles"
-        android:layout_width="150dp"
-        android:layout_height="44dp"
-        android:layout_marginEnd="12dp"
-        android:layout_marginBottom="8dp"
-        android:text="Server Files"
-        android:textAllCaps="false"
-        app:layout_constraintBottom_toTopOf="@+id/progress_layout"
-        app:layout_constraintEnd_toStartOf="@+id/updateFromGitHub" />
-
-    <Button
-        android:id="@+id/updateFromGitHub"
-        android:layout_width="190dp"
-        android:layout_height="44dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="8dp"
-        android:text="Update from GitHub"
-        android:textAllCaps="false"
-        app:layout_constraintBottom_toTopOf="@+id/progress_layout"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <com.kdt.mcgui.ProgressLayout
-        android:id="@+id/progress_layout"
-        android:layout_width="733dp"
-        android:layout_height="39dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        tools:layout_editor_absoluteX="-1dp" />
-
-    <TextView
-        android:id="@+id/scapebranding"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="62dp"
-        android:text="2009Scape - "
-        android:textStyle="bold"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="@+id/imageView2"
-        app:layout_constraintStart_toStartOf="@+id/imageView2" />
+    <Space
+        android:layout_width="1dp"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
 
     <TextView
         android:id="@+id/settings"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="62dp"
-        android:text="Settings"
-        android:textAllCaps="false"
+        android:padding="8dp"
+        android:text="Advanced launcher settings"
         android:textColor="#B8A078"
-        app:layout_constraintBottom_toBottomOf="@+id/imageView2"
-        app:layout_constraintStart_toEndOf="@+id/scapebranding" />
+        android:textSize="12sp" />
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+    <com.kdt.mcgui.ProgressLayout
+        android:id="@+id/progress_layout"
+        android:layout_width="match_parent"
+        android:layout_height="42dp" />
+
+</LinearLayout>
