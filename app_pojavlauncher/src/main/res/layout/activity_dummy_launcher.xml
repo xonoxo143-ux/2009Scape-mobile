@@ -66,6 +66,17 @@
         app:layout_constraintEnd_toEndOf="parent" />
 
     <Button
+        android:id="@+id/serverFiles"
+        android:layout_width="150dp"
+        android:layout_height="44dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="8dp"
+        android:text="Server Files"
+        android:textAllCaps="false"
+        app:layout_constraintBottom_toTopOf="@+id/progress_layout"
+        app:layout_constraintEnd_toStartOf="@+id/updateFromGitHub" />
+
+    <Button
         android:id="@+id/updateFromGitHub"
         android:layout_width="190dp"
         android:layout_height="44dp"
