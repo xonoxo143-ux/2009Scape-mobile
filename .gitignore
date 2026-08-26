@@ -3,6 +3,10 @@
 /*/build
 app_pojavlauncher/src/main/assets/components/jre
 app_pojavlauncher/src/main/assets/components/lwjgl3/version
+app_pojavlauncher/src/main/assets/mobile-build.properties
+app_pojavlauncher/src/main/assets/rt4.jar
+app_pojavlauncher/src/main/assets/rt4.version
+app_pojavlauncher/src/main/assets/plugins/MobileClientBindings.zip
 local.properties
 .idea/
 .DS_Store

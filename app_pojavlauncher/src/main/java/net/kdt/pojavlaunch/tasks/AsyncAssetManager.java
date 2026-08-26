@@ -85,7 +85,7 @@ public class AsyncAssetManager {
                 // we repack them to a single file here
                 unpackComponent(ctx, "lwjgl3", false);
                 unpackComponent(ctx, "security", true);
-                Tools.copyAssetFile(ctx,"rt4.jar",Tools.DIR_DATA, false); // Change this to true if you're working on client features.
+                unpackRt4Client(ctx);
                 Tools.copyAssetFile(ctx,"config.json",Tools.DIR_DATA, false);
 
                 // Unzip the plugins for use.
@@ -96,6 +96,29 @@ public class AsyncAssetManager {
             }
             ProgressLayout.clearProgress(ProgressLayout.EXTRACT_COMPONENTS);
         });
+    }
+
+    /**
+     * Install the bundled RT4 client whenever its build hash changes.
+     *
+     * Older builds copied rt4.jar only once, so installing a newer APK could
+     * silently continue launching the client from the previous APK. The build
+     * now packages a SHA-256 value in rt4.version and this marker is copied
+     * only after the matching JAR has been installed successfully.
+     */
+    private static void unpackRt4Client(Context ctx) throws IOException {
+        String bundledVersion = Tools.read(ctx.getAssets().open("rt4.version")).trim();
+        File installedClient = new File(Tools.DIR_DATA, "rt4.jar");
+        File installedVersionFile = new File(Tools.DIR_DATA, "rt4.version");
+        String installedVersion = installedVersionFile.isFile()
+                ? Tools.read(new FileInputStream(installedVersionFile)).trim()
+                : "";
+
+        if (!installedClient.isFile() || !bundledVersion.equals(installedVersion)) {
+            Tools.copyAssetFile(ctx, "rt4.jar", Tools.DIR_DATA, true);
+            Tools.copyAssetFile(ctx, "rt4.version", Tools.DIR_DATA, true);
+            Log.i("AsyncAssetManager", "Installed RT4 client " + bundledVersion);
+        }
     }
 
     private static void extractAllPlugins(Context ctx) throws IOException {
@@ -121,16 +144,31 @@ public class AsyncAssetManager {
                 File installedPluginDirectory = new File(pluginsDirectory, pluginDirectoryName);
                 File disabledPluginDirectory = new File(disabledPluginsDirectory, pluginDirectoryName);
 
-                // If a directory with this name already exists in either the plugins directory or the disabled plugins directory, skip this plugin
-                if (installedPluginDirectory.exists() || disabledPluginDirectory.exists()) {
+                boolean isMobileBindings = "MobileClientBindings.zip".equals(plugin);
+
+                // Preserve user-managed plugins. MobileClientBindings is part of
+                // the Android input bridge, so refresh it with every APK build.
+                if (!isMobileBindings && (installedPluginDirectory.exists() || disabledPluginDirectory.exists())) {
                     continue;
                 }
 
-                // Extract the plugin
+                File extractionDirectory = disabledPluginDirectory.exists()
+                        ? disabledPluginsDirectory
+                        : pluginsDirectory;
+                if (isMobileBindings) {
+                    File existingDirectory = disabledPluginDirectory.exists()
+                            ? disabledPluginDirectory
+                            : installedPluginDirectory;
+                    if (existingDirectory.exists()) {
+                        FileUtils.deleteDirectory(existingDirectory);
+                    }
+                }
+
+                // Extract the plugin. A disabled mobile bindings plugin stays disabled.
                 Tools.copyAssetFile(ctx, PLUGIN_PATH + "/" + plugin, Tools.DIR_DATA, true);
                 Tools.ZipTool.unzip(
                         new File(Tools.DIR_DATA + "/" + plugin),
-                        new File(Tools.DIR_DATA + "/plugins/")
+                        extractionDirectory
                 );
             }
         }

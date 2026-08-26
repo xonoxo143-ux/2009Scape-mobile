@@ -1,128 +1,175 @@
-name: Vanilla Baseline APK
+name: Editable Mobile APK
 
 on:
   workflow_dispatch:
   pull_request:
     branches:
-      - master
+      - mobile-port
   push:
     branches:
-      - vanilla-baseline-apk
+      - mobile-port
     paths:
       - '.github/workflows/android.yml'
+      - 'app_pojavlauncher/**'
+      - 'jre_lwjgl3glfw/**'
+      - 'rt4-client/**'
+      - 'scripts/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle.properties'
+      - 'gradle/**'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: mobile-apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  source-check:
     runs-on: ubuntu-22.04
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
     steps:
-      - name: Checkout untouched mobile source
-        uses: actions/checkout@v4
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Publish run id for inspection
-        if: github.event_name == 'push'
+      - name: Check whether one-time RT4 import is complete
+        id: check
         shell: bash
         run: |
-          set -euxo pipefail
-          mkdir -p ci
-          printf 'run_id=%s\nsha=%s\n' '${{ github.run_id }}' '${{ github.sha }}' > ci/baseline-run-id.txt
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add ci/baseline-run-id.txt
-          git commit -m 'Record baseline build run id'
-          git push origin HEAD:vanilla-baseline-apk
+          if [[ -f rt4-client/UPSTREAM_COMMIT ]]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+            echo "RT4 source is ready: $(cat rt4-client/UPSTREAM_COMMIT)"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'RT4 source import is still running; the source commit will start the real APK build.'
+          fi
 
-      - name: Set up JDK 8
-        uses: actions/setup-java@v4
+  build:
+    needs: source-check
+    if: needs.source-check.outputs.ready == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out editable mobile source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Java 8 for RT4 and compatibility bridge
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '8'
 
-      - name: Recover known-good embedded JRE from official 2.4 APK
-        shell: bash
-        run: |
-          set -euxo pipefail
-          RELEASE_JSON=/tmp/release.json
-          curl --fail --location --silent --show-error \
-            https://api.github.com/repos/2009scape/2009Scape-mobile/releases/tags/hd-2.4 \
-            -o "$RELEASE_JSON"
-          jq -r '.assets[] | [.name, .size, .browser_download_url] | @tsv' "$RELEASE_JSON"
-          APK_URL="$(jq -r '.assets[] | select(.name | endswith(".apk")) | select((.name | ascii_downcase | contains("noruntime")) | not) | .browser_download_url' "$RELEASE_JSON" | head -1)"
-          test -n "$APK_URL"
-          test "$APK_URL" != "null"
-          curl --fail --location --retry 3 --silent --show-error "$APK_URL" -o /tmp/official-2.4.apk
-          unzip -l /tmp/official-2.4.apk | grep -F 'assets/components/jre/' | head
-          rm -rf /tmp/official-runtime
-          mkdir -p /tmp/official-runtime
-          unzip -q /tmp/official-2.4.apk 'assets/components/jre/*' -d /tmp/official-runtime
-          rm -rf app_pojavlauncher/src/main/assets/components/jre
-          mkdir -p app_pojavlauncher/src/main/assets/components
-          cp -a /tmp/official-runtime/assets/components/jre app_pojavlauncher/src/main/assets/components/jre
-
-      - name: Verify recovered embedded JRE
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -d app_pojavlauncher/src/main/assets/components/jre
-          test -f app_pojavlauncher/src/main/assets/components/jre/universal.tar.xz
-          test -f app_pojavlauncher/src/main/assets/components/jre/bin-arm64.tar.xz
-          test -f app_pojavlauncher/src/main/assets/components/jre/version
-          du -sh app_pojavlauncher/src/main/assets/components/jre
-          find app_pojavlauncher/src/main/assets/components/jre -type f | sort
-
-      - name: Set up Gradle 7.6.1
-        uses: gradle/actions/setup-gradle@v4
+      - name: Set up pinned Android Gradle runtime
+        uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
         with:
           gradle-version: '7.6.1'
 
-      - name: Build LWJGL compatibility JAR
+      - name: Compile editable RT4 client and mobile bindings
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
+          chmod +x rt4-client/gradlew scripts/build-rt4-client.sh
+          ./scripts/build-rt4-client.sh
+
+      - name: Recover pinned embedded Java runtime
+        shell: bash
+        env:
+          OFFICIAL_APK_URL: https://github.com/2009scape/2009Scape-mobile/releases/download/hd-2.4/2009Scape-HD-2.4-debug.apk
+          OFFICIAL_APK_SHA256: ccc622be8d72f0506643b4cc955768123f1436f601ceab4611048807262936cd
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error \
+            "$OFFICIAL_APK_URL" -o /tmp/official-2009scape-mobile-2.4.apk
+          printf '%s  %s\n' "$OFFICIAL_APK_SHA256" /tmp/official-2009scape-mobile-2.4.apk \
+            | sha256sum --check --strict
+
+          RUNTIME_DIR=/tmp/official-2009scape-runtime
+          rm -rf "$RUNTIME_DIR"
+          mkdir -p "$RUNTIME_DIR"
+          unzip -q /tmp/official-2009scape-mobile-2.4.apk 'assets/components/jre/*' -d "$RUNTIME_DIR"
+
+          rm -rf app_pojavlauncher/src/main/assets/components/jre
+          mkdir -p app_pojavlauncher/src/main/assets/components
+          cp -a "$RUNTIME_DIR/assets/components/jre" app_pojavlauncher/src/main/assets/components/jre
+
+          test -s app_pojavlauncher/src/main/assets/components/jre/universal.tar.xz
+          test -s app_pojavlauncher/src/main/assets/components/jre/bin-arm64.tar.xz
+          test -s app_pojavlauncher/src/main/assets/components/jre/version
+
+      - name: Build LWJGL Android compatibility JAR
+        shell: bash
+        run: |
+          set -euo pipefail
           ./scripts/languagelist_updater.sh
           gradle :jre_lwjgl3glfw:build --no-daemon
-          test -f app_pojavlauncher/src/main/assets/components/lwjgl3/lwjgl-glfw-classes.jar
+          test -s app_pojavlauncher/src/main/assets/components/lwjgl3/lwjgl-glfw-classes.jar
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - name: Write traceable build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'mobile_repository=%s\n' "$GITHUB_REPOSITORY"
+            printf 'mobile_commit=%s\n' "$GITHUB_SHA"
+            printf 'rt4_source_commit=%s\n' "$(tr -d '\r\n' < rt4-client/UPSTREAM_COMMIT)"
+            printf 'rt4_jar_sha256=%s\n' "$(tr -d '\r\n' < app_pojavlauncher/src/main/assets/rt4.version)"
+          } > app_pojavlauncher/src/main/assets/mobile-build.properties
+
+      - name: Set up Java 17 for Android packaging
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Build full debug APK
+      - name: Build debug APK
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           gradle :app_pojavlauncher:assembleDebug --no-daemon
           mkdir -p out
-          cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-vanilla-baseline.apk
+          cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk \
+            out/2009scape-mobile-editable.apk
 
-      - name: Audit APK contents
+      - name: Audit APK and source provenance
         shell: bash
         run: |
-          set -euxo pipefail
-          APK=out/2009scape-vanilla-baseline.apk
+          set -euo pipefail
+          APK=out/2009scape-mobile-editable.apk
           unzip -l "$APK" > out/apk-contents.txt
+
           grep -F 'assets/rt4.jar' out/apk-contents.txt
+          grep -F 'assets/rt4.version' out/apk-contents.txt
+          grep -F 'assets/mobile-build.properties' out/apk-contents.txt
           grep -F 'assets/config.json' out/apk-contents.txt
           grep -F 'assets/components/lwjgl3/lwjgl-glfw-classes.jar' out/apk-contents.txt
           grep -F 'assets/components/jre/universal.tar.xz' out/apk-contents.txt
           grep -F 'assets/components/jre/bin-arm64.tar.xz' out/apk-contents.txt
           grep -F 'assets/plugins/MobileClientBindings.zip' out/apk-contents.txt
           grep -F 'lib/arm64-v8a/' out/apk-contents.txt
+
+          unzip -p "$APK" assets/rt4.jar | sha256sum | cut -d ' ' -f 1 > out/apk-rt4.sha256
+          diff -u app_pojavlauncher/src/main/assets/rt4.version out/apk-rt4.sha256
+          unzip -p "$APK" assets/mobile-build.properties | tee out/mobile-build.properties
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee out/apk-signing.txt
           sha256sum "$APK" | tee out/SHA256SUMS.txt
           ls -lh "$APK" | tee out/apk-size.txt
 
-      - name: Upload audited baseline APK
-        uses: actions/upload-artifact@v4
+      - name: Upload verified APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: 2009scape-vanilla-baseline
+          name: 2009scape-mobile-editable-${{ github.run_number }}
           path: |
-            out/2009scape-vanilla-baseline.apk
+            out/2009scape-mobile-editable.apk
             out/SHA256SUMS.txt
             out/apk-size.txt
             out/apk-contents.txt
+            out/apk-rt4.sha256
+            out/mobile-build.properties
+            out/apk-signing.txt
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30

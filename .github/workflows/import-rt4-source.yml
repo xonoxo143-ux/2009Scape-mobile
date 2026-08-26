@@ -1,0 +1,83 @@
+name: Import pinned RT4 source
+
+on:
+  push:
+    branches:
+      - mobile-port
+    paths:
+      - '.github/workflows/import-rt4-source.yml'
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: import-rt4-mobile-port
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out mobile port
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Import exact mobile client revision
+        shell: bash
+        env:
+          RT4_REPOSITORY: https://gitlab.com/downthecrop/rt4-client.git
+          RT4_BRANCH: lwjgl-mobile-callbacks
+          RT4_COMMIT: e8589f36209c34ded7a9a545be498739dabb167b
+        run: |
+          set -euo pipefail
+
+          if [[ -f rt4-client/UPSTREAM_COMMIT ]]; then
+            echo "RT4 source is already present; nothing to import."
+            exit 0
+          fi
+
+          IMPORT_DIR=/tmp/2009scape-rt4-source-import
+          rm -rf "$IMPORT_DIR"
+          git clone --depth 1 --single-branch --branch "$RT4_BRANCH" "$RT4_REPOSITORY" "$IMPORT_DIR"
+
+          ACTUAL_COMMIT="$(git -C "$IMPORT_DIR" rev-parse HEAD)"
+          if [[ "$ACTUAL_COMMIT" != "$RT4_COMMIT" ]]; then
+            echo "Pinned RT4 revision is no longer the branch head." >&2
+            echo "Expected: $RT4_COMMIT" >&2
+            echo "Actual:   $ACTUAL_COMMIT" >&2
+            exit 1
+          fi
+
+          rm -rf "$IMPORT_DIR/.git"
+          mv "$IMPORT_DIR" rt4-client
+          printf '%s\n' "$RT4_COMMIT" > rt4-client/UPSTREAM_COMMIT
+
+          # The upstream scripts use Gradle's legacy compile/runtime configurations.
+          # Pin the wrapper to the newest Java 8-compatible Gradle line that supports them.
+          sed -i 's/gradle-7\.4\.2-bin\.zip/gradle-6.9.4-bin.zip/' rt4-client/gradle/wrapper/gradle-wrapper.properties
+          printf '%s\n' 'distributionSha256Sum=3e240228538de9f18772a574e99a0ba959e83d6ef351014381acd9631781389a' \
+            >> rt4-client/gradle/wrapper/gradle-wrapper.properties
+
+          # Generated client artifacts must never be mistaken for editable source.
+          git rm -f --ignore-unmatch \
+            app_pojavlauncher/src/main/assets/rt4.jar \
+            app_pojavlauncher/src/main/assets/rt4.version \
+            app_pojavlauncher/src/main/assets/plugins/MobileClientBindings.zip
+
+          test -f rt4-client/client/src/main/java/rt4/client.java
+          test -f rt4-client/client/src/main/java/rt4/GlRenderer.java
+          test -f rt4-client/plugin-playground/src/main/kotlin/MobileClientBindings/plugin.kt
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add --all rt4-client app_pojavlauncher/src/main/assets
+          git commit -m 'Vendor pinned editable RT4 mobile client source'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Start first source-backed APK build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run android.yml --ref "$GITHUB_REF_NAME"
