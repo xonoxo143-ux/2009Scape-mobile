@@ -1,0 +1,66 @@
+name: Android Emulator Screenshots
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - mobile-port
+    paths:
+      - '.github/workflows/emulator.yml'
+      - 'scripts/emulator-capture.sh'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  capture:
+    name: ${{ matrix.quality }} virtual display
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        quality: [HD, SD]
+
+    steps:
+      - name: Check out test harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download verified APK from build 81
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: 2009scape-mobile-editable-81
+          path: apk
+          github-token: ${{ github.token }}
+          run-id: 32918793324
+
+      - name: Enable KVM
+        shell: bash
+        run: sudo chmod 666 /dev/kvm
+
+      - name: Boot emulator, select quality, and capture framebuffer
+        uses: ReactiveCircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 4
+          ram-size: 4096M
+          heap-size: 512M
+          disk-size: 8G
+          disable-animations: true
+          emulator-options: >-
+            -no-snapshot -no-window -no-audio -no-boot-anim
+            -gpu swiftshader_indirect -camera-back none -camera-front none
+          script: bash scripts/emulator-capture.sh apk/2009scape-mobile-editable.apk ${{ matrix.quality }} out/emulator-${{ matrix.quality }}
+
+      - name: Upload screenshots and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: emulator-${{ matrix.quality }}-${{ github.run_number }}
+          path: out/emulator-${{ matrix.quality }}/
+          if-no-files-found: warn
+          retention-days: 14
