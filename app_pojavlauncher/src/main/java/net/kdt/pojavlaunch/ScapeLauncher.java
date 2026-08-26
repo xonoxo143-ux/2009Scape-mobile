@@ -1,8 +1,12 @@
 package net.kdt.pojavlaunch;
 
 import android.annotation.SuppressLint;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -18,6 +22,7 @@ public class ScapeLauncher extends BaseActivity {
     private TextView updateStatus;
     private Button playHD;
     private Button playSD;
+    private Button serverFiles;
     private Button updateFromGitHub;
     private static final int FILE_SELECT_CODE_JSON = 0;
     private static final int FILE_SELECT_CODE_ZIP = 1;
@@ -34,6 +39,7 @@ public class ScapeLauncher extends BaseActivity {
         updateStatus = findViewById(R.id.updateStatus);
         playHD = findViewById(R.id.playHD);
         playSD = findViewById(R.id.playSD);
+        serverFiles = findViewById(R.id.serverFiles);
         updateFromGitHub = findViewById(R.id.updateFromGitHub);
         mProgressLayout = findViewById(R.id.progress_layout);
 
@@ -43,8 +49,11 @@ public class ScapeLauncher extends BaseActivity {
         mProgressLayout.observe(ProgressLayout.UNPACK_RUNTIME);
         mProgressLayout.observe(ProgressLayout.INSTALL_MODPACK);
 
+        ServerFilesProvider.ensureServerRoot(this);
+
         playHD.setOnClickListener(view -> launchGame(MainActivity.class));
         playSD.setOnClickListener(view -> launchGame(JavaGUILauncherActivity.class));
+        serverFiles.setOnClickListener(view -> openServerFiles());
         updateFromGitHub.setOnClickListener(view -> runGitHubUpdate());
         settings.setOnClickListener(view -> showBottomDialog());
     }
@@ -56,6 +65,44 @@ public class ScapeLauncher extends BaseActivity {
         updateStatus.setText("Restart the launcher before updating the client.");
         Intent intent = new Intent(ScapeLauncher.this, activityClass);
         startActivity(intent);
+    }
+
+    private void openServerFiles() {
+        ServerFilesProvider.ensureServerRoot(this);
+        String authority = ServerFilesProvider.getAuthority(this);
+        Uri rootDocument = DocumentsContract.buildDocumentUri(authority,
+                ServerFilesProvider.ROOT_DOCUMENT_ID);
+
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION |
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, rootDocument);
+        }
+
+        try {
+            startActivity(intent);
+        } catch (ActivityNotFoundException noFilePicker) {
+            Intent fallback = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            fallback.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION |
+                    Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                fallback.putExtra(DocumentsContract.EXTRA_INITIAL_URI, rootDocument);
+            }
+            try {
+                startActivity(fallback);
+            } catch (ActivityNotFoundException noTreePicker) {
+                Toast.makeText(this,
+                        "Android could not open a document browser. Server files are still exposed as 2009Scape Server Files.",
+                        Toast.LENGTH_LONG).show();
+            }
+        }
     }
 
     private void runGitHubUpdate() {
