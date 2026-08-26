@@ -27,10 +27,11 @@ jobs:
           git clone --depth 1 https://gitlab.com/2009scape/2009scape.git upstream-server
           git -C upstream-server rev-parse HEAD | tee upstream-server-commit.txt
 
-      - name: Retarget server to Java 8
+      - name: Retarget server to Java 8 and apply single-player defaults
         shell: python
         run: |
           from pathlib import Path
+          import re
 
           root = Path('upstream-server/Server')
           pom = root / 'pom.xml'
@@ -55,6 +56,22 @@ jobs:
                   source = source.replace(old, new)
               path.write_text(source)
 
+          # Single-player has no need for the first-login rules confirmation gate.
+          worldprops = root / 'worldprops/default.conf'
+          config = worldprops.read_text()
+          config, count = re.subn(r'(?m)^\s*show_rules\s*=\s*(?:true|false)\s*$', '    show_rules = false', config)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one show_rules setting, found {count}')
+          worldprops.write_text(config)
+
+      - name: Verify single-player defaults
+        run: |
+          grep -Eq '^\s*show_rules\s*=\s*false\s*$' upstream-server/Server/worldprops/default.conf
+          if grep -Eq '^\s*show_rules\s*=\s*true\s*$' upstream-server/Server/worldprops/default.conf; then
+            echo 'Rules confirmation unexpectedly enabled'
+            exit 1
+          fi
+
       - name: Build current server for Java 8
         working-directory: upstream-server/Server
         run: |
@@ -65,6 +82,7 @@ jobs:
         run: |
           mkdir -p verify
           cp upstream-server/Server/target/*-with-dependencies.jar verify/server.jar
+          cp upstream-server/Server/worldprops/default.conf verify/default.conf
           python3 - <<'PY'
           import struct, zipfile
           from pathlib import Path
@@ -97,5 +115,6 @@ jobs:
           name: singleplayer-server-java8
           path: |
             verify/server.jar
+            verify/default.conf
             upstream-server-commit.txt
           if-no-files-found: error
