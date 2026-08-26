@@ -1,0 +1,21 @@
+rootProject.name = "rt4-client"
+
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+        flatDir {
+            dirs 'lib'
+        }
+    }
+}
+
+include(
+    "deob-annotations",
+    "signlink",
+    "client",
+    "playground"
+)
+
+startParameter.excludedTaskNames << ':playground:run'
+include 'plugin-playground'
+
