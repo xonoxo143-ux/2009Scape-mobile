@@ -3,12 +3,10 @@ package net.kdt.pojavlaunch;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Build;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,15 +14,11 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
-/** Coordinates the packaged local server, persistent files, and localhost startup. */
+/** Coordinates persistent local settings and the isolated single-player server process. */
 public final class LocalServerManager {
     public static final int GAME_PORT = 43595;
     public static final int CONTROL_PORT = 43600;
-    private static final String ASSET_ROOT = "singleplayer/";
-    private static final String VERSION_MARKER = ".server-data-version";
     private static final String PREFS = "singleplayer";
     private static final String PROFILE_KEY = "profile_name";
     private static final String DEFAULT_PROFILE = "Player";
@@ -41,7 +35,7 @@ public final class LocalServerManager {
         Context app = context.getApplicationContext();
         new Thread(() -> {
             try {
-                listener.onStatus("Preparing local server files...");
+                listener.onStatus("Preparing local world...");
                 ensureInstalled(app);
                 writeLocalClientConfig(app);
                 writeProfileFile(app, getProfileName(app));
@@ -49,10 +43,14 @@ public final class LocalServerManager {
                 if (!isPortOpen(GAME_PORT, 150)) {
                     listener.onStatus("Starting local 2009Scape server...");
                     Intent service = new Intent(app, LocalServerService.class);
-                    app.startService(service);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        app.startForegroundService(service);
+                    } else {
+                        app.startService(service);
+                    }
                 }
 
-                for (int i = 0; i < 240; i++) {
+                for (int i = 0; i < 480; i++) {
                     if (isPortOpen(GAME_PORT, 250)) {
                         listener.onStatus("Local server ready.");
                         listener.onReady();
@@ -60,88 +58,28 @@ public final class LocalServerManager {
                     }
                     Thread.sleep(250L);
                 }
-                throw new IOException("Local server did not open port " + GAME_PORT + ".");
+                throw new IOException("Local server did not open port " + GAME_PORT + ". Check Server Files/server-failure.txt.");
             } catch (Exception e) {
                 listener.onError(e);
             }
         }, "singleplayer-startup").start();
     }
 
+    /** Creates only user-editable/persistent scaffolding. The service owns versioned server payload installation. */
     public static synchronized void ensureInstalled(Context context) throws IOException {
+        Tools.initContextConstants(context);
         File root = ServerFilesProvider.ensureServerRoot(context);
         File worldprops = new File(root, "worldprops");
         File data = new File(root, "data");
-        File snapshots = new File(data, "snapshots");
-        File logs = new File(data, "logs");
-        File players = new File(data, "players");
+        new File(data, "snapshots").mkdirs();
+        new File(data, "logs").mkdirs();
+        new File(data, "players").mkdirs();
         worldprops.mkdirs();
-        snapshots.mkdirs();
-        logs.mkdirs();
-        players.mkdirs();
-
-        String packagedVersion = readAssetText(context, ASSET_ROOT + "server-version.txt").trim();
-        File marker = new File(root, VERSION_MARKER);
-        String installedVersion = marker.isFile() ? readFileText(marker).trim() : "";
-        boolean firstInstall = installedVersion.length() == 0;
-        boolean versionChanged = !packagedVersion.equals(installedVersion);
-
-        if (!new File(root, "server.jar").isFile() || versionChanged) {
-            copyAsset(context, ASSET_ROOT + "server.jar", new File(root, "server.jar"));
-        }
 
         File localConf = new File(worldprops, "local.conf");
         if (!localConf.isFile()) {
-            copyAsset(context, ASSET_ROOT + "server-default.conf", localConf);
+            copyAsset(context, "singleplayer/server-default.conf", localConf);
         }
-
-        if (firstInstall || versionChanged) {
-            try (InputStream in = context.getAssets().open(ASSET_ROOT + "server-data.zip")) {
-                extractServerData(in, root, !firstInstall);
-            }
-            writeFileText(marker, packagedVersion + "\n");
-        }
-    }
-
-    /** On upgrades, preserve the player-owned mutable portions of server data. */
-    private static void extractServerData(InputStream input, File root, boolean updating) throws IOException {
-        String rootPath = root.getCanonicalPath() + File.separator;
-        try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(input))) {
-            ZipEntry entry;
-            byte[] buffer = new byte[64 * 1024];
-            while ((entry = zip.getNextEntry()) != null) {
-                String name = entry.getName().replace('\\', '/');
-                if (updating && isPersistentPath(name)) {
-                    zip.closeEntry();
-                    continue;
-                }
-                File out = new File(root, name);
-                String canonical = out.getCanonicalPath();
-                if (!canonical.startsWith(rootPath)) {
-                    throw new IOException("Unsafe path in server data archive: " + name);
-                }
-                if (entry.isDirectory()) {
-                    out.mkdirs();
-                } else {
-                    File parent = out.getParentFile();
-                    if (parent != null) parent.mkdirs();
-                    try (OutputStream os = new BufferedOutputStream(new FileOutputStream(out))) {
-                        int read;
-                        while ((read = zip.read(buffer)) != -1) {
-                            os.write(buffer, 0, read);
-                        }
-                    }
-                }
-                zip.closeEntry();
-            }
-        }
-    }
-
-    private static boolean isPersistentPath(String name) {
-        return name.startsWith("data/players/")
-                || name.startsWith("data/serverstore/")
-                || name.startsWith("data/logs/")
-                || name.startsWith("data/snapshots/")
-                || name.startsWith("data/eco/");
     }
 
     public static String getProfileName(Context context) {
@@ -170,11 +108,13 @@ public final class LocalServerManager {
     }
 
     private static void writeProfileFile(Context context, String name) throws IOException {
+        Tools.initContextConstants(context);
         File file = new File(Tools.DIR_DATA, "singleplayer-profile.txt");
         writeFileText(file, sanitizeProfileName(name) + "\n");
     }
 
     private static void writeLocalClientConfig(Context context) throws IOException {
+        Tools.initContextConstants(context);
         String json = "{\n"
                 + "  \"ip_management\": \"127.0.0.1\",\n"
                 + "  \"ip_address\": \"127.0.0.1\",\n"
@@ -210,30 +150,16 @@ public final class LocalServerManager {
         if (parent != null) parent.mkdirs();
         File temp = new File(destination.getAbsolutePath() + ".tmp");
         try (InputStream in = context.getAssets().open(asset);
-             OutputStream out = new BufferedOutputStream(new FileOutputStream(temp))) {
+             OutputStream out = new FileOutputStream(temp)) {
             byte[] buffer = new byte[64 * 1024];
             int read;
-            while ((read = in.read(buffer)) != -1) {
-                out.write(buffer, 0, read);
-            }
+            while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
         }
         if (destination.exists() && !destination.delete()) {
             throw new IOException("Could not replace " + destination);
         }
         if (!temp.renameTo(destination)) {
             throw new IOException("Could not install " + destination);
-        }
-    }
-
-    private static String readAssetText(Context context, String asset) throws IOException {
-        try (InputStream in = context.getAssets().open(asset)) {
-            return readStreamText(in);
-        }
-    }
-
-    private static String readFileText(File file) throws IOException {
-        try (InputStream in = new FileInputStream(file)) {
-            return readStreamText(in);
         }
     }
 
