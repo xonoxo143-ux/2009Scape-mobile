@@ -21,7 +21,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: maven
 
       - name: Fetch current 2009Scape server
         run: |
