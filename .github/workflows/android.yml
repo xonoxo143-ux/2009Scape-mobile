@@ -13,8 +13,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    env:
-      GPLAY_KEYSTORE_PASSWORD: ${{ secrets.GPLAY_KEYSTORE_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -29,12 +27,10 @@ jobs:
         with:
           gradle-version: 7.6.1
 
-      - name: Build JRE JAR files
+      - name: Build JRE support JARs
         run: |
           ./scripts/languagelist_updater.sh
-
-          mkdir out
-          # Build JRE JAR files (security manager, etc...)
+          mkdir -p out
           gradle :jre_lwjgl3glfw:build --no-daemon
 
       - name: Set up JDK 17
@@ -43,49 +39,17 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build Google Play .aab
-        if: github.repository_owner == 'PojavLauncherTeam' && github.ref_name == 'v3_openjdk'
-        run: |
-          gradle :app_pojavlauncher:bundleGplay
-          mv app_pojavlauncher/build/outputs/bundle/gplay/app_pojavlauncher-gplay.aab out/app-gplay.aab
-
-      - name: Build Debug .apk
+      - name: Build self-contained debug APK
         run: |
           gradle :app_pojavlauncher:assembleDebug
-          mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/app-debug.apk
-
-      - name: Build APK without runtime
-        run: |
-          rm -rf app_pojavlauncher/src/main/assets/components/jre
-          rm -rf app_pojavlauncher/src/main/assets/components/jre-new
-          gradle assembleDebug
-          mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/app-debug-noruntime.apk
-
-      - name: Gen md5sums
-        run: |
-          md5sum out/app-debug.apk > out/app-debug.md5
-          md5sum out/app-debug-noruntime.apk > out/app-debug-noruntime.md5
+          mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
+          sha256sum out/2009scape-mobile.apk > out/2009scape-mobile.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: out/app-debug.*
-
-      - name: Upload onto the Google Play testing track
-        continue-on-error: true
-        if: github.repository_owner == 'PojavLauncherTeam' && github.ref_name == 'v3_openjdk'
-        uses: r0adkll/upload-google-play@v1.1.1
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.GPLAY_SERVICE_JSON }}
-          packageName: net.kdt.pojavlaunch
-          releaseFiles: out/app-gplay.aab
-          track: internal
-          inAppUpdatePriority: 5
-          changesNotSentForReview: true
-
-      - name: Upload APK (without runtime)
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug-noruntime
-          path: out/app-debug-noruntime.*
+          name: 2009scape-mobile
+          path: |
+            out/2009scape-mobile.apk
+            out/2009scape-mobile.apk.sha256
+          if-no-files-found: error
