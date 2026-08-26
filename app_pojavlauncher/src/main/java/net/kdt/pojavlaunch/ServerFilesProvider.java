@@ -169,7 +169,7 @@ public class ServerFilesProvider extends DocumentsProvider {
             File child = fileForDocumentId(documentId).getCanonicalFile();
             String parentPath = parent.getPath() + File.separator;
             return child.equals(parent) || child.getPath().startsWith(parentPath);
-        } catch (IOException | FileNotFoundException e) {
+        } catch (IOException e) {
             return false;
         }
     }
