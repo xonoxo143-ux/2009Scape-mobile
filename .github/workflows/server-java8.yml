@@ -13,9 +13,8 @@ jobs:
   build-server:
     runs-on: ubuntu-22.04
     env:
-      # Freeze the compatibility baseline instead of compiling an ever-moving master.
-      # This resolves to the last master commit that existed before Aug 4, 2026 UTC.
-      SERVER_BASELINE_CUTOFF: '2026-08-04T00:00:00Z'
+      # Frozen upstream baseline. Do not move this without a compatibility audit.
+      SERVER_COMMIT: '91bb6be123bdc08e1d022ddb310a901d1b363269'
     steps:
       - name: Checkout mobile foundation
         uses: actions/checkout@v5
@@ -28,10 +27,11 @@ jobs:
 
       - name: Fetch frozen 2009Scape server baseline
         run: |
-          git clone --filter=blob:none --single-branch --branch master https://gitlab.com/2009scape/2009scape.git upstream-server
-          SERVER_COMMIT="$(git -C upstream-server rev-list -1 --before="$SERVER_BASELINE_CUTOFF" origin/master)"
-          test -n "$SERVER_COMMIT"
-          git -C upstream-server checkout --detach "$SERVER_COMMIT"
+          git init upstream-server
+          git -C upstream-server remote add origin https://gitlab.com/2009scape/2009scape.git
+          git -C upstream-server fetch --depth 1 origin "$SERVER_COMMIT"
+          git -C upstream-server checkout --detach FETCH_HEAD
+          test "$(git -C upstream-server rev-parse HEAD)" = "$SERVER_COMMIT"
           printf '%s\n' "$SERVER_COMMIT" | tee upstream-server-commit.txt
           echo "Using frozen 2009Scape baseline: $SERVER_COMMIT"
 
@@ -61,21 +61,30 @@ jobs:
               'src/main/content/region/asgarnia/taverley/quest/WolfWhistle.java': [('var line = 12;', 'int line = 12;')],
               'src/main/content/region/misthalin/varrock/quest/whatliesbelow/WhatLiesBelow.java': [('var line = 12;', 'int line = 12;')],
               'src/main/core/game/node/entity/player/link/quest/QuestRepository.java': [('var theQuest = QUESTS.get(quest);', 'Quest theQuest = QUESTS.get(quest);')],
-              'src/main/core/game/world/map/zone/ZoneMonitor.java': [
-                  (
-                      'Set<Integer> ids = Set.of(NPCs.KRIL_TSUTSAROTH_6203, NPCs.COMMANDER_ZILYANA_6247, NPCs.GENERAL_GRAARDOR_6260, NPCs.KREEARRA_6222);',
-                      'Set<Integer> ids = new HashSet<>(Arrays.asList(NPCs.KRIL_TSUTSAROTH_6203, NPCs.COMMANDER_ZILYANA_6247, NPCs.GENERAL_GRAARDOR_6260, NPCs.KREEARRA_6222));'
-                  )
-              ],
           }
           for rel, pairs in replacements.items():
               path = root / rel
               source = path.read_text()
               for old, new in pairs:
                   if old not in source:
-                      raise SystemExit(f'Expected Java >8 syntax/API not found in {rel}: {old}')
+                      raise SystemExit(f'Expected Java >8 syntax not found in {rel}: {old}')
                   source = source.replace(old, new)
               path.write_text(source)
+
+          # Java 9 Set.of() -> Java 8 HashSet/Arrays.asList for wildy teleport jewellery.
+          zone = root / 'src/main/core/game/world/map/zone/ZoneMonitor.java'
+          source = zone.read_text()
+          pattern = re.compile(
+              r'(static\s+final\s+Set<Integer>\s+MID_WILDY_TELEPORT_JEWELLERY\s*=\s*)Set\.of\((.*?)\n\s*\);',
+              re.S,
+          )
+          source, count = pattern.subn(
+              lambda m: m.group(1) + 'new java.util.HashSet<>(java.util.Arrays.asList(' + m.group(2) + '\n\t));',
+              source,
+          )
+          if count != 1:
+              raise SystemExit(f'Expected exactly one MID_WILDY Set.of declaration, found {count}')
+          zone.write_text(source)
 
           # Single-player has no need for the first-login rules confirmation gate.
           worldprops = root / 'worldprops/default.conf'
