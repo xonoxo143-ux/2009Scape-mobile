@@ -166,7 +166,8 @@ jobs:
         run: |
           set -euxo pipefail
           ! grep -q 'forceReread("Internal")' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerService.java
-          grep -q 'SERVER_RUNTIME_NAME' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerService.java
+          grep -q 'LocalServerManager.getServerRuntime()' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerService.java
+          grep -q 'SERVER_RUNTIME_NAME = "SinglePlayerServer17"' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerManager.java
           grep -q 'server-jre17-arm64.tar.xz' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerManager.java
           ! grep -q 'maven.compiler.release=8' .github/workflows/android.yml
           ! grep -q 'kotlin.compiler.jvmTarget>1.8' .github/workflows/android.yml
