@@ -17,7 +17,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up JDK 8
+      # The launcher/client support code is intentionally left on its existing Java 8 toolchain.
+      - name: Set up JDK 8 for launcher
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
@@ -27,13 +28,14 @@ jobs:
         with:
           gradle-version: 7.6.1
 
-      - name: Build JRE support JARs
+      - name: Build client JRE support JARs
         run: |
           ./scripts/languagelist_updater.sh
           mkdir -p out
           gradle :jre_lwjgl3glfw:build --no-daemon
 
-      - name: Set up JDK 17
+      # Everything below that builds/runs the 2009Scape server uses a normal modern JVM.
+      - name: Set up JDK 17 for server
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
@@ -51,28 +53,8 @@ jobs:
           import re, shutil
 
           root = Path('upstream-server/Server')
-          pom = root / 'pom.xml'
-          text = pom.read_text()
-          text = text.replace('<kotlin.compiler.jvmTarget>11</kotlin.compiler.jvmTarget>', '<kotlin.compiler.jvmTarget>1.8</kotlin.compiler.jvmTarget>')
-          text = text.replace('<maven.compiler.source>11</maven.compiler.source>', '<maven.compiler.source>8</maven.compiler.source>')
-          text = text.replace('<maven.compiler.target>11</maven.compiler.target>', '<maven.compiler.target>8</maven.compiler.target>')
-          pom.write_text(text)
 
-          replacements = {
-              'src/main/content/region/asgarnia/taverley/quest/witchshouse/WitchsHouse.java': [('var line = 12;', 'int line = 12;')],
-              'src/main/content/region/asgarnia/taverley/quest/WolfWhistle.java': [('var line = 12;', 'int line = 12;')],
-              'src/main/content/region/misthalin/varrock/quest/whatliesbelow/WhatLiesBelow.java': [('var line = 12;', 'int line = 12;')],
-              'src/main/core/game/node/entity/player/link/quest/QuestRepository.java': [('var theQuest = QUESTS.get(quest);', 'Quest theQuest = QUESTS.get(quest);')],
-          }
-          for rel, pairs in replacements.items():
-              path = root / rel
-              source = path.read_text()
-              for old, new in pairs:
-                  if old not in source:
-                      raise SystemExit(f'Expected Java syntax not found in {rel}: {old}')
-                  source = source.replace(old, new)
-              path.write_text(source)
-
+          # Keep upstream's Java/Kotlin target intact. Only add single-player behavior.
           control_src = Path('singleplayer/server-patches/LocalControlServer.kt')
           control_dst = root / 'src/main/core/control/LocalControlServer.kt'
           control_dst.parent.mkdir(parents=True, exist_ok=True)
@@ -98,19 +80,19 @@ jobs:
           }
           for old, new in replacements.items():
               conf = conf.replace(old, new)
-          conf = re.sub(r'(?m)^use_auth\\s*=.*$', 'use_auth = false', conf)
-          conf = re.sub(r'(?m)^persist_accounts\\s*=.*$', 'persist_accounts = false', conf)
-          conf = re.sub(r'(?m)^noauth_default_admin\\s*=.*$', 'noauth_default_admin = true', conf)
-          conf = re.sub(r'(?m)^show_rules\\s*=.*$', 'show_rules = false', conf)
+          conf = re.sub(r'(?m)^use_auth\s*=.*$', 'use_auth = false', conf)
+          conf = re.sub(r'(?m)^persist_accounts\s*=.*$', 'persist_accounts = false', conf)
+          conf = re.sub(r'(?m)^noauth_default_admin\s*=.*$', 'noauth_default_admin = true', conf)
+          conf = re.sub(r'(?m)^show_rules\s*=.*$', 'show_rules = false', conf)
           Path('singleplayer-generated.conf').write_text(conf)
 
-      - name: Build current server for Java 8
+      - name: Build current server normally on Java 17
         working-directory: upstream-server/Server
         run: |
           chmod +x mvnw
-          ./mvnw clean package -DskipTests -Dmaven.compiler.release=8
+          ./mvnw clean package -DskipTests
 
-      - name: Verify server bytecode is Java 8
+      - name: Verify server bytecode is compatible with Java 17
         run: |
           python3 - <<'PY'
           import glob, struct, zipfile
@@ -130,11 +112,11 @@ jobs:
                       continue
                   major = struct.unpack('>H', data[6:8])[0]
                   highest = max(highest, major)
-                  if major > 52:
+                  if major > 61:
                       bad.append((name, major))
           print('Highest classfile version:', highest)
           if bad:
-              print('Classes newer than Java 8:')
+              print('Classes newer than Java 17:')
               for name, major in bad[:50]:
                   print(major, name)
               raise SystemExit(1)
@@ -154,6 +136,41 @@ jobs:
           (cd upstream-server/Server && zip -qr "$GITHUB_WORKSPACE/$ASSET_DIR/server-data.zip" data)
           ls -lh "$ASSET_DIR"
 
+      - name: Package dedicated ARM64 Android Java 17 server runtime
+        run: |
+          set -euxo pipefail
+          ASSET_DIR="app_pojavlauncher/src/main/assets/singleplayer"
+          JRE_TAG="jre17-ec28559"
+          JRE_FILE="jre17-arm64-20210825-release.tar.xz"
+          JRE_URL="https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/${JRE_TAG}/${JRE_FILE}"
+
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "$JRE_URL" -o "$ASSET_DIR/server-jre17-arm64.tar.xz"
+          printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/server-jre17-version.txt"
+
+          rm -rf build/server-jre17-check
+          mkdir -p build/server-jre17-check
+          tar -xJf "$ASSET_DIR/server-jre17-arm64.tar.xz" -C build/server-jre17-check
+
+          test -f build/server-jre17-check/release
+          grep -E '^JAVA_VERSION="17([.]|"|$)' build/server-jre17-check/release
+          grep -E '^OS_ARCH="(aarch64|arm64)"' build/server-jre17-check/release
+          test -f build/server-jre17-check/lib/server/libjvm.so
+          readelf -h build/server-jre17-check/lib/server/libjvm.so | grep -E 'Machine:.*AArch64'
+
+          echo "Runtime symlinks in archive:"
+          find build/server-jre17-check -type l -print || true
+          du -sh build/server-jre17-check "$ASSET_DIR/server-jre17-arm64.tar.xz"
+
+      - name: Verify Java runtime separation
+        run: |
+          set -euxo pipefail
+          ! grep -q 'forceReread("Internal")' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerService.java
+          grep -q 'SERVER_RUNTIME_NAME' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerService.java
+          grep -q 'server-jre17-arm64.tar.xz' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerManager.java
+          ! grep -q 'maven.compiler.release=8' .github/workflows/android.yml
+          ! grep -q 'kotlin.compiler.jvmTarget>1.8' .github/workflows/android.yml
+
       - name: Build single-player auto-login plugin
         run: |
           set -euxo pipefail
@@ -172,6 +189,15 @@ jobs:
           gradle :app_pojavlauncher:assembleDebug
           mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
           sha256sum out/2009scape-mobile.apk > out/2009scape-mobile.apk.sha256
+
+      - name: Verify APK contains local server and Java 17 payloads
+        run: |
+          set -euxo pipefail
+          unzip -l out/2009scape-mobile.apk | tee out/apk-contents.txt
+          grep -q 'assets/singleplayer/server.jar' out/apk-contents.txt
+          grep -q 'assets/singleplayer/server-data.zip' out/apk-contents.txt
+          grep -q 'assets/singleplayer/server-jre17-arm64.tar.xz' out/apk-contents.txt
+          grep -q 'assets/singleplayer/server-jre17-version.txt' out/apk-contents.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
