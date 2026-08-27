@@ -12,6 +12,10 @@ on:
 jobs:
   build-server:
     runs-on: ubuntu-22.04
+    env:
+      # Freeze the compatibility baseline instead of compiling an ever-moving master.
+      # This resolves to the last master commit that existed before Aug 4, 2026 UTC.
+      SERVER_BASELINE_CUTOFF: '2026-08-04T00:00:00Z'
     steps:
       - name: Checkout mobile foundation
         uses: actions/checkout@v5
@@ -22,10 +26,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Fetch current 2009Scape server
+      - name: Fetch frozen 2009Scape server baseline
         run: |
-          git clone --depth 1 https://gitlab.com/2009scape/2009scape.git upstream-server
-          git -C upstream-server rev-parse HEAD | tee upstream-server-commit.txt
+          git clone --filter=blob:none --single-branch --branch master https://gitlab.com/2009scape/2009scape.git upstream-server
+          SERVER_COMMIT="$(git -C upstream-server rev-list -1 --before="$SERVER_BASELINE_CUTOFF" origin/master)"
+          test -n "$SERVER_COMMIT"
+          git -C upstream-server checkout --detach "$SERVER_COMMIT"
+          printf '%s\n' "$SERVER_COMMIT" | tee upstream-server-commit.txt
+          echo "Using frozen 2009Scape baseline: $SERVER_COMMIT"
 
       - name: Retarget server to Java 8 and apply single-player defaults
         shell: python
@@ -36,9 +44,16 @@ jobs:
           root = Path('upstream-server/Server')
           pom = root / 'pom.xml'
           text = pom.read_text()
-          text = text.replace('<kotlin.compiler.jvmTarget>11</kotlin.compiler.jvmTarget>', '<kotlin.compiler.jvmTarget>1.8</kotlin.compiler.jvmTarget>')
-          text = text.replace('<maven.compiler.source>11</maven.compiler.source>', '<maven.compiler.source>8</maven.compiler.source>')
-          text = text.replace('<maven.compiler.target>11</maven.compiler.target>', '<maven.compiler.target>8</maven.compiler.target>')
+
+          pom_replacements = {
+              '<kotlin.compiler.jvmTarget>11</kotlin.compiler.jvmTarget>': '<kotlin.compiler.jvmTarget>1.8</kotlin.compiler.jvmTarget>',
+              '<maven.compiler.source>11</maven.compiler.source>': '<maven.compiler.source>8</maven.compiler.source>',
+              '<maven.compiler.target>11</maven.compiler.target>': '<maven.compiler.target>8</maven.compiler.target>',
+          }
+          for old, new in pom_replacements.items():
+              if old not in text:
+                  raise SystemExit(f'Expected build target not found in pom.xml: {old}')
+              text = text.replace(old, new)
           pom.write_text(text)
 
           replacements = {
@@ -46,13 +61,19 @@ jobs:
               'src/main/content/region/asgarnia/taverley/quest/WolfWhistle.java': [('var line = 12;', 'int line = 12;')],
               'src/main/content/region/misthalin/varrock/quest/whatliesbelow/WhatLiesBelow.java': [('var line = 12;', 'int line = 12;')],
               'src/main/core/game/node/entity/player/link/quest/QuestRepository.java': [('var theQuest = QUESTS.get(quest);', 'Quest theQuest = QUESTS.get(quest);')],
+              'src/main/core/game/world/map/zone/ZoneMonitor.java': [
+                  (
+                      'Set<Integer> ids = Set.of(NPCs.KRIL_TSUTSAROTH_6203, NPCs.COMMANDER_ZILYANA_6247, NPCs.GENERAL_GRAARDOR_6260, NPCs.KREEARRA_6222);',
+                      'Set<Integer> ids = new HashSet<>(Arrays.asList(NPCs.KRIL_TSUTSAROTH_6203, NPCs.COMMANDER_ZILYANA_6247, NPCs.GENERAL_GRAARDOR_6260, NPCs.KREEARRA_6222));'
+                  )
+              ],
           }
           for rel, pairs in replacements.items():
               path = root / rel
               source = path.read_text()
               for old, new in pairs:
                   if old not in source:
-                      raise SystemExit(f'Expected Java 10 syntax not found in {rel}: {old}')
+                      raise SystemExit(f'Expected Java >8 syntax/API not found in {rel}: {old}')
                   source = source.replace(old, new)
               path.write_text(source)
 
@@ -64,19 +85,24 @@ jobs:
               raise SystemExit(f'Expected exactly one show_rules setting, found {count}')
           worldprops.write_text(config)
 
-      - name: Verify single-player defaults
+      - name: Verify Java 8 source patches and single-player defaults
         run: |
           grep -Eq '^\s*show_rules\s*=\s*false\s*$' upstream-server/Server/worldprops/default.conf
           if grep -Eq '^\s*show_rules\s*=\s*true\s*$' upstream-server/Server/worldprops/default.conf; then
             echo 'Rules confirmation unexpectedly enabled'
             exit 1
           fi
+          if grep -R --include='*.java' -nE '\b(Set|List|Map)\.of\(' upstream-server/Server/src/main; then
+            echo 'Found a Java 9+ collection factory API after compatibility patching'
+            exit 1
+          fi
 
-      - name: Build current server for Java 8
+      - name: Build frozen server for Java 8
         working-directory: upstream-server/Server
         run: |
+          set -o pipefail
           chmod +x mvnw
-          ./mvnw clean package -DskipTests -Dmaven.compiler.release=8
+          ./mvnw clean package -DskipTests -Dmaven.compiler.release=8 2>&1 | tee ../../java8-build.log
 
       - name: Verify server bytecode is Java 8
         run: |
@@ -104,10 +130,20 @@ jobs:
           print('Highest classfile version:', highest)
           if bad:
               print('Classes newer than Java 8:')
-              for name, major in bad[:50]:
+              for name, major in bad[:100]:
                   print(major, name)
               raise SystemExit(1)
           PY
+
+      - name: Upload Java 8 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: singleplayer-server-java8-diagnostics
+          path: |
+            java8-build.log
+            upstream-server-commit.txt
+          if-no-files-found: warn
 
       - name: Upload Java 8 server candidate
         uses: actions/upload-artifact@v4
