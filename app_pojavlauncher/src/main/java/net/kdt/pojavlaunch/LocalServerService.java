@@ -2,23 +2,25 @@ package net.kdt.pojavlaunch;
 
 import android.app.Service;
 import android.content.Intent;
+import android.os.Build;
 import android.os.IBinder;
+import android.system.ErrnoException;
+import android.system.Os;
 import android.util.Log;
 
 import com.oracle.dalvik.VMLauncher;
 
-import net.kdt.pojavlaunch.multirt.MultiRTUtils;
 import net.kdt.pojavlaunch.multirt.Runtime;
 import net.kdt.pojavlaunch.utils.JREUtils;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
+import java.util.TimeZone;
 
 /**
- * Runs the local 2009Scape server in a dedicated Android process/JVM.
- * Keeping this process separate is important because the SD client also embeds a JVM.
+ * Runs the local 2009Scape server in a dedicated Android process and dedicated Java 17 runtime.
+ * The RT4 client keeps using its existing runtime in the :game process.
  */
 public class LocalServerService extends Service {
     private static final String TAG = "LocalServerService";
@@ -38,6 +40,9 @@ public class LocalServerService extends Service {
 
     private void runServer() {
         try {
+            // This Service is in its own Android process, so initialize process-local paths here.
+            Tools.initContextConstants(getApplicationContext());
+
             File root = ServerFilesProvider.ensureServerRoot(this);
             File serverJar = new File(root, "server.jar");
             File config = new File(root, "worldprops/local.conf");
@@ -48,29 +53,29 @@ public class LocalServerService extends Service {
                 throw new IllegalStateException("Local server config is missing: " + config);
             }
 
-            Runtime runtime = MultiRTUtils.forceReread("Internal");
-            if (runtime == null) {
-                throw new IllegalStateException("Embedded Java runtime is not installed yet.");
-            }
-            String runtimeHome = MultiRTUtils.getRuntimeHome(runtime.name).getAbsolutePath();
+            Runtime runtime = LocalServerManager.getServerRuntime();
+            File runtimeHomeFile = LocalServerManager.getServerRuntimeHome();
+            String runtimeHome = runtimeHomeFile.getAbsolutePath();
 
+            // Configure only what the headless server JVM needs. Do not inherit client renderer,
+            // LWJGL, user JVM arguments, or the client's Java runtime selection.
             JREUtils.relocateLibPath(runtime, runtimeHome);
-            // setJavaEnvironment currently does not dereference its Activity parameter.
-            // The server has no Activity because it intentionally lives in a Service process.
-            JREUtils.setJavaEnvironment(null, runtimeHome);
+            configureServerEnvironment(runtimeHome, root);
 
-            List<String> args = new ArrayList<>(JREUtils.getJavaArgs(this, runtimeHome, ""));
-            purgeArg(args, "-Xms");
-            purgeArg(args, "-Xmx");
-            purgeArg(args, "-Dorg.lwjgl.opengl.libname");
-            purgeArg(args, "-Dorg.lwjgl.util.Debug");
-            purgeArg(args, "-Dorg.lwjgl.util.DebugFunctions");
-            purgeArg(args, "-Dorg.lwjgl.util.DebugLoader");
-
+            List<String> args = new ArrayList<>();
+            args.add("java");
             args.add("-Xms128M");
             args.add("-Xmx768M");
+            args.add("-Djava.home=" + runtimeHome);
+            args.add("-Djava.io.tmpdir=" + Tools.DIR_CACHE.getAbsolutePath());
+            args.add("-Duser.home=" + root.getAbsolutePath());
+            args.add("-Duser.language=" + System.getProperty("user.language", "en"));
+            args.add("-Duser.timezone=" + TimeZone.getDefault().getID());
+            args.add("-Dos.name=Linux");
+            args.add("-Dos.version=Android-" + Build.VERSION.RELEASE);
             args.add("-Djava.awt.headless=true");
             args.add("-Dsingleplayer=true");
+            args.add("-Dlog4j2.formatMsgNoLookups=true");
             args.add("-jar");
             args.add(serverJar.getAbsolutePath());
             args.add(config.getAbsolutePath());
@@ -78,9 +83,9 @@ public class LocalServerService extends Service {
             JREUtils.initJavaRuntime(runtimeHome);
             JREUtils.setupExitTrap(getApplicationContext());
             JREUtils.chdir(root.getAbsolutePath());
-            args.add(0, "java");
 
-            Log.i(TAG, "Starting local 2009Scape server from " + root);
+            Log.i(TAG, "Starting local 2009Scape server with " + runtime.versionString
+                    + " from " + runtimeHome);
             int exitCode = VMLauncher.launchJVM(args.toArray(new String[0]));
             Log.i(TAG, "Local server JVM exited with code " + exitCode);
         } catch (Throwable t) {
@@ -90,13 +95,18 @@ public class LocalServerService extends Service {
         }
     }
 
-    private static void purgeArg(List<String> args, String prefix) {
-        Iterator<String> iterator = args.iterator();
-        while (iterator.hasNext()) {
-            if (iterator.next().startsWith(prefix)) {
-                iterator.remove();
-            }
-        }
+    private void configureServerEnvironment(String runtimeHome, File serverRoot) throws ErrnoException {
+        String ldLibraryPath = JREUtils.LD_LIBRARY_PATH;
+        String jvmLibraryPath = runtimeHome + "/lib/server";
+        JREUtils.jvmLibraryPath = jvmLibraryPath;
+
+        Os.setenv("JAVA_HOME", runtimeHome, true);
+        Os.setenv("HOME", serverRoot.getAbsolutePath(), true);
+        Os.setenv("TMPDIR", Tools.DIR_CACHE.getAbsolutePath(), true);
+        Os.setenv("PATH", runtimeHome + "/bin:" + Os.getenv("PATH"), true);
+        Os.setenv("LD_LIBRARY_PATH", ldLibraryPath, true);
+
+        JREUtils.setLdLibraryPath(jvmLibraryPath + ":" + ldLibraryPath);
     }
 
     @Override
