@@ -1,23 +1,29 @@
-name: Android CI
+name: Android Mobile Shell Compile Check
 
 on:
   pull_request:
     branches-ignore:
       - 'l10n_v3_openjdk2'
-    types: [ opened, reopened ]
   push:
     branches-ignore:
       - 'l10n_v3_openjdk2'
   workflow_dispatch:
 
+# IMPORTANT:
+# This workflow only checks that the Android/mobile shell still compiles.
+# It intentionally does NOT build or publish the self-contained single-player APK.
+# The one authoritative product builder is:
+# xonoxo143-ux/apk/.github/workflows/build-singleplayer-apk.yml
+# That builder injects the pinned Java 17 server, server.zip, JRE17, and auto-login plugin.
+
 jobs:
-  build:
+  compile-mobile-shell:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up JDK 8
+      - name: Set up JDK 8 for launcher support jars
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
@@ -27,29 +33,25 @@ jobs:
         with:
           gradle-version: 7.6.1
 
-      - name: Build JRE support JARs
+      - name: Build launcher support jars
         run: |
           ./scripts/languagelist_updater.sh
           mkdir -p out
           gradle :jre_lwjgl3glfw:build --no-daemon
 
-      - name: Set up JDK 17
+      - name: Set up JDK 17 for Android build
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build self-contained debug APK
+      - name: Install Android SDK requirements
         run: |
-          gradle :app_pojavlauncher:assembleDebug
-          mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
-          sha256sum out/2009scape-mobile.apk > out/2009scape-mobile.apk.sha256
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-33' 'build-tools;33.0.2' 'ndk;25.2.9519653'
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: 2009scape-mobile
-          path: |
-            out/2009scape-mobile.apk
-            out/2009scape-mobile.apk.sha256
-          if-no-files-found: error
+      - name: Compile Android shell
+        run: |
+          gradle :app_pojavlauncher:assembleDebug --no-daemon
+          test -s app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk
+          echo 'Mobile shell compiles. Do not distribute this shell-only APK as the single-player product.'
