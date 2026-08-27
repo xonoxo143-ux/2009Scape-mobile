@@ -4,6 +4,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 
+import net.kdt.pojavlaunch.multirt.MultiRTUtils;
+import net.kdt.pojavlaunch.multirt.Runtime;
+import net.kdt.pojavlaunch.utils.Architecture;
+
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -19,11 +23,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-/** Coordinates the packaged local server, persistent files, and localhost startup. */
+/** Coordinates the packaged local server, its dedicated Java runtime, and localhost startup. */
 public final class LocalServerManager {
     public static final int GAME_PORT = 43595;
     public static final int CONTROL_PORT = 43600;
+    public static final String SERVER_RUNTIME_NAME = "SinglePlayerServer17";
+
     private static final String ASSET_ROOT = "singleplayer/";
+    private static final String SERVER_RUNTIME_ASSET = ASSET_ROOT + "server-jre17-arm64.tar.xz";
+    private static final String SERVER_RUNTIME_VERSION_ASSET = ASSET_ROOT + "server-jre17-version.txt";
+    private static final String SERVER_RUNTIME_VERSION_MARKER = ".singleplayer-runtime-version";
     private static final String VERSION_MARKER = ".server-data-version";
     private static final String PREFS = "singleplayer";
     private static final String PROFILE_KEY = "profile_name";
@@ -41,6 +50,9 @@ public final class LocalServerManager {
         Context app = context.getApplicationContext();
         new Thread(() -> {
             try {
+                listener.onStatus("Preparing Java 17 server runtime...");
+                ensureServerRuntimeInstalled(app);
+
                 listener.onStatus("Preparing local server files...");
                 ensureInstalled(app);
                 writeLocalClientConfig(app);
@@ -65,6 +77,77 @@ public final class LocalServerManager {
                 listener.onError(e);
             }
         }, "singleplayer-startup").start();
+    }
+
+    /**
+     * Installs the packaged ARM64 Android Java 17 runtime into a runtime namespace used only by
+     * the local server. The existing client runtime remains untouched.
+     */
+    public static synchronized void ensureServerRuntimeInstalled(Context context) throws IOException {
+        Tools.initContextConstants(context.getApplicationContext());
+
+        if (Architecture.getDeviceArchitecture() != Architecture.ARCH_ARM64) {
+            throw new IOException("This single-player build currently packages an ARM64-only server runtime.");
+        }
+
+        String packagedVersion = readAssetText(context, SERVER_RUNTIME_VERSION_ASSET).trim();
+        File runtimeHome = new File(Tools.MULTIRT_HOME, SERVER_RUNTIME_NAME);
+        File versionMarker = new File(runtimeHome, SERVER_RUNTIME_VERSION_MARKER);
+        String installedVersion = versionMarker.isFile() ? readFileText(versionMarker).trim() : "";
+
+        if (packagedVersion.equals(installedVersion) && isServerRuntimeUsable()) {
+            return;
+        }
+
+        try (InputStream runtime = context.getAssets().open(SERVER_RUNTIME_ASSET)) {
+            MultiRTUtils.installRuntimeNamed(Tools.NATIVE_LIB_DIR, runtime, SERVER_RUNTIME_NAME);
+        }
+
+        Runtime installed = MultiRTUtils.forceReread(SERVER_RUNTIME_NAME);
+        validateServerRuntime(installed);
+        writeFileText(versionMarker, packagedVersion + "\n");
+    }
+
+    public static Runtime getServerRuntime() throws IOException {
+        Runtime runtime = MultiRTUtils.forceReread(SERVER_RUNTIME_NAME);
+        validateServerRuntime(runtime);
+        return runtime;
+    }
+
+    public static File getServerRuntimeHome() throws IOException {
+        Runtime runtime = getServerRuntime();
+        return MultiRTUtils.getRuntimeHome(runtime.name);
+    }
+
+    private static boolean isServerRuntimeUsable() {
+        try {
+            validateServerRuntime(MultiRTUtils.forceReread(SERVER_RUNTIME_NAME));
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static void validateServerRuntime(Runtime runtime) throws IOException {
+        if (runtime == null || runtime.versionString == null || runtime.javaVersion < 17) {
+            throw new IOException("Dedicated server Java 17 runtime is missing or invalid.");
+        }
+        if (Architecture.archAsInt(runtime.arch) != Architecture.ARCH_ARM64) {
+            throw new IOException("Dedicated server runtime is not ARM64: " + runtime.arch);
+        }
+
+        File runtimeHome;
+        try {
+            runtimeHome = MultiRTUtils.getRuntimeHome(runtime.name);
+        } catch (RuntimeException e) {
+            throw new IOException("Dedicated server runtime home is broken.", e);
+        }
+
+        File release = new File(runtimeHome, "release");
+        File jvm = new File(runtimeHome, "lib/server/libjvm.so");
+        if (!release.isFile() || !jvm.isFile()) {
+            throw new IOException("Dedicated server runtime is incomplete: " + runtimeHome);
+        }
     }
 
     public static synchronized void ensureInstalled(Context context) throws IOException {
