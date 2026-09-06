@@ -190,7 +190,10 @@ jobs:
 
       - name: Build self-contained single-player APK
         run: |
-          gradle :app_pojavlauncher:assembleDebug
+          # Bundling the embedded server + ARM64 JRE makes the asset set large.
+          # Give AGP's compressDebugAssets worker enough heap for the self-contained APK.
+          gradle :app_pojavlauncher:assembleDebug --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
           mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
           sha256sum out/2009scape-mobile.apk > out/2009scape-mobile.apk.sha256
 
