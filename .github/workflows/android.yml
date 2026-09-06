@@ -175,10 +175,15 @@ jobs:
           set -euxo pipefail
           rm -rf build/singleplayer-plugin
           mkdir -p build/singleplayer-plugin
+          # The plugin entry class is intentionally named "plugin" because that is
+          # what the launcher plugin loader expects. javac therefore requires the
+          # source file presented to it to be named plugin.java.
+          cp singleplayer/client-plugin/LocalSinglePlayerLogin.java build/singleplayer-plugin/plugin.java
           javac --release 8 \
             -cp app_pojavlauncher/src/main/assets/rt4.jar \
             -d build/singleplayer-plugin \
-            singleplayer/client-plugin/LocalSinglePlayerLogin.java
+            build/singleplayer-plugin/plugin.java
+          rm -f build/singleplayer-plugin/plugin.java
           rm -f app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
           (cd build/singleplayer-plugin && zip -qr "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip" LocalSinglePlayerLogin)
           unzip -l app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
