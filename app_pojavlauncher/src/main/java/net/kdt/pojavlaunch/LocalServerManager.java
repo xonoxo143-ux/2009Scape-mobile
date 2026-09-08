@@ -37,7 +37,7 @@ public final class LocalServerManager {
     private static final String SERVER_RUNTIME_VERSION_MARKER = ".singleplayer-runtime-version";
     private static final String VERSION_MARKER = ".server-data-version";
     private static final String STARTUP_ERROR_FILE = ".server-startup-error.txt";
-    private static final int SERVER_START_TIMEOUT_MS = 180_000;
+    private static final int SERVER_START_TIMEOUT_MS = 300_000;
     private static final String PREFS = "singleplayer";
     private static final String PROFILE_KEY = "profile_name";
     private static final String DEFAULT_PROFILE = "Player";
