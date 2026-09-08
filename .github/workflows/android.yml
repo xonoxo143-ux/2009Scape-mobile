@@ -102,7 +102,12 @@ jobs:
               'name = "2009Scape"': 'name = "2009Scape Single Player"',
               'name_ge = "2009Scape"': 'name_ge = "2009Scape Single Player"',
               'activity = "2009Scape Classic."': 'activity = "Single Player"',
+              'log_level = "verbose"': 'log_level = "silent"',
+              'debug = true': 'debug = false',
+              'dev = true': 'dev = false',
               'enable_default_clan = true': 'enable_default_clan = false',
+              'enable_bots = true': 'enable_bots = false',
+              'bots_influence_ge_price = true': 'bots_influence_ge_price = false',
               'watchdog_enabled = true': 'watchdog_enabled = false',
               'daily_accounts_per_ip = 3': 'daily_accounts_per_ip = 1',
               'player_commands = false': 'player_commands = true',
@@ -146,7 +151,7 @@ jobs:
           cp singleplayer-generated.conf upstream-server/Server/worldprops/local.conf
 
           pushd upstream-server/Server >/dev/null
-          java -Xms256m -Xmx2048m -jar "$SERVER_JAR" worldprops/local.conf > "$GITHUB_WORKSPACE/out/server-smoke.log" 2>&1 &
+          java -Xms512m -Xmx3072m -jar "$SERVER_JAR" worldprops/local.conf > "$GITHUB_WORKSPACE/out/server-smoke.log" 2>&1 &
           SERVER_PID=$!
           popd >/dev/null
 
