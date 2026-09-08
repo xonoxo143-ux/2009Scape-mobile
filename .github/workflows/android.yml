@@ -50,7 +50,7 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re, shutil
+          import hashlib, re, shutil
 
           root = Path('upstream-server/Server')
 
@@ -68,6 +68,19 @@ jobs:
           source = source.replace(needle, needle + '\n            core.control.LocalControlServer.start()', 1)
           server.write_text(source)
 
+          # The no-auth local player is an admin, so the game socket must never be
+          # reachable from Wi-Fi/LAN. Upstream binds to all interfaces by default.
+          nio = root / 'src/main/core/net/NioReactor.java'
+          nio_source = nio.read_text()
+          bind_needle = 'channel.bind(new InetSocketAddress(port));'
+          if bind_needle not in nio_source:
+              raise SystemExit('Could not locate upstream game socket bind')
+          nio_source = nio_source.replace(
+              bind_needle,
+              'channel.bind(new InetSocketAddress("127.0.0.1", port));',
+              1)
+          nio.write_text(nio_source)
+
           conf = (root / 'worldprops/default.conf').read_text()
           replacements = {
               'name = "2009Scape"': 'name = "2009Scape Single Player"',
@@ -83,8 +96,153 @@ jobs:
           conf = re.sub(r'(?m)^use_auth\s*=.*$', 'use_auth = false', conf)
           conf = re.sub(r'(?m)^persist_accounts\s*=.*$', 'persist_accounts = false', conf)
           conf = re.sub(r'(?m)^noauth_default_admin\s*=.*$', 'noauth_default_admin = true', conf)
-          conf = re.sub(r'(?m)^show_rules\s*=.*$', 'show_rules = false', conf)
-          Path('singleplayer-generated.conf').write_text(conf)
+          conf = re.sub(r'(?m)^show_rules\s*=.*
+      - name: Build current server normally on Java 17
+        working-directory: upstream-server/Server
+        run: |
+          chmod +x mvnw
+          ./mvnw clean package -DskipTests
+
+      - name: Verify server bytecode is compatible with Java 17
+        run: |
+          python3 - <<'PY'
+          import glob, struct, zipfile
+          jars = glob.glob('upstream-server/Server/target/*-jar-with-dependencies.jar')
+          if not jars:
+              jars = glob.glob('upstream-server/Server/target/*-with-dependencies.jar')
+          if len(jars) != 1:
+              raise SystemExit(f'Expected one server fat jar, got: {jars}')
+          bad = []
+          highest = 0
+          with zipfile.ZipFile(jars[0]) as z:
+              for name in z.namelist():
+                  if not name.endswith('.class'):
+                      continue
+                  data = z.read(name)
+                  if data[:4] != b'\xca\xfe\xba\xbe':
+                      continue
+                  major = struct.unpack('>H', data[6:8])[0]
+                  highest = max(highest, major)
+                  if major > 61:
+                      bad.append((name, major))
+          print('Highest classfile version:', highest)
+          if bad:
+              print('Classes newer than Java 17:')
+              for name, major in bad[:50]:
+                  print(major, name)
+              raise SystemExit(1)
+          PY
+
+      - name: Package single-player server assets
+        run: |
+          set -euxo pipefail
+          ASSET_DIR="app_pojavlauncher/src/main/assets/singleplayer"
+          mkdir -p "$ASSET_DIR"
+          SERVER_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) | head -n 1)
+          test -n "$SERVER_JAR"
+          cp "$SERVER_JAR" "$ASSET_DIR/server.jar"
+          cp singleplayer-generated.conf "$ASSET_DIR/server-default.conf"
+          cp singleplayer-server-version.txt "$ASSET_DIR/server-version.txt"
+          rm -f "$ASSET_DIR/server-data.zip"
+          (cd upstream-server/Server && zip -qr "$GITHUB_WORKSPACE/$ASSET_DIR/server-data.zip" data)
+          ls -lh "$ASSET_DIR"
+
+      - name: Package dedicated ARM64 Android Java 17 server runtime
+        run: |
+          set -euxo pipefail
+          ASSET_DIR="app_pojavlauncher/src/main/assets/singleplayer"
+          JRE_TAG="jre17-ec28559"
+          JRE_FILE="jre17-arm64-20210825-release.tar.xz"
+          JRE_URL="https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/${JRE_TAG}/${JRE_FILE}"
+
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "$JRE_URL" -o "$ASSET_DIR/server-jre17-arm64.tar.xz"
+          printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/server-jre17-version.txt"
+
+          rm -rf build/server-jre17-check
+          mkdir -p build/server-jre17-check
+          tar -xJf "$ASSET_DIR/server-jre17-arm64.tar.xz" -C build/server-jre17-check
+
+          test -f build/server-jre17-check/release
+          grep -E '^JAVA_VERSION="17([.]|"|$)' build/server-jre17-check/release
+          grep -E '^OS_ARCH="(aarch64|arm64)"' build/server-jre17-check/release
+          test -f build/server-jre17-check/lib/server/libjvm.so
+          readelf -h build/server-jre17-check/lib/server/libjvm.so | grep -E 'Machine:.*AArch64'
+
+          echo "Runtime symlinks in archive:"
+          find build/server-jre17-check -type l -print || true
+          du -sh build/server-jre17-check "$ASSET_DIR/server-jre17-arm64.tar.xz"
+
+      - name: Verify Java runtime separation
+        run: |
+          set -euxo pipefail
+          ! grep -q 'forceReread("Internal")' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerService.java
+          grep -q 'LocalServerManager.getServerRuntime()' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerService.java
+          grep -q 'SERVER_RUNTIME_NAME = "SinglePlayerServer17"' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerManager.java
+          grep -q 'server-jre17-arm64.tar.xz' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerManager.java
+
+      - name: Build single-player auto-login plugin
+        run: |
+          set -euxo pipefail
+          rm -rf build/singleplayer-plugin
+          mkdir -p build/singleplayer-plugin
+          # The plugin entry class is intentionally named "plugin" because that is
+          # what the launcher plugin loader expects. javac therefore requires the
+          # source file presented to it to be named plugin.java.
+          cp singleplayer/client-plugin/LocalSinglePlayerLogin.java build/singleplayer-plugin/plugin.java
+          javac --release 8 \
+            -cp app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/singleplayer-plugin \
+            build/singleplayer-plugin/plugin.java
+          rm -f build/singleplayer-plugin/plugin.java
+          rm -f app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
+          (cd build/singleplayer-plugin && zip -qr "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip" LocalSinglePlayerLogin)
+          unzip -l app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
+
+      - name: Build self-contained single-player APK
+        run: |
+          # Bundling the embedded server + ARM64 JRE makes the asset set large.
+          # Give AGP's compressDebugAssets worker enough heap for the self-contained APK.
+          gradle :app_pojavlauncher:assembleDebug --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+          mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
+          sha256sum out/2009scape-mobile.apk > out/2009scape-mobile.apk.sha256
+
+      - name: Verify APK contains local server and Java 17 payloads
+        run: |
+          set -euxo pipefail
+          unzip -l out/2009scape-mobile.apk | tee out/apk-contents.txt
+          grep -q 'assets/singleplayer/server.jar' out/apk-contents.txt
+          grep -q 'assets/singleplayer/server-data.zip' out/apk-contents.txt
+          grep -q 'assets/singleplayer/server-jre17-arm64.tar.xz' out/apk-contents.txt
+          grep -q 'assets/singleplayer/server-jre17-version.txt' out/apk-contents.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2009scape-mobile
+          path: |
+            out/2009scape-mobile.apk
+            out/2009scape-mobile.apk.sha256
+          if-no-files-found: error
+, 'show_rules = false', conf)
+          generated_conf = Path('singleplayer-generated.conf')
+          generated_conf.write_text(conf)
+
+          # Version the actual logical server payload, not just upstream HEAD.
+          # This guarantees Android reinstalls server.jar when one of our local
+          # patches changes even if the upstream 2009Scape commit did not.
+          def digest(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          version = [
+              'upstream=' + Path('upstream-server-commit.txt').read_text().strip(),
+              'server=' + digest(server),
+              'network=' + digest(nio),
+              'control=' + digest(control_dst),
+              'config=' + digest(generated_conf),
+          ]
+          Path('singleplayer-server-version.txt').write_text('\n'.join(version) + '\n')
 
       - name: Build current server normally on Java 17
         working-directory: upstream-server/Server
