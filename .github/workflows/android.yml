@@ -10,6 +10,10 @@ on:
       - 'l10n_v3_openjdk2'
   workflow_dispatch:
 
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -43,8 +47,15 @@ jobs:
 
       - name: Fetch current 2009Scape server
         run: |
+          set -euxo pipefail
           git clone --depth 1 https://gitlab.com/2009scape/2009scape.git upstream-server
+          git -C upstream-server lfs pull
           git -C upstream-server rev-parse HEAD | tee upstream-server-commit.txt
+
+          CACHE="upstream-server/Server/data/cache/main_file_cache.dat2"
+          test -f "$CACHE"
+          test "$(stat -c%s "$CACHE")" -gt 50000000
+          ! grep -a -q 'git-lfs.github.com/spec/v1' "$CACHE"
 
       - name: Prepare Android single-player server
         shell: python
@@ -130,7 +141,7 @@ jobs:
           cp singleplayer-generated.conf upstream-server/Server/worldprops/local.conf
 
           pushd upstream-server/Server >/dev/null
-          java -Xms128m -Xmx1024m -jar "$SERVER_JAR" worldprops/local.conf > "$GITHUB_WORKSPACE/out/server-smoke.log" 2>&1 &
+          java -Xms256m -Xmx2048m -jar "$SERVER_JAR" worldprops/local.conf > "$GITHUB_WORKSPACE/out/server-smoke.log" 2>&1 &
           SERVER_PID=$!
           popd >/dev/null
 
