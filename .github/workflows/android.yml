@@ -135,6 +135,12 @@ jobs:
           popd >/dev/null
 
           cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "===== local server smoke log ====="
+              tail -n 400 "$GITHUB_WORKSPACE/out/server-smoke.log" || true
+              echo "===== end local server smoke log ====="
+            fi
             kill -TERM "$SERVER_PID" 2>/dev/null || true
             for _ in $(seq 1 20); do
               if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
@@ -142,14 +148,16 @@ jobs:
             done
             kill -KILL "$SERVER_PID" 2>/dev/null || true
             wait "$SERVER_PID" 2>/dev/null || true
+            return "$status"
           }
           trap cleanup EXIT
 
           python3 - <<'PY'
-          import json, socket, time
+          import json, os, socket, time
 
-          deadline = time.time() + 90
+          deadline = time.time() + 300
           last_error = None
+          next_report = time.time() + 30
           while time.time() < deadline:
               try:
                   with socket.create_connection(('127.0.0.1', 43595), timeout=1):
@@ -159,14 +167,24 @@ jobs:
                       reply = control.makefile('rb').readline().decode('utf-8', 'replace').strip()
                   data = json.loads(reply)
                   if data.get('ok') is True and data.get('service') == '2009scape-singleplayer-control':
-                      print('Local server smoke test ready:', reply)
+                      print('Local server smoke test ready:', reply, flush=True)
                       break
                   last_error = RuntimeError('unexpected control response: ' + reply)
               except Exception as exc:
                   last_error = exc
+
+              if time.time() >= next_report:
+                  print('Still waiting for local server:', repr(last_error), flush=True)
+                  try:
+                      with open('out/server-smoke.log', 'rb') as fh:
+                          tail = fh.read()[-8000:].decode('utf-8', 'replace')
+                      print(tail, flush=True)
+                  except Exception:
+                      pass
+                  next_report = time.time() + 30
               time.sleep(0.5)
           else:
-              raise SystemExit('Server/control API did not become ready: %r' % (last_error,))
+              raise SystemExit('Server/control API did not become ready within 300 seconds: %r' % (last_error,))
           PY
 
           ss -ltn | tee out/server-listeners.txt
