@@ -298,8 +298,31 @@ jobs:
           unzip -l out/2009scape-mobile.apk | tee out/apk-contents.txt
           grep -q 'assets/singleplayer/server.jar' out/apk-contents.txt
           grep -q 'assets/singleplayer/server-data.zip' out/apk-contents.txt
+          grep -q 'assets/singleplayer/server-default.conf' out/apk-contents.txt
+          grep -q 'assets/singleplayer/server-version.txt' out/apk-contents.txt
           grep -q 'assets/singleplayer/server-jre17-arm64.tar.xz' out/apk-contents.txt
           grep -q 'assets/singleplayer/server-jre17-version.txt' out/apk-contents.txt
+          grep -q 'assets/plugins/LocalSinglePlayerLogin.zip' out/apk-contents.txt
+
+          # Validate the nested payloads rather than only checking their filenames.
+          unzip -p out/2009scape-mobile.apk assets/plugins/LocalSinglePlayerLogin.zip > out/LocalSinglePlayerLogin.zip
+          unzip -t out/LocalSinglePlayerLogin.zip
+          unzip -l out/LocalSinglePlayerLogin.zip | grep -q 'LocalSinglePlayerLogin/plugin.class'
+
+          unzip -p out/2009scape-mobile.apk assets/singleplayer/server-data.zip > out/server-data.zip
+          unzip -t out/server-data.zip
+          unzip -l out/server-data.zip | grep -q 'data/players/template/'
+
+          unzip -p out/2009scape-mobile.apk assets/singleplayer/server-jre17-arm64.tar.xz > out/server-jre17-arm64.tar.xz
+          echo "c64583ac2e0ec8857e43456fa9adcf482c6a8e454a7133173bf15692d2478b8d  out/server-jre17-arm64.tar.xz" | sha256sum -c -
+
+      - name: Verify APK signing identity
+        run: |
+          set -euxo pipefail
+          APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --print-certs out/2009scape-mobile.apk | tee out/apk-signing.txt
+          grep -qi 'd0d0886a0d7e3486e6627f9b8011027fe3c6b0fb09424530b6d7be14f8c2cc33' out/apk-signing.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
