@@ -71,7 +71,15 @@ public class PojavApplication extends Application {
 												originalJNIDirectory.lastIndexOf("/"))
 												.concat("/x86");
 			}
-			AsyncAssetManager.unpackRuntime(getAssets());
+
+			// The dedicated :server process never runs the RT4 client. Avoid scheduling
+			// extraction of the client "Internal" JRE there, especially on first launch
+			// while the launcher may already be installing the same runtime.
+			String processName = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+					? Application.getProcessName() : null;
+			if (processName == null || !processName.endsWith(":server")) {
+				AsyncAssetManager.unpackRuntime(getAssets());
+			}
 		} catch (Throwable throwable) {
 			Intent ferrorIntent = new Intent(this, FatalErrorActivity.class);
 			ferrorIntent.putExtra("throwable", throwable);
