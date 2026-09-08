@@ -45,12 +45,17 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Fetch current 2009Scape server
+      - name: Fetch pinned 2009Scape server
         run: |
           set -euxo pipefail
-          git clone --depth 1 https://gitlab.com/2009scape/2009scape.git upstream-server
+          UPSTREAM_COMMIT="9f634148bab11fad821943864cb71d7c6af98da4"
+          git init upstream-server
+          git -C upstream-server remote add origin https://gitlab.com/2009scape/2009scape.git
+          git -C upstream-server fetch --depth 1 origin "$UPSTREAM_COMMIT"
+          git -C upstream-server checkout --detach FETCH_HEAD
           git -C upstream-server lfs pull
-          git -C upstream-server rev-parse HEAD | tee upstream-server-commit.txt
+          test "$(git -C upstream-server rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+          printf '%s\n' "$UPSTREAM_COMMIT" | tee upstream-server-commit.txt
 
           CACHE="upstream-server/Server/data/cache/main_file_cache.dat2"
           test -f "$CACHE"
