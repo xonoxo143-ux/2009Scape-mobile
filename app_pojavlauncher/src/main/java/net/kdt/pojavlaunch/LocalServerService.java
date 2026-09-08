@@ -42,6 +42,7 @@ public class LocalServerService extends Service {
         try {
             // This Service is in its own Android process, so initialize process-local paths here.
             Tools.initContextConstants(getApplicationContext());
+            LocalServerManager.clearServerStartupError(this);
 
             File root = ServerFilesProvider.ensureServerRoot(this);
             File serverJar = new File(root, "server.jar");
@@ -89,6 +90,7 @@ public class LocalServerService extends Service {
             int exitCode = VMLauncher.launchJVM(args.toArray(new String[0]));
             Log.i(TAG, "Local server JVM exited with code " + exitCode);
         } catch (Throwable t) {
+            LocalServerManager.recordServerStartupError(this, t);
             Log.e(TAG, "Local server failed", t);
         } finally {
             stopSelf();
