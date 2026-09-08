@@ -120,9 +120,12 @@ public class ScapeLauncher extends BaseActivity {
 
             @Override
             public void onReady() {
+                // startAndWait invokes this callback on its worker thread, so do the
+                // localhost probe here before switching back to the Android UI thread.
+                boolean controlReady = LocalServerManager.isControlApiReady();
                 runOnUiThread(() -> {
                     serverStatus.setText("Server: ready • Control API: "
-                            + (LocalServerManager.isControlApiReady() ? "ready" : "starting"));
+                            + (controlReady ? "ready" : "starting"));
                     updateStatus.setText("Loading local profile " + LocalServerManager.getProfileName(ScapeLauncher.this) + "...");
                     Intent intent = new Intent(ScapeLauncher.this, JavaGUILauncherActivity.class);
                     startActivity(intent);
@@ -145,20 +148,49 @@ public class ScapeLauncher extends BaseActivity {
     }
 
     private void refreshServerStatus() {
-        if (LocalServerManager.isGameServerReady()) {
-            serverStatus.setText("Server: ready • Control API: "
-                    + (LocalServerManager.isControlApiReady() ? "ready" : "starting"));
-        } else {
-            serverStatus.setText("Server: stopped");
-        }
+        // Socket.connect() is network I/O even for 127.0.0.1. Android throws
+        // NetworkOnMainThreadException if we probe the local ports from Activity callbacks.
+        new Thread(() -> {
+            boolean gameReady = LocalServerManager.isGameServerReady();
+            boolean controlReady = gameReady && LocalServerManager.isControlApiReady();
+            runOnUiThread(() -> {
+                if (isFinishing()) return;
+                if (gameReady) {
+                    serverStatus.setText("Server: ready • Control API: "
+                            + (controlReady ? "ready" : "starting"));
+                } else {
+                    serverStatus.setText("Server: stopped");
+                }
+            });
+        }, "singleplayer-status-check").start();
     }
 
-    private void showPlayerSettings() {
-        if (gameSessionStarted || LocalServerManager.isGameServerReady()) {
-            Toast.makeText(this, "Close the running local world before changing profiles.", Toast.LENGTH_LONG).show();
+    private void runWhenServerStopped(String runningMessage, Runnable action) {
+        if (gameSessionStarted) {
+            Toast.makeText(this, runningMessage, Toast.LENGTH_LONG).show();
             return;
         }
 
+        new Thread(() -> {
+            boolean serverRunning = LocalServerManager.isGameServerReady();
+            runOnUiThread(() -> {
+                if (isFinishing()) return;
+                if (serverRunning) {
+                    Toast.makeText(this, runningMessage, Toast.LENGTH_LONG).show();
+                } else {
+                    action.run();
+                }
+            });
+        }, "singleplayer-stopped-check").start();
+    }
+
+    private void showPlayerSettings() {
+        runWhenServerStopped(
+                "Close the running local world before changing profiles.",
+                this::showPlayerSettingsDialog);
+    }
+
+    private void showPlayerSettingsDialog() {
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(12)});
@@ -178,11 +210,12 @@ public class ScapeLauncher extends BaseActivity {
     }
 
     private void showWorldSettings() {
-        if (gameSessionStarted || LocalServerManager.isGameServerReady()) {
-            Toast.makeText(this, "World settings apply before the local server starts.", Toast.LENGTH_LONG).show();
-            return;
-        }
+        runWhenServerStopped(
+                "World settings apply before the local server starts.",
+                this::showWorldSettingsDialog);
+    }
 
+    private void showWorldSettingsDialog() {
         File conf = new File(ServerFilesProvider.ensureServerRoot(this), "worldprops/local.conf");
         try {
             String text = Tools.read(conf.getAbsolutePath());
@@ -275,12 +308,12 @@ public class ScapeLauncher extends BaseActivity {
     }
 
     private void runGitHubUpdate() {
-        if (gameSessionStarted || LocalServerManager.isGameServerReady()) {
-            Toast.makeText(this,
-                    "Updates are only available before starting the local world.",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
+        runWhenServerStopped(
+                "Updates are only available before starting the local world.",
+                this::runGitHubUpdateWhenStopped);
+    }
+
+    private void runGitHubUpdateWhenStopped() {
         if (!runtimeReady() || updateRunning || preparationRunning) return;
 
         updateRunning = true;
