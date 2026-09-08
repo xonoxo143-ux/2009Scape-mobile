@@ -65,8 +65,11 @@ public class LocalServerService extends Service {
 
             List<String> args = new ArrayList<>();
             args.add("java");
-            args.add("-Xms128M");
-            args.add("-Xmx768M");
+            // The official 2009Scape single-player launcher budgets a 2 GiB
+            // server heap. Keep the initial commitment modest on Android, but allow
+            // the server room to reach the same ceiling during world initialization.
+            args.add("-Xms256M");
+            args.add("-Xmx2048M");
             args.add("-Djava.home=" + runtimeHome);
             args.add("-Djava.io.tmpdir=" + Tools.DIR_CACHE.getAbsolutePath());
             args.add("-Duser.home=" + root.getAbsolutePath());
