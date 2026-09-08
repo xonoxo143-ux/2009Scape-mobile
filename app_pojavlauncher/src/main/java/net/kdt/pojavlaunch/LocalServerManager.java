@@ -10,12 +10,14 @@ import net.kdt.pojavlaunch.utils.Architecture;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -63,7 +65,7 @@ public final class LocalServerManager {
                 writeProfileFile(app, getProfileName(app));
                 clearServerStartupError(app);
 
-                if (!isPortOpen(GAME_PORT, 150)) {
+                if (!isPortOpen(GAME_PORT, 150) || !isControlApiReady()) {
                     listener.onStatus("Starting local 2009Scape server...");
                     Intent service = new Intent(app, LocalServerService.class);
                     app.startService(service);
@@ -71,7 +73,7 @@ public final class LocalServerManager {
 
                 long deadline = System.currentTimeMillis() + SERVER_START_TIMEOUT_MS;
                 while (System.currentTimeMillis() < deadline) {
-                    if (isPortOpen(GAME_PORT, 250)) {
+                    if (isPortOpen(GAME_PORT, 250) && isControlApiReady()) {
                         listener.onStatus("Local server ready.");
                         listener.onReady();
                         return;
@@ -288,7 +290,21 @@ public final class LocalServerManager {
     }
 
     public static boolean isControlApiReady() {
-        return isPortOpen(CONTROL_PORT, 100);
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress("127.0.0.1", CONTROL_PORT), 150);
+            socket.setSoTimeout(150);
+            socket.getOutputStream().write("{\"op\":\"ping\"}\n".getBytes(StandardCharsets.UTF_8));
+            socket.getOutputStream().flush();
+
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            String response = reader.readLine();
+            return response != null
+                    && response.contains("\"ok\":true")
+                    && response.contains("2009scape-singleplayer-control");
+        } catch (IOException ignored) {
+            return false;
+        }
     }
 
     private static boolean isPortOpen(int port, int timeoutMs) {
