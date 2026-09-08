@@ -89,6 +89,9 @@ public class LocalServerService extends Service {
                     + " from " + runtimeHome);
             int exitCode = VMLauncher.launchJVM(args.toArray(new String[0]));
             Log.i(TAG, "Local server JVM exited with code " + exitCode);
+            if (exitCode != 0) {
+                throw new IllegalStateException("Server JVM exited with code " + exitCode);
+            }
         } catch (Throwable t) {
             LocalServerManager.recordServerStartupError(this, t);
             Log.e(TAG, "Local server failed", t);
