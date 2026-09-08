@@ -79,7 +79,11 @@ public class LocalServerService extends Service {
             args.add("-Dlog4j2.formatMsgNoLookups=true");
             args.add("-jar");
             args.add(serverJar.getAbsolutePath());
-            args.add(config.getAbsolutePath());
+            // 2009Scape's ServerConfigParser normalizes paths by splitting on '/'.
+            // That intentionally supports project-relative paths but strips the leading
+            // slash from absolute paths. Since the server JVM chdirs to root below,
+            // pass the config exactly the way upstream expects it.
+            args.add("worldprops/local.conf");
 
             JREUtils.initJavaRuntime(runtimeHome);
             JREUtils.setupExitTrap(getApplicationContext());
