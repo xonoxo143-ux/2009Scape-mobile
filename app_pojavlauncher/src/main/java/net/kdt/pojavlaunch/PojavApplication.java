@@ -58,9 +58,10 @@ public class PojavApplication extends Application {
 		try {
 			super.onCreate();
 			Tools.APP_NAME = getResources().getString(R.string.app_short_name);
-			
-			Tools.DIR_DATA = getDir("files", MODE_PRIVATE).getParent();
-			Tools.DIR_CACHE = getCacheDir();
+
+			// MultiRTUtils captures the runtime directory when its class is first loaded.
+			// Initialize every context-dependent Tools path before unpackRuntime() can touch it.
+			Tools.initContextConstants(this);
 			Tools.DIR_ACCOUNT_NEW = Tools.DIR_DATA + "/accounts";
 			Tools.DEVICE_ARCHITECTURE = Architecture.getDeviceArchitecture();
 			//Force x86 lib directory for Asus x86 based zenfones
