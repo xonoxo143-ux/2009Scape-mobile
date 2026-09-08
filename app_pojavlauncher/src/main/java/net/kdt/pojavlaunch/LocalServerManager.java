@@ -17,6 +17,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -34,6 +36,8 @@ public final class LocalServerManager {
     private static final String SERVER_RUNTIME_VERSION_ASSET = ASSET_ROOT + "server-jre17-version.txt";
     private static final String SERVER_RUNTIME_VERSION_MARKER = ".singleplayer-runtime-version";
     private static final String VERSION_MARKER = ".server-data-version";
+    private static final String STARTUP_ERROR_FILE = ".server-startup-error.txt";
+    private static final int SERVER_START_TIMEOUT_MS = 180_000;
     private static final String PREFS = "singleplayer";
     private static final String PROFILE_KEY = "profile_name";
     private static final String DEFAULT_PROFILE = "Player";
@@ -57,6 +61,7 @@ public final class LocalServerManager {
                 ensureInstalled(app);
                 writeLocalClientConfig(app);
                 writeProfileFile(app, getProfileName(app));
+                clearServerStartupError(app);
 
                 if (!isPortOpen(GAME_PORT, 150)) {
                     listener.onStatus("Starting local 2009Scape server...");
@@ -64,15 +69,21 @@ public final class LocalServerManager {
                     app.startService(service);
                 }
 
-                for (int i = 0; i < 240; i++) {
+                long deadline = System.currentTimeMillis() + SERVER_START_TIMEOUT_MS;
+                while (System.currentTimeMillis() < deadline) {
                     if (isPortOpen(GAME_PORT, 250)) {
                         listener.onStatus("Local server ready.");
                         listener.onReady();
                         return;
                     }
+                    String startupError = readServerStartupErrorSummary(app);
+                    if (startupError != null) {
+                        throw new IOException("Local server process failed: " + startupError);
+                    }
                     Thread.sleep(250L);
                 }
-                throw new IOException("Local server did not open port " + GAME_PORT + ".");
+                throw new IOException("Local server did not open port " + GAME_PORT
+                        + " within " + (SERVER_START_TIMEOUT_MS / 1000) + " seconds.");
             } catch (Exception e) {
                 listener.onError(e);
             }
@@ -220,7 +231,8 @@ public final class LocalServerManager {
     }
 
     private static boolean isPersistentPath(String name) {
-        return name.startsWith("data/players/")
+        // Preserve actual player saves, but allow the upstream player template to update.
+        return (name.startsWith("data/players/") && !name.startsWith("data/players/template/"))
                 || name.startsWith("data/serverstore/")
                 || name.startsWith("data/logs/")
                 || name.startsWith("data/snapshots/")
@@ -285,6 +297,42 @@ public final class LocalServerManager {
             return true;
         } catch (IOException ignored) {
             return false;
+        }
+    }
+
+    static void clearServerStartupError(Context context) {
+        File error = new File(ServerFilesProvider.ensureServerRoot(context), STARTUP_ERROR_FILE);
+        if (error.exists() && !error.delete()) {
+            // A stale diagnostic should never prevent the server from starting.
+            error.deleteOnExit();
+        }
+    }
+
+    static void recordServerStartupError(Context context, Throwable error) {
+        try {
+            File file = new File(ServerFilesProvider.ensureServerRoot(context), STARTUP_ERROR_FILE);
+            StringWriter trace = new StringWriter();
+            error.printStackTrace(new PrintWriter(trace));
+            String message = error.getClass().getSimpleName();
+            if (error.getMessage() != null && !error.getMessage().trim().isEmpty()) {
+                message += ": " + error.getMessage().trim();
+            }
+            writeFileText(file, message + "\n" + trace);
+        } catch (Throwable ignored) {
+            // Android logcat remains the fallback if the diagnostic file cannot be written.
+        }
+    }
+
+    private static String readServerStartupErrorSummary(Context context) {
+        File file = new File(ServerFilesProvider.ensureServerRoot(context), STARTUP_ERROR_FILE);
+        if (!file.isFile()) return null;
+        try {
+            String text = readFileText(file).trim();
+            if (text.isEmpty()) return "unknown server startup error";
+            int newline = text.indexOf('\n');
+            return newline >= 0 ? text.substring(0, newline).trim() : text;
+        } catch (IOException e) {
+            return "server failed; diagnostic could not be read";
         }
     }
 
