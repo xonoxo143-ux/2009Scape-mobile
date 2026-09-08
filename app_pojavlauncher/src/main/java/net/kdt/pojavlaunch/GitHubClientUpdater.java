@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.zip.ZipFile;
 
 /**
- * Updates the RT4 client JAR directly from this project's GitHub master branch.
+ * Updates the RT4 client JAR from the tested single-player branch.
  *
  * The launcher APK is intentionally kept separate from game/client updates:
  * changing rt4.jar in GitHub is enough to publish a new client build.
@@ -25,7 +25,7 @@ import java.util.zip.ZipFile;
 public final class GitHubClientUpdater {
     private static final String METADATA_URL =
             "https://api.github.com/repos/xonoxo143-ux/2009Scape-mobile/contents/" +
-            "app_pojavlauncher/src/main/assets/rt4.jar?ref=master";
+            "app_pojavlauncher/src/main/assets/rt4.jar?ref=singleplayer-apk-build";
     private static final String USER_AGENT = "2009Scape-Mobile-RT4-Updater";
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS = 60000;
