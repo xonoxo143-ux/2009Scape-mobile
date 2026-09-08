@@ -24,6 +24,8 @@ import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -188,6 +190,24 @@ public final class LocalServerManager {
         File localConf = new File(worldprops, "local.conf");
         if (!localConf.isFile()) {
             copyAsset(context, ASSET_ROOT + "server-default.conf", localConf);
+        } else if (versionChanged) {
+            // Refresh to the current upstream schema while preserving the settings
+            // exposed by the Android UI. This avoids an old local.conf becoming
+            // incompatible when upstream adds or renames required configuration keys.
+            String previous = readFileText(localConf);
+            String refreshed = readAssetText(context, ASSET_ROOT + "server-default.conf");
+            String[] preservedKeys = new String[] {
+                    "enable_bots",
+                    "bots_influence_ge_price",
+                    "wild_pvp_enabled",
+                    "enable_castle_wars"
+            };
+            for (String key : preservedKeys) {
+                Boolean value = readBooleanSetting(previous, key);
+                if (value != null) refreshed = writeBooleanSetting(refreshed, key, value);
+            }
+            writeFileText(new File(worldprops, "local.conf.previous"), previous);
+            writeFileText(localConf, refreshed);
         }
 
         if (firstInstall || versionChanged) {
@@ -350,6 +370,22 @@ public final class LocalServerManager {
         } catch (IOException e) {
             return "server failed; diagnostic could not be read";
         }
+    }
+
+    private static Boolean readBooleanSetting(String text, String key) {
+        Pattern pattern = Pattern.compile("(?m)^\\s*" + Pattern.quote(key)
+                + "\\s*=\\s*(true|false)\\s*(?:#.*)?$");
+        Matcher matcher = pattern.matcher(text);
+        return matcher.find() ? Boolean.valueOf(matcher.group(1)) : null;
+    }
+
+    private static String writeBooleanSetting(String text, String key, boolean value) {
+        Pattern pattern = Pattern.compile("(?m)^(\\s*" + Pattern.quote(key)
+                + "\\s*=\\s*)(true|false)(.*)$");
+        Matcher matcher = pattern.matcher(text);
+        if (!matcher.find()) return text;
+        return matcher.replaceFirst(Matcher.quoteReplacement(
+                matcher.group(1) + value + matcher.group(3)));
     }
 
     private static void copyAsset(Context context, String asset, File destination) throws IOException {
