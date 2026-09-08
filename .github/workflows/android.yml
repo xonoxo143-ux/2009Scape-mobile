@@ -126,11 +126,11 @@ jobs:
           SERVER_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) | head -n 1)
           test -n "$SERVER_JAR"
           SERVER_JAR=$(readlink -f "$SERVER_JAR")
-          CONFIG=$(readlink -f singleplayer-generated.conf)
           mkdir -p out
+          cp singleplayer-generated.conf upstream-server/Server/worldprops/local.conf
 
           pushd upstream-server/Server >/dev/null
-          java -Xms128m -Xmx1024m -jar "$SERVER_JAR" "$CONFIG" > "$GITHUB_WORKSPACE/out/server-smoke.log" 2>&1 &
+          java -Xms128m -Xmx1024m -jar "$SERVER_JAR" worldprops/local.conf > "$GITHUB_WORKSPACE/out/server-smoke.log" 2>&1 &
           SERVER_PID=$!
           popd >/dev/null
 
