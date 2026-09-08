@@ -4,8 +4,10 @@ import plugin.Plugin;
 import plugin.annotations.PluginMeta;
 import plugin.api.API;
 import rt4.Component;
+import rt4.CreateManager;
 import rt4.JagString;
 import rt4.LoginManager;
+import rt4.WorldList;
 import rt4.client;
 
 import java.io.BufferedReader;
@@ -15,17 +17,32 @@ import java.io.FileReader;
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
         description = "Automatically enters the prepared local single-player profile.",
-        version = 1.1
+        version = 1.2
 )
 public class plugin extends Plugin {
-    private boolean attempted = false;
+    private long lastAttemptMs = 0L;
 
     @Override
     public void ComponentDraw(int componentIndex, Component component, int screenX, int screenY) {
-        if (attempted || API.IsLoggedIn() || component == null || component.text == null) {
+        if (API.IsLoggedIn() || component == null || component.text == null) {
             return;
         }
         if (client.gameState != 10 || !component.text.equals(JagString.of("Please Log In"))) {
+            return;
+        }
+
+        // Mirror the stock login script's idle-state checks before invoking the
+        // underlying login routine. This avoids colliding with world-list/account
+        // creation activity, and the cooldown permits recovery from a transient
+        // first attempt instead of permanently sticking on the login screen.
+        if (LoginManager.anInt4937 != 0
+                || LoginManager.step != 0
+                || CreateManager.step != 0
+                || WorldList.step != 0) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastAttemptMs < 3000L) {
             return;
         }
 
@@ -34,8 +51,8 @@ public class plugin extends Plugin {
 
         API.SetVarcStr(32, username);
         API.SetVarcStr(33, password);
+        lastAttemptMs = now;
         LoginManager.method3896(JagString.of(username), JagString.of(password), 0);
-        attempted = true;
     }
 
     private String loadProfileName() {
@@ -59,6 +76,6 @@ public class plugin extends Plugin {
 
     @Override
     public void OnLogout() {
-        attempted = false;
+        lastAttemptMs = 0L;
     }
 }
