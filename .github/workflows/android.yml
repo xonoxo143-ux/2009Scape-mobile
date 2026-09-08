@@ -235,10 +235,12 @@ jobs:
           ASSET_DIR="app_pojavlauncher/src/main/assets/singleplayer"
           JRE_TAG="jre17-ec28559"
           JRE_FILE="jre17-arm64-20210825-release.tar.xz"
+          JRE_SHA256="c64583ac2e0ec8857e43456fa9adcf482c6a8e454a7133173bf15692d2478b8d"
           JRE_URL="https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/${JRE_TAG}/${JRE_FILE}"
 
           curl --fail --location --retry 5 --retry-delay 2 \
             "$JRE_URL" -o "$ASSET_DIR/server-jre17-arm64.tar.xz"
+          echo "$JRE_SHA256  $ASSET_DIR/server-jre17-arm64.tar.xz" | sha256sum -c -
           printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/server-jre17-version.txt"
 
           rm -rf build/server-jre17-check
