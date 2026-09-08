@@ -120,6 +120,71 @@ jobs:
           chmod +x mvnw
           ./mvnw clean package -DskipTests
 
+      - name: Smoke-test patched single-player server
+        run: |
+          set -euxo pipefail
+          SERVER_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) | head -n 1)
+          test -n "$SERVER_JAR"
+          SERVER_JAR=$(readlink -f "$SERVER_JAR")
+          CONFIG=$(readlink -f singleplayer-generated.conf)
+          mkdir -p out
+
+          pushd upstream-server/Server >/dev/null
+          java -Xms128m -Xmx1024m -jar "$SERVER_JAR" "$CONFIG" > "$GITHUB_WORKSPACE/out/server-smoke.log" 2>&1 &
+          SERVER_PID=$!
+          popd >/dev/null
+
+          cleanup() {
+            kill -TERM "$SERVER_PID" 2>/dev/null || true
+            for _ in $(seq 1 20); do
+              if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
+              sleep 0.5
+            done
+            kill -KILL "$SERVER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          python3 - <<'PY'
+          import json, socket, time
+
+          deadline = time.time() + 90
+          last_error = None
+          while time.time() < deadline:
+              try:
+                  with socket.create_connection(('127.0.0.1', 43595), timeout=1):
+                      pass
+                  with socket.create_connection(('127.0.0.1', 43600), timeout=1) as control:
+                      control.sendall(b'{"op":"ping"}\n')
+                      reply = control.makefile('rb').readline().decode('utf-8', 'replace').strip()
+                  data = json.loads(reply)
+                  if data.get('ok') is True and data.get('service') == '2009scape-singleplayer-control':
+                      print('Local server smoke test ready:', reply)
+                      break
+                  last_error = RuntimeError('unexpected control response: ' + reply)
+              except Exception as exc:
+                  last_error = exc
+              time.sleep(0.5)
+          else:
+              raise SystemExit('Server/control API did not become ready: %r' % (last_error,))
+          PY
+
+          ss -ltn | tee out/server-listeners.txt
+          python3 - <<'PY'
+          import re
+          text = open('out/server-listeners.txt').read().splitlines()
+          listeners = [line for line in text if re.search(r':43595\s', line)]
+          print('Game listeners:', listeners)
+          if not any('127.0.0.1:43595' in line for line in listeners):
+              raise SystemExit('Game socket is not bound to 127.0.0.1:43595')
+          forbidden = ('0.0.0.0:43595', '*:43595', '[::]:43595')
+          if any(any(token in line for token in forbidden) for line in listeners):
+              raise SystemExit('Game socket is exposed beyond loopback')
+          PY
+
+          cleanup
+          trap - EXIT
+
       - name: Verify server bytecode is compatible with Java 17
         run: |
           python3 - <<'PY'
