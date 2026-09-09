@@ -123,6 +123,8 @@ public class AsyncAssetManager {
                 unpackComponent(ctx, "security", true);
                 Tools.copyAssetFile(ctx,"rt4.jar",Tools.DIR_DATA, false); // Change this to true if you're working on client features.
                 Tools.copyAssetFile(ctx,"config.json",Tools.DIR_DATA, false);
+                // Combined single-player entrypoint; refresh it on APK upgrades.
+                Tools.copyAssetFile(ctx,"singleplayer-bootstrap.jar",Tools.DIR_DATA, true);
 
                 // Unzip the plugins for use.
                 extractAllPlugins(ctx);
