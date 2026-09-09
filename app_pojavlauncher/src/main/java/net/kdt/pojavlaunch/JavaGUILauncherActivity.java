@@ -201,8 +201,7 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
 
             placeMouseAt(CallbackBridge.physicalWidth / 2f, CallbackBridge.physicalHeight / 2f);
 
-            String jreName = LauncherPreferences.PREF_DEFAULT_RUNTIME;
-            final Runtime runtime = MultiRTUtils.forceReread(jreName);
+            final Runtime runtime = SinglePlayerManager.getRuntime();
 
             mSkipDetectMod = false;
             if (mSkipDetectMod) {
@@ -376,28 +375,62 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
     }
 
     public int launchJavaRuntime(Runtime runtime, String javaArgs) {
-        runtime = MultiRTUtils.forceReread("Internal");
         JREUtils.redirectAndPrintJRELog();
         try {
+            File worldRoot = SinglePlayerManager.getWorldRoot(this);
+            File engineJar = new File(worldRoot, "engine.jar");
+            File bootstrapJar = new File(Tools.DIR_DATA, "singleplayer-bootstrap.jar");
+            File clientJar = new File(Tools.DIR_DATA, "rt4.jar");
+
+            if (!engineJar.isFile()) {
+                throw new IOException("Single-player world engine is missing: " + engineJar);
+            }
+            if (!bootstrapJar.isFile()) {
+                throw new IOException("Single-player bootstrap is missing: " + bootstrapJar);
+            }
+            if (!clientJar.isFile()) {
+                throw new IOException("RT4 client is missing: " + clientJar);
+            }
+
             List<String> javaArgList = new ArrayList<>();
-            File gamedir = new File(Tools.DIR_DATA);
 
-            // Enable Caciocavallo
-            Tools.getCacioJavaArgs(javaArgList,runtime.javaVersion == 8);
-            javaArgList.add("-DconfigFile="+Tools.DIR_DATA + "/config.json");
-            javaArgList.add("-DpluginDir="+ Tools.DIR_DATA + "/plugins/");
-            javaArgList.add("-DclientHomeOverride="+gamedir);
-            javaArgList.add("-jar");
-            javaArgList.add(Tools.DIR_DATA+"/rt4.jar");
+            // One Java 17 VM now owns both halves of single-player mode.
+            Tools.getCacioJavaArgs(javaArgList, false);
+            javaArgList.add("-DconfigFile=" + Tools.DIR_DATA + "/config.json");
+            javaArgList.add("-DpluginDir=" + Tools.DIR_DATA + "/plugins/");
+            javaArgList.add("-DclientHomeOverride=" + Tools.DIR_DATA);
+            javaArgList.add("-DsinglePlayerName=" + SinglePlayerManager.getProfileName(this));
+            javaArgList.add("-Dsingleplayer=true");
+            javaArgList.add("-Djava.awt.headless=false");
+            javaArgList.add("-cp");
+            javaArgList.add(
+                    bootstrapJar.getAbsolutePath() + ":" +
+                    engineJar.getAbsolutePath() + ":" +
+                    clientJar.getAbsolutePath());
+            javaArgList.add("singleplayer.InProcessBootstrap");
 
-            Logger.appendToLog("Info: Java arguments: " + Arrays.toString(javaArgList.toArray(new String[0])));
+            // The world engine previously needed a 3 GiB VM by itself. The client now
+            // shares that VM, so reserve a 4 GiB ceiling on the target single-player device.
+            LauncherPreferences.PREF_RAM_ALLOCATION =
+                    Math.max(LauncherPreferences.PREF_RAM_ALLOCATION, 4096);
 
-            return JREUtils.launchJavaVM(this, runtime,gamedir,javaArgList, LauncherPreferences.PREF_CUSTOM_JAVA_ARGS);
+            Logger.appendToLog("Info: combined Java arguments: "
+                    + Arrays.toString(javaArgList.toArray(new String[0])));
+
+            return JREUtils.launchJavaVM(
+                    this,
+                    runtime,
+                    worldRoot,
+                    javaArgList,
+                    LauncherPreferences.PREF_CUSTOM_JAVA_ARGS);
         } catch (Throwable th) {
+            Logger.appendToLog("Combined single-player launch failed:");
+            Logger.appendToLog(Log.getStackTraceString(th));
             Tools.showError(this, th, true);
             return -1;
         }
     }
+
     public void toggleKeyboard(View view) {
         mTouchCharInput.switchKeyboardState();
     }
