@@ -21,14 +21,27 @@ import java.io.FileReader;
 )
 public class plugin extends Plugin {
     private long lastAttemptMs = 0L;
+    private boolean loginScreenAnnounced = false;
+    private boolean loggedInAnnounced = false;
 
     @Override
     public void ComponentDraw(int componentIndex, Component component, int screenX, int screenY) {
-        if (API.IsLoggedIn() || component == null || component.text == null) {
+        if (API.IsLoggedIn()) {
+            if (!loggedInAnnounced) {
+                System.out.println("SINGLEPLAYER_E2E: LOGGED_IN");
+                loggedInAnnounced = true;
+            }
+            return;
+        }
+        if (component == null || component.text == null) {
             return;
         }
         if (client.gameState != 10 || !component.text.equals(JagString.of("Please Log In"))) {
             return;
+        }
+        if (!loginScreenAnnounced) {
+            System.out.println("SINGLEPLAYER_E2E: LOGIN_SCREEN");
+            loginScreenAnnounced = true;
         }
 
         // Mirror the stock login script's idle-state checks before invoking the
@@ -77,5 +90,7 @@ public class plugin extends Plugin {
     @Override
     public void OnLogout() {
         lastAttemptMs = 0L;
+        loginScreenAnnounced = false;
+        loggedInAnnounced = false;
     }
 }
