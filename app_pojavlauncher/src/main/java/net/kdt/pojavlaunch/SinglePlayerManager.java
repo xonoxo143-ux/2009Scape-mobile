@@ -3,6 +3,8 @@ package net.kdt.pojavlaunch;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import com.kdt.mcgui.ProgressLayout;
+
 import net.kdt.pojavlaunch.multirt.MultiRTUtils;
 import net.kdt.pojavlaunch.multirt.Runtime;
 import net.kdt.pojavlaunch.utils.Architecture;
@@ -66,6 +68,9 @@ public final class SinglePlayerManager {
 
         try (InputStream runtime = context.getAssets().open(RUNTIME_ASSET)) {
             MultiRTUtils.installRuntimeNamed(Tools.NATIVE_LIB_DIR, runtime, RUNTIME_NAME);
+        } finally {
+            // MultiRTUtils clears this on success, but guarantee release on any extraction error.
+            ProgressLayout.clearProgress(ProgressLayout.UNPACK_RUNTIME);
         }
 
         Runtime installed = MultiRTUtils.forceReread(RUNTIME_NAME);
