@@ -68,6 +68,34 @@ jobs:
 
           root = Path('upstream-server/Server')
 
+          # Upgrade sqlite-jdbc to a release with maintained Android support. The Java
+          # driver stays inside the world-engine fat JAR; matching Android/Bionic JNI
+          # libraries are packaged into the APK separately below.
+          pom = root / 'pom.xml'
+          pom_source = pom.read_text()
+          sqlite_old = """    <dependency>
+      <groupId>org.xerial</groupId>
+      <artifactId>sqlite-jdbc</artifactId>
+      <version>3.36.0.3</version>
+      <scope>compile</scope>
+    </dependency>"""
+          sqlite_new = """    <dependency>
+      <groupId>org.xerial</groupId>
+      <artifactId>sqlite-jdbc</artifactId>
+      <version>3.53.4.0</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>1.7.36</version>
+      <scope>compile</scope>
+    </dependency>"""
+          if sqlite_old not in pom_source:
+              raise SystemExit('Could not locate pinned sqlite-jdbc dependency')
+          pom_source = pom_source.replace(sqlite_old, sqlite_new, 1)
+          pom.write_text(pom_source)
+
           # Keep the stock RT4 protocol as an internal compatibility boundary, but
           # never expose the socket beyond this device.
           nio = root / 'src/main/core/net/NioReactor.java'
@@ -114,6 +142,7 @@ jobs:
               'network=' + digest(nio),
               'config=' + digest(generated_conf),
               'bootstrap=' + digest(Path('singleplayer/inprocess/InProcessBootstrap.java')),
+              'sqlite-jdbc=3.53.4.0',
           ]
           Path('singleplayer-world-version.txt').write_text('\n'.join(version) + '\n')
 
@@ -261,6 +290,34 @@ jobs:
           test -f build/runtime-check/lib/server/libjvm.so
           readelf -h build/runtime-check/lib/server/libjvm.so | grep -E 'Machine:.*AArch64'
 
+      - name: Package Android SQLite JNI
+        run: |
+          set -euxo pipefail
+          SQLITE_VERSION="3.53.4.0"
+          SQLITE_ANDROID_SHA256="4125c0c02ef226896dae098f7b38ee66b7b376df243dd340ff09e2d5a3e3ee1b"
+          SQLITE_ANDROID_JAR="sqlite-jdbc-${SQLITE_VERSION}-natives-android.jar"
+          SQLITE_ANDROID_URL="https://github.com/xerial/sqlite-jdbc/releases/download/${SQLITE_VERSION}/${SQLITE_ANDROID_JAR}"
+
+          curl --fail --location --retry 5 --retry-delay 2             "$SQLITE_ANDROID_URL" -o "build/$SQLITE_ANDROID_JAR"
+          echo "$SQLITE_ANDROID_SHA256  build/$SQLITE_ANDROID_JAR" | sha256sum -c -
+
+          mkdir -p             app_pojavlauncher/src/main/jniLibs/arm64-v8a             app_pojavlauncher/src/main/jniLibs/x86_64
+          rm -f             app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so             app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
+
+          unzip -p "build/$SQLITE_ANDROID_JAR"             org/sqlite/native/Linux-Android/aarch64/libsqlitejdbc.so             > app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so
+          unzip -p "build/$SQLITE_ANDROID_JAR"             org/sqlite/native/Linux-Android/x86_64/libsqlitejdbc.so             > app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
+
+          test -s app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so
+          test -s app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
+
+          readelf -h app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so | grep -E 'Machine:.*AArch64'
+          readelf -h app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so | grep -E 'Machine:.*X86-64'
+
+          readelf -d app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so | tee out/sqlite-arm64-needed.txt
+          readelf -d app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so | tee out/sqlite-x86_64-needed.txt
+          ! grep -q 'libc.so.6' out/sqlite-arm64-needed.txt
+          ! grep -q 'libc.so.6' out/sqlite-x86_64-needed.txt
+
       - name: Build single-player auto-login plugin
         run: |
           set -euxo pipefail
@@ -279,6 +336,8 @@ jobs:
           ! grep -q 'LocalServerService' app_pojavlauncher/src/main/AndroidManifest.xml
           grep -q 'SinglePlayerManager.getRuntime()' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           grep -q 'singleplayer.InProcessBootstrap' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          grep -q 'org.sqlite.lib.path' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          grep -q 'org.sqlite.lib.name=libsqlitejdbc.so' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           ! grep -q 'AsyncAssetManager.unpackRuntime' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/PojavApplication.java
 
       - name: Remove unused legacy Java 8 runtime assets
@@ -314,6 +373,8 @@ jobs:
           grep -q 'assets/singleplayer/runtime-jre17-version.txt' out/apk-contents.txt
           grep -q 'assets/singleplayer-bootstrap.jar' out/apk-contents.txt
           grep -q 'assets/plugins/LocalSinglePlayerLogin.zip' out/apk-contents.txt
+          grep -q 'lib/arm64-v8a/libsqlitejdbc.so' out/apk-contents.txt
+          grep -q 'lib/x86_64/libsqlitejdbc.so' out/apk-contents.txt
           ! grep -q 'assets/components/jre/' out/apk-contents.txt
 
           unzip -p out/2009scape-mobile.apk assets/singleplayer-bootstrap.jar > out/singleplayer-bootstrap.jar
