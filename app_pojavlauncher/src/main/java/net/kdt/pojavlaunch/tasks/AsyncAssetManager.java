@@ -23,14 +23,27 @@ import java.io.InputStream;
 public class AsyncAssetManager {
 
     private static final String PLUGIN_PATH = "plugins";
+    private static volatile boolean sRuntimePreparationComplete = true;
+    private static volatile String sRuntimePreparationError;
 
     private AsyncAssetManager(){}
+
+    public static boolean isRuntimePreparationComplete() {
+        return sRuntimePreparationComplete;
+    }
+
+    public static String getRuntimePreparationError() {
+        return sRuntimePreparationError;
+    }
 
     /**
      * Attempt to install the java 8 runtime, if necessary
      * @param am App context
      */
     public static void unpackRuntime(AssetManager am) {
+        sRuntimePreparationComplete = false;
+        sRuntimePreparationError = null;
+
         /* Check if JRE is included */
         String rt_version = null;
         String current_rt_version = MultiRTUtils.__internal__readBinpackVersion("Internal");
@@ -40,22 +53,45 @@ public class AsyncAssetManager {
             Log.e("JREAuto", "JRE was not included on this APK.", e);
         }
         String exactJREName = MultiRTUtils.getExactJreName(8);
-        if(current_rt_version == null && exactJREName != null && !exactJREName.equals("Internal")/*this clause is for when the internal runtime is goofed*/) return;
-        if(rt_version == null) return;
-        if(rt_version.equals(current_rt_version)) return;
+        if(current_rt_version == null && exactJREName != null && !exactJREName.equals("Internal")/*this clause is for when the internal runtime is goofed*/) {
+            sRuntimePreparationComplete = true;
+            return;
+        }
+        if(rt_version == null) {
+            if (exactJREName == null) {
+                sRuntimePreparationError = "Bundled Java 8 runtime metadata is missing.";
+            }
+            sRuntimePreparationComplete = true;
+            return;
+        }
+        if(rt_version.equals(current_rt_version)) {
+            sRuntimePreparationComplete = true;
+            return;
+        }
 
-        // Install the runtime in an async manner, hope for the best
+        // Mark the task synchronously so the launcher cannot race ahead before the
+        // executor starts reading the first tar entry.
+        ProgressLayout.setProgress(ProgressLayout.UNPACK_RUNTIME, 0,
+                "Preparing Java 8 client runtime...");
+
         String finalRt_version = rt_version;
         sExecutorService.execute(() -> {
-
             try {
                 MultiRTUtils.installRuntimeNamedBinpack(
                         am.open("components/jre/universal.tar.xz"),
                         am.open("components/jre/bin-" + archAsString(Tools.DEVICE_ARCHITECTURE) + ".tar.xz"),
                         "Internal", finalRt_version);
                 MultiRTUtils.postPrepare("Internal");
-            }catch (IOException e) {
+            } catch (Throwable e) {
+                String message = e.getMessage();
+                sRuntimePreparationError = e.getClass().getSimpleName()
+                        + (message == null || message.trim().isEmpty() ? "" : ": " + message.trim());
                 Log.e("JREAuto", "Internal JRE unpack failed", e);
+            } finally {
+                // installRuntimeNamedBinpack clears this on its success path, but failures
+                // used to leave the task registered forever and deadlock ScapeLauncher.
+                ProgressLayout.clearProgress(ProgressLayout.UNPACK_RUNTIME);
+                sRuntimePreparationComplete = true;
             }
         });
     }
