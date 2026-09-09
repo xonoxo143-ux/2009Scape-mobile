@@ -193,6 +193,7 @@ wait_for_combined_game() {
   local timeout="${1:-1200}"
   local deadline=$((SECONDS + timeout))
   local saw_vm=0
+  local saw_sqlite=0
   local saw_world=0
   local saw_login=0
 
@@ -209,6 +210,11 @@ wait_for_combined_game() {
       saw_vm=1
     fi
 
+    if grep -q 'SINGLEPLAYER_E2E: SQLITE_READY' "${combined}" 2>/dev/null; then
+      if (( saw_sqlite == 0 )); then echo "Android SQLite JNI probe passed"; fi
+      saw_sqlite=1
+    fi
+
     if grep -q 'SINGLEPLAYER_E2E: WORLD_READY' "${combined}" 2>/dev/null; then
       if (( saw_world == 0 )); then echo "Embedded world engine is ready in the same VM"; fi
       saw_world=1
@@ -221,7 +227,7 @@ wait_for_combined_game() {
 
     if grep -q 'SINGLEPLAYER_E2E: LOGGED_IN' "${combined}" 2>/dev/null; then
       echo "Local player logged in successfully"
-      if (( saw_vm == 0 || saw_world == 0 )); then
+      if (( saw_vm == 0 || saw_sqlite == 0 || saw_world == 0 )); then
         echo "Login succeeded without expected combined-runtime milestones"
         return 1
       fi
@@ -237,7 +243,7 @@ wait_for_combined_game() {
     sleep 5
   done
 
-  echo "Combined game timed out. Milestones: vm=${saw_vm}, world=${saw_world}, login=${saw_login}"
+  echo "Combined game timed out. Milestones: vm=${saw_vm}, sqlite=${saw_sqlite}, world=${saw_world}, login=${saw_login}"
   return 1
 }
 
