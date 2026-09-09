@@ -81,6 +81,17 @@ public class ScapeLauncher extends BaseActivity {
 
         new Thread(() -> {
             try {
+                // TestStorageActivity starts component extraction immediately before this
+                // activity. Let those finite extraction jobs finish before installing the
+                // one shared Java 17 runtime.
+                long componentDeadline = android.os.SystemClock.elapsedRealtime() + 120_000L;
+                while (ProgressKeeper.hasOngoingTasks()) {
+                    if (android.os.SystemClock.elapsedRealtime() >= componentDeadline) {
+                        throw new IOException("Launcher component extraction timed out.");
+                    }
+                    Thread.sleep(200L);
+                }
+
                 SinglePlayerManager.prepare(getApplicationContext());
                 runOnUiThread(() -> {
                     preparationRunning = false;
