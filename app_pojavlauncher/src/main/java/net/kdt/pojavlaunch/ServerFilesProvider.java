@@ -72,8 +72,8 @@ public class ServerFilesProvider extends DocumentsProvider {
         MatrixCursor.RowBuilder row = result.newRow();
         row.add(DocumentsContract.Root.COLUMN_ROOT_ID, ROOT_ID);
         row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, ROOT_DOCUMENT_ID);
-        row.add(DocumentsContract.Root.COLUMN_TITLE, "2009Scape Server Files");
-        row.add(DocumentsContract.Root.COLUMN_SUMMARY, "Single-player saves, configs, logs and server data");
+        row.add(DocumentsContract.Root.COLUMN_TITLE, "2009Scape World Files");
+        row.add(DocumentsContract.Root.COLUMN_SUMMARY, "Single-player saves, configs, logs and world data");
         row.add(DocumentsContract.Root.COLUMN_FLAGS,
                 DocumentsContract.Root.FLAG_SUPPORTS_CREATE |
                 DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD |
@@ -190,7 +190,7 @@ public class ServerFilesProvider extends DocumentsProvider {
 
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, documentId);
         row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                ROOT_DOCUMENT_ID.equals(documentId) ? "2009Scape Server Files" : file.getName());
+                ROOT_DOCUMENT_ID.equals(documentId) ? "2009Scape World Files" : file.getName());
         row.add(DocumentsContract.Document.COLUMN_MIME_TYPE,
                 directory ? DocumentsContract.Document.MIME_TYPE_DIR : mimeTypeFor(file));
         row.add(DocumentsContract.Document.COLUMN_FLAGS, flags);
