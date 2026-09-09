@@ -32,6 +32,18 @@
         android:textColor="#D8D0B0"
         android:textSize="13sp" />
 
+    <TextView
+        android:id="@+id/updateStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center"
+        android:minHeight="20dp"
+        android:maxLines="3"
+        android:text=""
+        android:textColor="#B8A078"
+        android:textSize="12sp" />
+
     <Button
         android:id="@+id/playSinglePlayer"
         android:layout_width="320dp"
@@ -87,17 +99,6 @@
             android:text="Update Game"
             android:textAllCaps="false" />
     </LinearLayout>
-
-    <TextView
-        android:id="@+id/updateStatus"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:gravity="center"
-        android:maxLines="2"
-        android:text=""
-        android:textColor="#B8A078"
-        android:textSize="12sp" />
 
     <Space
         android:layout_width="1dp"
