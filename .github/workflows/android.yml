@@ -73,24 +73,28 @@ jobs:
           # libraries are packaged into the APK separately below.
           pom = root / 'pom.xml'
           pom_source = pom.read_text()
-          sqlite_old = """    <dependency>
-      <groupId>org.xerial</groupId>
-      <artifactId>sqlite-jdbc</artifactId>
-      <version>3.36.0.3</version>
-      <scope>compile</scope>
-    </dependency>"""
-          sqlite_new = """    <dependency>
-      <groupId>org.xerial</groupId>
-      <artifactId>sqlite-jdbc</artifactId>
-      <version>3.53.4.0</version>
-      <scope>compile</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-api</artifactId>
-      <version>1.7.36</version>
-      <scope>compile</scope>
-    </dependency>"""
+          sqlite_old = (
+              '    <dependency>\n'
+              '      <groupId>org.xerial</groupId>\n'
+              '      <artifactId>sqlite-jdbc</artifactId>\n'
+              '      <version>3.36.0.3</version>\n'
+              '      <scope>compile</scope>\n'
+              '    </dependency>'
+          )
+          sqlite_new = (
+              '    <dependency>\n'
+              '      <groupId>org.xerial</groupId>\n'
+              '      <artifactId>sqlite-jdbc</artifactId>\n'
+              '      <version>3.53.4.0</version>\n'
+              '      <scope>compile</scope>\n'
+              '    </dependency>\n'
+              '    <dependency>\n'
+              '      <groupId>org.slf4j</groupId>\n'
+              '      <artifactId>slf4j-api</artifactId>\n'
+              '      <version>1.7.36</version>\n'
+              '      <scope>compile</scope>\n'
+              '    </dependency>'
+          )
           if sqlite_old not in pom_source:
               raise SystemExit('Could not locate pinned sqlite-jdbc dependency')
           pom_source = pom_source.replace(sqlite_old, sqlite_new, 1)
