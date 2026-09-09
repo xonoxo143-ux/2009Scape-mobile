@@ -68,6 +68,9 @@ public final class SinglePlayerManager {
 
         try (InputStream runtime = context.getAssets().open(RUNTIME_ASSET)) {
             MultiRTUtils.installRuntimeNamed(Tools.NATIVE_LIB_DIR, runtime, RUNTIME_NAME);
+            // The old dedicated server runtime was headless. The shared runtime now
+            // also hosts RT4/Caciocavallo, so finish Pojav's AWT/freetype preparation.
+            MultiRTUtils.postPrepare(RUNTIME_NAME);
         } finally {
             // MultiRTUtils clears this on success, but guarantee release on any extraction error.
             ProgressLayout.clearProgress(ProgressLayout.UNPACK_RUNTIME);
