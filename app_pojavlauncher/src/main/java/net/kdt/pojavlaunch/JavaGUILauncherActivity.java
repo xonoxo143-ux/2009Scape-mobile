@@ -401,6 +401,11 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
             javaArgList.add("-DclientHomeOverride=" + Tools.DIR_DATA);
             javaArgList.add("-DsinglePlayerName=" + SinglePlayerManager.getProfileName(this));
             javaArgList.add("-Dsingleplayer=true");
+            // Xerial's desktop Linux sqlite-jdbc native depends on glibc and cannot
+            // load on Android/Bionic. CI packages the matching Android JNI build
+            // directly into the APK; force sqlite-jdbc to load that exact library.
+            javaArgList.add("-Dorg.sqlite.lib.path=" + getApplicationInfo().nativeLibraryDir);
+            javaArgList.add("-Dorg.sqlite.lib.name=libsqlitejdbc.so");
             javaArgList.add("-Djava.awt.headless=false");
             javaArgList.add("-cp");
             javaArgList.add(
