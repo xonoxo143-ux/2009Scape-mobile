@@ -18,7 +18,6 @@ import com.kdt.mcgui.ProgressLayout;
 
 import net.kdt.pojavlaunch.progresskeeper.ProgressKeeper;
 import net.kdt.pojavlaunch.services.ProgressServiceKeeper;
-import net.kdt.pojavlaunch.tasks.AsyncAssetManager;
 
 import java.io.File;
 import java.io.IOException;
@@ -29,11 +28,11 @@ public class ScapeLauncher extends BaseActivity {
 
     private TextView settings;
     private TextView updateStatus;
-    private TextView serverStatus;
+    private TextView gameStatus;
     private Button playSinglePlayer;
     private Button worldSettings;
     private Button playerSettings;
-    private Button serverFiles;
+    private Button worldFiles;
     private Button updateFromGitHub;
     private ProgressServiceKeeper mProgressServiceKeeper;
     private ProgressLayout mProgressLayout;
@@ -45,169 +44,90 @@ public class ScapeLauncher extends BaseActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_dummy_launcher);
+
         settings = findViewById(R.id.settings);
         updateStatus = findViewById(R.id.updateStatus);
-        serverStatus = findViewById(R.id.serverStatus);
+        gameStatus = findViewById(R.id.serverStatus);
         playSinglePlayer = findViewById(R.id.playSinglePlayer);
         worldSettings = findViewById(R.id.worldSettings);
         playerSettings = findViewById(R.id.playerSettings);
-        serverFiles = findViewById(R.id.serverFiles);
+        worldFiles = findViewById(R.id.serverFiles);
         updateFromGitHub = findViewById(R.id.updateFromGitHub);
         mProgressLayout = findViewById(R.id.progress_layout);
 
         ProgressKeeper.addTaskCountListener((mProgressServiceKeeper = new ProgressServiceKeeper(this)));
         ProgressKeeper.addTaskCountListener(mProgressLayout);
-
         mProgressLayout.observe(ProgressLayout.UNPACK_RUNTIME);
         mProgressLayout.observe(ProgressLayout.INSTALL_MODPACK);
 
-        ServerFilesProvider.ensureServerRoot(this);
+        SinglePlayerManager.getWorldRoot(this);
 
         playSinglePlayer.setOnClickListener(view -> launchSinglePlayer());
         worldSettings.setOnClickListener(view -> showWorldSettings());
         playerSettings.setOnClickListener(view -> showPlayerSettings());
-        serverFiles.setOnClickListener(view -> openServerFiles());
+        worldFiles.setOnClickListener(view -> openWorldFiles());
         updateFromGitHub.setOnClickListener(view -> runGitHubUpdate());
         settings.setOnClickListener(view -> showBottomDialog());
 
-        refreshServerStatus();
-        prepareSinglePlayerFiles();
+        prepareSinglePlayer();
     }
 
-    private void prepareSinglePlayerFiles() {
+    private void prepareSinglePlayer() {
         preparationRunning = true;
         setPrimaryControlsEnabled(false);
         updateFromGitHub.setEnabled(false);
-        serverStatus.setText("Setup: preparing client runtime...");
-        updateStatus.setText("Preparing Java 8 client runtime...");
+        gameStatus.setText("Game: preparing");
+        updateStatus.setText("Preparing combined Java 17 single-player runtime...");
+
         new Thread(() -> {
             try {
-                long deadline = android.os.SystemClock.elapsedRealtime() + 300_000L;
-                while (!AsyncAssetManager.isRuntimePreparationComplete()) {
-                    if (android.os.SystemClock.elapsedRealtime() >= deadline) {
-                        throw new IOException("Java 8 client runtime setup timed out after 5 minutes.");
-                    }
-                    Thread.sleep(250L);
-                }
-
-                String runtimeError = AsyncAssetManager.getRuntimePreparationError();
-                if (runtimeError != null) {
-                    throw new IOException("Java 8 client runtime setup failed: " + runtimeError);
-                }
-
-                runOnUiThread(() -> {
-                    serverStatus.setText("Setup: preparing server files...");
-                    updateStatus.setText("Preparing embedded 2009Scape files...");
-                });
-                LocalServerManager.ensureInstalled(getApplicationContext());
-
+                SinglePlayerManager.prepare(getApplicationContext());
                 runOnUiThread(() -> {
                     preparationRunning = false;
+                    gameStatus.setText("Game: ready");
+                    updateStatus.setText("Single-player ready.");
                     setPrimaryControlsEnabled(true);
                     updateFromGitHub.setEnabled(true);
-                    updateStatus.setText("Single-player files ready.");
-                    refreshServerStatus();
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     preparationRunning = false;
+                    gameStatus.setText("Game: setup failed");
+                    updateStatus.setText("Setup failed: " + safeMessage(e));
                     setPrimaryControlsEnabled(false);
                     updateFromGitHub.setEnabled(false);
-                    serverStatus.setText("Setup: failed");
-                    updateStatus.setText("Setup failed: " + safeMessage(e));
-                    Toast.makeText(this, "Single-player setup failed: " + safeMessage(e), Toast.LENGTH_LONG).show();
+                    Toast.makeText(this,
+                            "Single-player setup failed: " + safeMessage(e),
+                            Toast.LENGTH_LONG).show();
                 });
             }
         }, "singleplayer-prepare").start();
     }
 
     private void launchSinglePlayer() {
-        if (!runtimeReady() || updateRunning || preparationRunning) return;
+        if (!runtimeReady() || updateRunning || preparationRunning || gameSessionStarted) return;
 
         gameSessionStarted = true;
         setPrimaryControlsEnabled(false);
         updateFromGitHub.setEnabled(false);
-        serverStatus.setText("Server: starting...");
-        updateStatus.setText("Starting your local world...");
+        gameStatus.setText("Game: launching");
+        updateStatus.setText("Starting combined world + client...");
 
-        LocalServerManager.startAndWait(this, new LocalServerManager.Listener() {
-            @Override
-            public void onStatus(String status) {
-                runOnUiThread(() -> {
-                    updateStatus.setText(status);
-                    refreshServerStatus();
-                });
-            }
-
-            @Override
-            public void onReady() {
-                // startAndWait invokes this callback on its worker thread, so do the
-                // localhost probe here before switching back to the Android UI thread.
-                boolean controlReady = LocalServerManager.isControlApiReady();
-                runOnUiThread(() -> {
-                    serverStatus.setText("Server: ready • Control API: "
-                            + (controlReady ? "ready" : "starting"));
-                    updateStatus.setText("Loading local profile " + LocalServerManager.getProfileName(ScapeLauncher.this) + "...");
-                    Intent intent = new Intent(ScapeLauncher.this, JavaGUILauncherActivity.class);
-                    startActivity(intent);
-                });
-            }
-
-            @Override
-            public void onError(Exception error) {
-                runOnUiThread(() -> {
-                    gameSessionStarted = false;
-                    setPrimaryControlsEnabled(true);
-                    updateFromGitHub.setEnabled(true);
-                    serverStatus.setText("Server: failed to start");
-                    updateStatus.setText("Local server failed. Existing files were kept.");
-                    Toast.makeText(ScapeLauncher.this,
-                            "Local server failed: " + safeMessage(error), Toast.LENGTH_LONG).show();
-                });
-            }
-        });
+        Intent intent = new Intent(this, JavaGUILauncherActivity.class);
+        startActivity(intent);
     }
 
-    private void refreshServerStatus() {
-        // Socket.connect() is network I/O even for 127.0.0.1. Android throws
-        // NetworkOnMainThreadException if we probe the local ports from Activity callbacks.
-        new Thread(() -> {
-            boolean gameReady = LocalServerManager.isGameServerReady();
-            boolean controlReady = gameReady && LocalServerManager.isControlApiReady();
-            runOnUiThread(() -> {
-                if (isFinishing()) return;
-                if (gameReady) {
-                    serverStatus.setText("Server: ready • Control API: "
-                            + (controlReady ? "ready" : "starting"));
-                } else {
-                    serverStatus.setText("Server: stopped");
-                }
-            });
-        }, "singleplayer-status-check").start();
-    }
-
-    private void runWhenServerStopped(String runningMessage, Runnable action) {
+    private void runBeforeGameStart(String runningMessage, Runnable action) {
         if (gameSessionStarted) {
             Toast.makeText(this, runningMessage, Toast.LENGTH_LONG).show();
             return;
         }
-
-        new Thread(() -> {
-            boolean serverRunning = LocalServerManager.isGameServerReady();
-            runOnUiThread(() -> {
-                if (isFinishing()) return;
-                if (serverRunning) {
-                    Toast.makeText(this, runningMessage, Toast.LENGTH_LONG).show();
-                } else {
-                    action.run();
-                }
-            });
-        }, "singleplayer-stopped-check").start();
+        action.run();
     }
 
     private void showPlayerSettings() {
-        runWhenServerStopped(
-                "Close the running local world before changing profiles.",
+        runBeforeGameStart(
+                "Close the running game before changing profiles.",
                 this::showPlayerSettingsDialog);
     }
 
@@ -215,7 +135,7 @@ public class ScapeLauncher extends BaseActivity {
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(12)});
-        input.setText(LocalServerManager.getProfileName(this));
+        input.setText(SinglePlayerManager.getProfileName(this));
         input.setSelection(input.getText().length());
 
         new AlertDialog.Builder(this)
@@ -223,21 +143,21 @@ public class ScapeLauncher extends BaseActivity {
                 .setMessage("This is a local save name, not an online account.")
                 .setView(input)
                 .setPositiveButton("Save", (dialog, which) -> {
-                    LocalServerManager.setProfileName(this, input.getText().toString());
-                    updateStatus.setText("Local profile: " + LocalServerManager.getProfileName(this));
+                    SinglePlayerManager.setProfileName(this, input.getText().toString());
+                    updateStatus.setText("Local profile: " + SinglePlayerManager.getProfileName(this));
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
     }
 
     private void showWorldSettings() {
-        runWhenServerStopped(
-                "World settings apply before the local server starts.",
+        runBeforeGameStart(
+                "World settings apply before the game starts.",
                 this::showWorldSettingsDialog);
     }
 
     private void showWorldSettingsDialog() {
-        File conf = new File(ServerFilesProvider.ensureServerRoot(this), "worldprops/local.conf");
+        File conf = new File(SinglePlayerManager.getWorldRoot(this), "worldprops/local.conf");
         try {
             String text = Tools.read(conf.getAbsolutePath());
             String[] labels = new String[]{
@@ -267,13 +187,17 @@ public class ScapeLauncher extends BaseActivity {
                             Tools.write(conf.getAbsolutePath(), edited);
                             updateStatus.setText("World settings saved.");
                         } catch (IOException e) {
-                            Toast.makeText(this, "Could not save world settings: " + safeMessage(e), Toast.LENGTH_LONG).show();
+                            Toast.makeText(this,
+                                    "Could not save world settings: " + safeMessage(e),
+                                    Toast.LENGTH_LONG).show();
                         }
                     })
                     .setNegativeButton("Cancel", null)
                     .show();
         } catch (IOException e) {
-            Toast.makeText(this, "Could not read local world settings: " + safeMessage(e), Toast.LENGTH_LONG).show();
+            Toast.makeText(this,
+                    "Could not read world settings: " + safeMessage(e),
+                    Toast.LENGTH_LONG).show();
         }
     }
 
@@ -290,11 +214,11 @@ public class ScapeLauncher extends BaseActivity {
         return matcher.replaceFirst(Matcher.quoteReplacement(matcher.group(1) + value));
     }
 
-    private void openServerFiles() {
-        ServerFilesProvider.ensureServerRoot(this);
+    private void openWorldFiles() {
+        SinglePlayerManager.getWorldRoot(this);
         String authority = ServerFilesProvider.getAuthority(this);
-        Uri rootDocument = DocumentsContract.buildDocumentUri(authority,
-                ServerFilesProvider.ROOT_DOCUMENT_ID);
+        Uri rootDocument = DocumentsContract.buildDocumentUri(
+                authority, ServerFilesProvider.ROOT_DOCUMENT_ID);
 
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -322,19 +246,19 @@ public class ScapeLauncher extends BaseActivity {
                 startActivity(fallback);
             } catch (ActivityNotFoundException noTreePicker) {
                 Toast.makeText(this,
-                        "Android could not open a document browser. Server files are still exposed as 2009Scape Server Files.",
+                        "Android could not open the local world files.",
                         Toast.LENGTH_LONG).show();
             }
         }
     }
 
     private void runGitHubUpdate() {
-        runWhenServerStopped(
-                "Updates are only available before starting the local world.",
-                this::runGitHubUpdateWhenStopped);
+        runBeforeGameStart(
+                "Updates are only available before starting the game.",
+                this::runGitHubUpdateBeforeGame);
     }
 
-    private void runGitHubUpdateWhenStopped() {
+    private void runGitHubUpdateBeforeGame() {
         if (!runtimeReady() || updateRunning || preparationRunning) return;
 
         updateRunning = true;
@@ -354,12 +278,13 @@ public class ScapeLauncher extends BaseActivity {
                     updateRunning = false;
                     setPrimaryControlsEnabled(true);
                     updateFromGitHub.setEnabled(!gameSessionStarted);
+                    updateStatus.setText(updated
+                            ? "Client updated from GitHub. Ready to play."
+                            : "Client is already up to date.");
                     if (updated) {
-                        updateStatus.setText("Client updated from GitHub. Ready to play.");
                         Toast.makeText(ScapeLauncher.this,
-                                "RT4 client update installed.", Toast.LENGTH_LONG).show();
-                    } else {
-                        updateStatus.setText("Client is already up to date.");
+                                "RT4 client update installed.",
+                                Toast.LENGTH_LONG).show();
                     }
                 });
             }
@@ -372,7 +297,8 @@ public class ScapeLauncher extends BaseActivity {
                     updateFromGitHub.setEnabled(!gameSessionStarted);
                     updateStatus.setText("Update failed. Existing files were kept.");
                     Toast.makeText(ScapeLauncher.this,
-                            "GitHub update failed: " + safeMessage(error), Toast.LENGTH_LONG).show();
+                            "GitHub update failed: " + safeMessage(error),
+                            Toast.LENGTH_LONG).show();
                 });
             }
         });
@@ -382,10 +308,7 @@ public class ScapeLauncher extends BaseActivity {
         playSinglePlayer.setEnabled(enabled);
         worldSettings.setEnabled(enabled);
         playerSettings.setEnabled(enabled);
-    }
-
-    private boolean runtimeReadyWithoutToast() {
-        return !mProgressLayout.hasProcesses();
+        worldFiles.setEnabled(enabled);
     }
 
     private boolean runtimeReady() {
@@ -406,12 +329,6 @@ public class ScapeLauncher extends BaseActivity {
     private void showBottomDialog() {
         MyDialogFragment dialog = new MyDialogFragment();
         dialog.show(getSupportFragmentManager(), "tag");
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        refreshServerStatus();
     }
 
     @Override
