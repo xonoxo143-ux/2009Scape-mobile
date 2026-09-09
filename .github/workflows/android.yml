@@ -281,6 +281,11 @@ jobs:
           grep -q 'singleplayer.InProcessBootstrap' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           ! grep -q 'AsyncAssetManager.unpackRuntime' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/PojavApplication.java
 
+      - name: Remove unused legacy Java 8 runtime assets
+        run: |
+          set -euxo pipefail
+          rm -rf app_pojavlauncher/src/main/assets/components/jre
+
       - name: Build production self-contained APK
         run: |
           set -euxo pipefail
@@ -309,6 +314,7 @@ jobs:
           grep -q 'assets/singleplayer/runtime-jre17-version.txt' out/apk-contents.txt
           grep -q 'assets/singleplayer-bootstrap.jar' out/apk-contents.txt
           grep -q 'assets/plugins/LocalSinglePlayerLogin.zip' out/apk-contents.txt
+          ! grep -q 'assets/components/jre/' out/apk-contents.txt
 
           unzip -p out/2009scape-mobile.apk assets/singleplayer-bootstrap.jar > out/singleplayer-bootstrap.jar
           unzip -t out/singleplayer-bootstrap.jar
