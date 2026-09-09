@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODE="${1:-bootstrap}"
+MODE="${1:-full}"
 APP_ID="net.kdt.pojavlaunch.debug"
 APK_PATH="${APK_PATH:-out/2009scape-mobile.apk}"
 ARTIFACT_DIR="out/android-e2e-${MODE}"
@@ -19,9 +19,11 @@ capture_screen() {
   adb exec-out screencap -p > "${ARTIFACT_DIR}/screen.png" 2>/dev/null || true
 }
 
+copy_client_log() {
+  adb shell cat "${CLIENT_LOG}" > "${ARTIFACT_DIR}/latestlog.txt" 2>/dev/null || true
+}
+
 dismiss_fullscreen_cling() {
-  # Fresh emulators show Android's own immersive-mode education card over the
-  # launcher. UIAutomator then sees only that system window, not our PLAY button.
   adb shell settings put secure immersive_mode_confirmations confirmed >/dev/null 2>&1 || true
 
   for _ in $(seq 1 10); do
@@ -61,25 +63,16 @@ PY
   done
 }
 
-copy_client_log() {
-  adb shell cat "${CLIENT_LOG}" > "${ARTIFACT_DIR}/latestlog.txt" 2>/dev/null || true
-}
-
-copy_server_error() {
-  adb shell run-as "${APP_ID}" cat files/singleplayer-server/.server-startup-error.txt     > "${ARTIFACT_DIR}/server-startup-error.txt" 2>/dev/null || true
-}
-
 collect_diagnostics() {
   set +e
   dump_ui
   capture_screen
   copy_client_log
-  copy_server_error
   adb logcat -d > "${ARTIFACT_DIR}/logcat.txt" 2>&1
   adb shell dumpsys activity activities > "${ARTIFACT_DIR}/activities.txt" 2>&1
   adb shell dumpsys meminfo "${APP_ID}" > "${ARTIFACT_DIR}/meminfo.txt" 2>&1
   adb shell getprop > "${ARTIFACT_DIR}/getprop.txt" 2>&1
-  adb shell run-as "${APP_ID}" sh -c 'find files -maxdepth 4 -type f -print 2>/dev/null | sort'     > "${ARTIFACT_DIR}/private-files.txt" 2>&1
+  adb shell run-as "${APP_ID}" sh -c 'find files -maxdepth 5 -type f -print 2>/dev/null | sort'     > "${ARTIFACT_DIR}/private-files.txt" 2>&1
   set -e
 }
 trap collect_diagnostics EXIT
@@ -90,11 +83,12 @@ wait_for_play_enabled() {
   while (( SECONDS < deadline )); do
     dump_ui
     if [[ -f "${ARTIFACT_DIR}/window.xml" ]]; then
-      if grep -q 'Setup: failed' "${ARTIFACT_DIR}/window.xml" ||          grep -q 'Setup failed:' "${ARTIFACT_DIR}/window.xml"; then
+      if grep -q 'Game: setup failed' "${ARTIFACT_DIR}/window.xml" ||          grep -q 'Setup failed:' "${ARTIFACT_DIR}/window.xml"; then
         echo "Launcher reported setup failure"
         cat "${ARTIFACT_DIR}/window.xml"
         return 1
       fi
+
       if python3 - "${ARTIFACT_DIR}/window.xml" <<'PY'
 import sys, xml.etree.ElementTree as ET
 root = ET.parse(sys.argv[1]).getroot()
@@ -114,6 +108,45 @@ PY
   done
   echo "PLAY never became enabled"
   return 1
+}
+
+assert_launcher_controls_visible() {
+  dump_ui
+  python3 - "${ARTIFACT_DIR}/window.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+
+screen_w, screen_h = 1768, 884
+wanted = {
+    'playSinglePlayer',
+    'worldSettings',
+    'playerSettings',
+    'serverFiles',
+    'updateFromGitHub',
+}
+seen = {}
+
+root = ET.parse(sys.argv[1]).getroot()
+for node in root.iter('node'):
+    rid = node.attrib.get('resource-id', '')
+    short = rid.rsplit('/', 1)[-1].rsplit(':id/', 1)[-1]
+    if short not in wanted:
+        continue
+    m = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds', ''))
+    if not m:
+        raise SystemExit('Could not parse bounds for ' + short)
+    x1, y1, x2, y2 = map(int, m.groups())
+    if x2 <= x1 or y2 <= y1:
+        raise SystemExit(short + ' has zero-size bounds')
+    if x1 < 0 or y1 < 0 or x2 > screen_w or y2 > screen_h:
+        raise SystemExit(f'{short} is clipped/off-screen: {(x1,y1,x2,y2)}')
+    seen[short] = (x1, y1, x2, y2)
+
+missing = wanted - set(seen)
+if missing:
+    raise SystemExit('Launcher controls missing from visible UI: ' + ', '.join(sorted(missing)))
+
+print('Launcher controls are all visible:', seen)
+PY
 }
 
 tap_play() {
@@ -143,58 +176,68 @@ PY
 
 wait_for_activity() {
   local activity="${1}"
-  local timeout="${2:-900}"
+  local timeout="${2:-300}"
   local deadline=$((SECONDS + timeout))
   while (( SECONDS < deadline )); do
     if adb shell dumpsys activity activities | grep -q "${activity}"; then
       echo "Reached activity: ${activity}"
       return 0
     fi
-    dump_ui
-    if [[ -f "${ARTIFACT_DIR}/window.xml" ]] && grep -q 'Server: failed to start' "${ARTIFACT_DIR}/window.xml"; then
-      echo "Server failed before client activity launched"
-      return 1
-    fi
-    sleep 3
+    sleep 2
   done
   echo "Timed out waiting for activity: ${activity}"
   return 1
 }
 
-wait_for_client_login() {
-  local timeout="${1:-900}"
+wait_for_combined_game() {
+  local timeout="${1:-1200}"
   local deadline=$((SECONDS + timeout))
-  local saw_login_screen=0
+  local saw_vm=0
+  local saw_world=0
+  local saw_login=0
+
   while (( SECONDS < deadline )); do
     copy_client_log
     adb logcat -d > "${ARTIFACT_DIR}/logcat.txt" 2>&1 || true
 
-    if grep -q 'SINGLEPLAYER_E2E: LOGIN_SCREEN' "${ARTIFACT_DIR}/latestlog.txt" 2>/dev/null ||        grep -q 'SINGLEPLAYER_E2E: LOGIN_SCREEN' "${ARTIFACT_DIR}/logcat.txt" 2>/dev/null; then
-      if (( saw_login_screen == 0 )); then
-        echo "RT4 login/character entry screen reached"
-      fi
-      saw_login_screen=1
+    local combined
+    combined="${ARTIFACT_DIR}/combined-log.txt"
+    cat "${ARTIFACT_DIR}/latestlog.txt" "${ARTIFACT_DIR}/logcat.txt" > "${combined}" 2>/dev/null || true
+
+    if grep -q 'SINGLEPLAYER_E2E: COMBINED_JVM_START' "${combined}" 2>/dev/null; then
+      if (( saw_vm == 0 )); then echo "Combined Java 17 VM started"; fi
+      saw_vm=1
     fi
 
-    if grep -q 'SINGLEPLAYER_E2E: LOGGED_IN' "${ARTIFACT_DIR}/latestlog.txt" 2>/dev/null ||        grep -q 'SINGLEPLAYER_E2E: LOGGED_IN' "${ARTIFACT_DIR}/logcat.txt" 2>/dev/null; then
-      echo "Local single-player client logged in successfully"
+    if grep -q 'SINGLEPLAYER_E2E: WORLD_READY' "${combined}" 2>/dev/null; then
+      if (( saw_world == 0 )); then echo "Embedded world engine is ready in the same VM"; fi
+      saw_world=1
+    fi
+
+    if grep -q 'SINGLEPLAYER_E2E: LOGIN_SCREEN' "${combined}" 2>/dev/null; then
+      if (( saw_login == 0 )); then echo "RT4 login/character entry screen reached"; fi
+      saw_login=1
+    fi
+
+    if grep -q 'SINGLEPLAYER_E2E: LOGGED_IN' "${combined}" 2>/dev/null; then
+      echo "Local player logged in successfully"
+      if (( saw_vm == 0 || saw_world == 0 )); then
+        echo "Login succeeded without expected combined-runtime milestones"
+        return 1
+      fi
       return 0
     fi
 
-    copy_server_error
-    if [[ -s "${ARTIFACT_DIR}/server-startup-error.txt" ]]; then
-      echo "Embedded server recorded a startup error:"
-      cat "${ARTIFACT_DIR}/server-startup-error.txt"
+    if grep -E -q 'Combined single-player launch failed|FATAL EXCEPTION|UnsatisfiedLinkError|OutOfMemoryError' "${combined}" 2>/dev/null; then
+      echo "Combined runtime reported a fatal error"
+      tail -n 300 "${combined}" || true
       return 1
     fi
+
     sleep 5
   done
 
-  if (( saw_login_screen == 1 )); then
-    echo "Client reached the login screen but never completed local login"
-  else
-    echo "Client never reached the login/character entry screen"
-  fi
+  echo "Combined game timed out. Milestones: vm=${saw_vm}, world=${saw_world}, login=${saw_login}"
   return 1
 }
 
@@ -203,14 +246,13 @@ adb wait-for-device
 adb shell getprop ro.product.cpu.abi
 adb shell getprop ro.product.cpu.abilist
 
-# Reproduce the short landscape layout used on the phone rather than testing only
-# a spacious portrait emulator.
+# Match the Fold-like short landscape view that previously clipped the bottom controls.
 adb shell settings put system accelerometer_rotation 0 || true
 adb shell settings put system user_rotation 1 || true
 adb shell wm size 1768x884 || true
 adb shell wm density 320 || true
 
-echo "=== Install fresh APK ==="
+echo "=== Install clean APK ==="
 adb install -r -t "${APK_PATH}"
 adb shell pm clear "${APP_ID}" || true
 adb logcat -c
@@ -218,21 +260,22 @@ adb logcat -c
 adb shell am start -W -n "${APP_ID}/net.kdt.pojavlaunch.TestStorageActivity"
 dismiss_fullscreen_cling
 
-echo "=== Wait for first-run preparation ==="
+echo "=== Wait for unified runtime preparation ==="
 wait_for_play_enabled 900
+assert_launcher_controls_visible
 capture_screen
 
 if [[ "${MODE}" == "bootstrap" ]]; then
-  echo "Fresh-install bootstrap passed: PLAY became enabled."
+  echo "Fresh-install bootstrap passed."
   exit 0
 fi
 
-echo "=== Start local world ==="
+echo "=== Launch combined world + client ==="
 tap_play
-wait_for_activity 'net.kdt.pojavlaunch.JavaGUILauncherActivity' 900
+wait_for_activity 'net.kdt.pojavlaunch.JavaGUILauncherActivity' 300
 
-echo "=== Wait for RT4 local login checkpoint ==="
-wait_for_client_login 1200
+echo "=== Wait for combined Java 17 game milestones ==="
+wait_for_combined_game 1200
 capture_screen
 
-echo "Full ARM64 single-player E2E passed."
+echo "Combined single-player Android E2E passed."
