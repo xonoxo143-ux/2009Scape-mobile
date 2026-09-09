@@ -376,3 +376,99 @@ jobs:
           "$APKSIGNER" verify --print-certs out/2009scape-mobile.apk | tee out/apk-signing.txt
           grep -qi 'd0d0886a0d7e3486e6627f9b8011027fe3c6b0fb09424530b6d7be14f8c2cc33' out/apk-signing.txt
 
+  emulator-bootstrap:
+    name: Fresh-install launcher bootstrap
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download built APK
+        uses: actions/download-artifact@v5
+        with:
+          name: 2009scape-mobile
+          path: out
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Reproduce first-launch preparation on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          cores: 2
+          ram-size: 4096M
+          heap-size: 512M
+          emulator-boot-timeout: 900
+          force-avd-creation: true
+          disable-animations: true
+          emulator-options: >-
+            -no-snapshot-load -no-snapshot-save -no-window
+            -gpu swiftshader_indirect -noaudio -no-boot-anim
+            -camera-back none -camera-front none
+          script: bash .github/scripts/android-singleplayer-e2e.sh bootstrap
+
+      - name: Upload bootstrap diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-bootstrap-diagnostics
+          path: out/android-e2e-bootstrap
+          if-no-files-found: ignore
+
+  emulator-arm64-e2e:
+    name: ARM64 single-player end-to-end
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download built APK
+        uses: actions/download-artifact@v5
+        with:
+          name: 2009scape-mobile
+          path: out
+
+      # GitHub's standard ARM64 Linux runners currently do not expose KVM.
+      # Run an actual ARM64 Android guest under software emulation instead so
+      # Android reports arm64-v8a and the packaged ARM64 Java 17 server runtime
+      # is exercised without changing production architecture checks.
+      - name: Install, launch, start server, and reach local login
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: arm64-v8a
+          profile: pixel_5
+          cores: 4
+          ram-size: 6144M
+          heap-size: 512M
+          disk-size: 8G
+          emulator-boot-timeout: 1800
+          force-avd-creation: true
+          disable-animations: true
+          disable-linux-hw-accel: true
+          emulator-options: >-
+            -no-snapshot-load -no-snapshot-save -no-window
+            -gpu swiftshader_indirect -noaudio -no-boot-anim
+            -camera-back none -camera-front none
+          script: bash .github/scripts/android-singleplayer-e2e.sh full
+
+      - name: Upload ARM64 E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64-e2e-diagnostics
+          path: out/android-e2e-full
+          if-no-files-found: ignore
+
