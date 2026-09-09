@@ -214,8 +214,9 @@ jobs:
           text = open('out/server-listeners.txt').read().splitlines()
           listeners = [line for line in text if re.search(r':43595\s', line)]
           print('Game listeners:', listeners)
-          if not any('127.0.0.1:43595' in line for line in listeners):
-              raise SystemExit('Game socket is not bound to 127.0.0.1:43595')
+          loopback_forms = ('127.0.0.1:43595', '[::ffff:127.0.0.1]:43595')
+          if not any(any(token in line for token in loopback_forms) for line in listeners):
+              raise SystemExit('Game socket is not bound to loopback on port 43595')
           forbidden = ('0.0.0.0:43595', '*:43595', '[::]:43595')
           if any(any(token in line for token in forbidden) for line in listeners):
               raise SystemExit('Game socket is exposed beyond loopback')
