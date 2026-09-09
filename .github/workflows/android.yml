@@ -21,8 +21,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      # The launcher/client support code is intentionally left on its existing Java 8 toolchain.
-      - name: Set up JDK 8 for launcher
+      - name: Set up JDK 8 for legacy launcher support build
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
@@ -32,20 +31,19 @@ jobs:
         with:
           gradle-version: 7.6.1
 
-      - name: Build client JRE support JARs
+      - name: Build launcher support JARs
         run: |
           ./scripts/languagelist_updater.sh
           mkdir -p out
           gradle :jre_lwjgl3glfw:build --no-daemon
 
-      # Everything below that builds/runs the 2009Scape server uses a normal modern JVM.
-      - name: Set up JDK 17 for server
+      - name: Set up JDK 17 for combined single-player build
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Fetch pinned 2009Scape server
+      - name: Fetch pinned 2009Scape world engine
         run: |
           set -euxo pipefail
           UPSTREAM_COMMIT="9f634148bab11fad821943864cb71d7c6af98da4"
@@ -62,30 +60,16 @@ jobs:
           test "$(stat -c%s "$CACHE")" -gt 50000000
           ! grep -a -q 'git-lfs.github.com/spec/v1' "$CACHE"
 
-      - name: Prepare Android single-player server
+      - name: Prepare embedded single-player world engine
         shell: python
         run: |
           from pathlib import Path
-          import hashlib, re, shutil
+          import hashlib, re
 
           root = Path('upstream-server/Server')
 
-          # Keep upstream's Java/Kotlin target intact. Only add single-player behavior.
-          control_src = Path('singleplayer/server-patches/LocalControlServer.kt')
-          control_dst = root / 'src/main/core/control/LocalControlServer.kt'
-          control_dst.parent.mkdir(parents=True, exist_ok=True)
-          shutil.copy2(control_src, control_dst)
-
-          server = root / 'src/main/core/Server.kt'
-          source = server.read_text()
-          needle = 'reactor!!.start()'
-          if needle not in source:
-              raise SystemExit('Could not locate server networking startup hook')
-          source = source.replace(needle, needle + '\n            core.control.LocalControlServer.start()', 1)
-          server.write_text(source)
-
-          # The local profile uses no authentication and admin rights, so never expose
-          # the game socket to Wi-Fi/LAN. Upstream binds to all interfaces by default.
+          # Keep the stock RT4 protocol as an internal compatibility boundary, but
+          # never expose the socket beyond this device.
           nio = root / 'src/main/core/net/NioReactor.java'
           nio_source = nio.read_text()
           bind_needle = 'channel.bind(new InetSocketAddress(port));'
@@ -118,105 +102,81 @@ jobs:
           conf = re.sub(r'(?m)^persist_accounts\s*=.*$', 'persist_accounts = false', conf)
           conf = re.sub(r'(?m)^noauth_default_admin\s*=.*$', 'noauth_default_admin = true', conf)
           conf = re.sub(r'(?m)^show_rules\s*=.*$', 'show_rules = false', conf)
+
           generated_conf = Path('singleplayer-generated.conf')
           generated_conf.write_text(conf)
 
-          # Version the logical server payload, not only upstream HEAD. That makes
-          # Android refresh server.jar when our local patches change.
           def digest(path):
               return hashlib.sha256(path.read_bytes()).hexdigest()
 
           version = [
               'upstream=' + Path('upstream-server-commit.txt').read_text().strip(),
-              'server=' + digest(server),
               'network=' + digest(nio),
-              'control=' + digest(control_dst),
               'config=' + digest(generated_conf),
+              'bootstrap=' + digest(Path('singleplayer/inprocess/InProcessBootstrap.java')),
           ]
-          Path('singleplayer-server-version.txt').write_text('\n'.join(version) + '\n')
+          Path('singleplayer-world-version.txt').write_text('\n'.join(version) + '\n')
 
-      - name: Build current server normally on Java 17
+      - name: Build world engine on Java 17
         working-directory: upstream-server/Server
         run: |
           chmod +x mvnw
           ./mvnw clean package -DskipTests
 
-      - name: Smoke-test patched single-player server
+      - name: Smoke-test world engine protocol
         run: |
           set -euxo pipefail
-          SERVER_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) | head -n 1)
-          test -n "$SERVER_JAR"
-          SERVER_JAR=$(readlink -f "$SERVER_JAR")
+          ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) | head -n 1)
+          test -n "$ENGINE_JAR"
+          ENGINE_JAR=$(readlink -f "$ENGINE_JAR")
           mkdir -p out
           cp singleplayer-generated.conf upstream-server/Server/worldprops/local.conf
 
           pushd upstream-server/Server >/dev/null
-          java -Xms512m -Xmx3072m -jar "$SERVER_JAR" worldprops/local.conf > "$GITHUB_WORKSPACE/out/server-smoke.log" 2>&1 &
-          SERVER_PID=$!
+          java -Xms512m -Xmx3072m -jar "$ENGINE_JAR" worldprops/local.conf > "$GITHUB_WORKSPACE/out/world-engine-smoke.log" 2>&1 &
+          ENGINE_PID=$!
           popd >/dev/null
 
           cleanup() {
             status=$?
             if [ "$status" -ne 0 ]; then
-              echo "===== local server smoke log ====="
-              tail -n 400 "$GITHUB_WORKSPACE/out/server-smoke.log" || true
-              echo "===== end local server smoke log ====="
+              echo "===== world engine smoke log ====="
+              tail -n 400 "$GITHUB_WORKSPACE/out/world-engine-smoke.log" || true
+              echo "===== end world engine smoke log ====="
             fi
-            kill -TERM "$SERVER_PID" 2>/dev/null || true
-            for _ in $(seq 1 20); do
-              if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
-              sleep 0.5
-            done
-            kill -KILL "$SERVER_PID" 2>/dev/null || true
-            wait "$SERVER_PID" 2>/dev/null || true
+            kill -TERM "$ENGINE_PID" 2>/dev/null || true
+            sleep 1
+            kill -KILL "$ENGINE_PID" 2>/dev/null || true
+            wait "$ENGINE_PID" 2>/dev/null || true
             return "$status"
           }
           trap cleanup EXIT
 
           python3 - <<'PY'
-          import json, os, socket, time
-
+          import socket, time
           deadline = time.time() + 300
-          last_error = None
-          next_report = time.time() + 30
+          last = None
           while time.time() < deadline:
               try:
                   with socket.create_connection(('127.0.0.1', 43595), timeout=1):
-                      pass
-                  with socket.create_connection(('127.0.0.1', 43600), timeout=1) as control:
-                      control.sendall(b'{"op":"ping"}\n')
-                      reply = control.makefile('rb').readline().decode('utf-8', 'replace').strip()
-                  data = json.loads(reply)
-                  if data.get('ok') is True and data.get('service') == '2009scape-singleplayer-control':
-                      print('Local server smoke test ready:', reply, flush=True)
+                      print('World engine game socket is ready', flush=True)
                       break
-                  last_error = RuntimeError('unexpected control response: ' + reply)
               except Exception as exc:
-                  last_error = exc
-
-              if time.time() >= next_report:
-                  print('Still waiting for local server:', repr(last_error), flush=True)
-                  try:
-                      with open('out/server-smoke.log', 'rb') as fh:
-                          tail = fh.read()[-8000:].decode('utf-8', 'replace')
-                      print(tail, flush=True)
-                  except Exception:
-                      pass
-                  next_report = time.time() + 30
-              time.sleep(0.5)
+                  last = exc
+                  time.sleep(0.5)
           else:
-              raise SystemExit('Server/control API did not become ready within 300 seconds: %r' % (last_error,))
+              raise SystemExit('World engine did not open game socket: %r' % (last,))
           PY
 
-          ss -ltn | tee out/server-listeners.txt
+          ss -ltn | tee out/world-engine-listeners.txt
           python3 - <<'PY'
           import re
-          text = open('out/server-listeners.txt').read().splitlines()
-          listeners = [line for line in text if re.search(r':43595\s', line)]
+          lines = open('out/world-engine-listeners.txt').read().splitlines()
+          listeners = [line for line in lines if re.search(r':43595\s', line)]
           print('Game listeners:', listeners)
-          loopback_forms = ('127.0.0.1:43595', '[::ffff:127.0.0.1]:43595')
-          if not any(any(token in line for token in loopback_forms) for line in listeners):
-              raise SystemExit('Game socket is not bound to loopback on port 43595')
+          allowed = ('127.0.0.1:43595', '[::ffff:127.0.0.1]:43595')
+          if not any(any(token in line for token in allowed) for line in listeners):
+              raise SystemExit('Game socket is not loopback-only')
           forbidden = ('0.0.0.0:43595', '*:43595', '[::]:43595')
           if any(any(token in line for token in forbidden) for line in listeners):
               raise SystemExit('Game socket is exposed beyond loopback')
@@ -225,7 +185,7 @@ jobs:
           cleanup
           trap - EXIT
 
-      - name: Verify server bytecode is compatible with Java 17
+      - name: Verify engine bytecode fits Java 17
         run: |
           python3 - <<'PY'
           import glob, struct, zipfile
@@ -233,7 +193,7 @@ jobs:
           if not jars:
               jars = glob.glob('upstream-server/Server/target/*-with-dependencies.jar')
           if len(jars) != 1:
-              raise SystemExit(f'Expected one server fat jar, got: {jars}')
+              raise SystemExit(f'Expected one engine fat jar, got: {jars}')
           bad = []
           highest = 0
           with zipfile.ZipFile(jars[0]) as z:
@@ -249,27 +209,37 @@ jobs:
                       bad.append((name, major))
           print('Highest classfile version:', highest)
           if bad:
-              print('Classes newer than Java 17:')
               for name, major in bad[:50]:
                   print(major, name)
-              raise SystemExit(1)
+              raise SystemExit('Engine contains classes newer than Java 17')
           PY
 
-      - name: Package single-player server assets
+      - name: Package embedded world assets
         run: |
           set -euxo pipefail
           ASSET_DIR="app_pojavlauncher/src/main/assets/singleplayer"
           mkdir -p "$ASSET_DIR"
-          SERVER_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) | head -n 1)
-          test -n "$SERVER_JAR"
-          cp "$SERVER_JAR" "$ASSET_DIR/server.jar"
-          cp singleplayer-generated.conf "$ASSET_DIR/server-default.conf"
-          cp singleplayer-server-version.txt "$ASSET_DIR/server-version.txt"
-          rm -f "$ASSET_DIR/server-data.zip"
-          (cd upstream-server/Server && zip -qr "$GITHUB_WORKSPACE/$ASSET_DIR/server-data.zip" data)
+          ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) | head -n 1)
+          test -n "$ENGINE_JAR"
+          cp "$ENGINE_JAR" "$ASSET_DIR/engine.jar"
+          cp singleplayer-generated.conf "$ASSET_DIR/world-default.conf"
+          cp singleplayer-world-version.txt "$ASSET_DIR/world-version.txt"
+          rm -f "$ASSET_DIR/world-data.zip"
+          (cd upstream-server/Server && zip -qr "$GITHUB_WORKSPACE/$ASSET_DIR/world-data.zip" data)
           ls -lh "$ASSET_DIR"
 
-      - name: Package dedicated ARM64 Android Java 17 server runtime
+      - name: Build combined JVM bootstrap
+        run: |
+          set -euxo pipefail
+          rm -rf build/singleplayer-bootstrap
+          mkdir -p build/singleplayer-bootstrap
+          javac --release 17             -d build/singleplayer-bootstrap             singleplayer/inprocess/InProcessBootstrap.java
+          rm -f app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
+          jar --create             --file app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar             -C build/singleplayer-bootstrap singleplayer
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'singleplayer/InProcessBootstrap.class'
+
+      - name: Package production ARM64 Java 17 runtime
         run: |
           set -euxo pipefail
           ASSET_DIR="app_pojavlauncher/src/main/assets/singleplayer"
@@ -278,61 +248,47 @@ jobs:
           JRE_SHA256="c64583ac2e0ec8857e43456fa9adcf482c6a8e454a7133173bf15692d2478b8d"
           JRE_URL="https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/${JRE_TAG}/${JRE_FILE}"
 
-          curl --fail --location --retry 5 --retry-delay 2 \
-            "$JRE_URL" -o "$ASSET_DIR/server-jre17-arm64.tar.xz"
-          echo "$JRE_SHA256  $ASSET_DIR/server-jre17-arm64.tar.xz" | sha256sum -c -
-          printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/server-jre17-version.txt"
+          curl --fail --location --retry 5 --retry-delay 2             "$JRE_URL" -o "$ASSET_DIR/runtime-jre17.tar.xz"
+          echo "$JRE_SHA256  $ASSET_DIR/runtime-jre17.tar.xz" | sha256sum -c -
+          printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/runtime-jre17-version.txt"
 
-          rm -rf build/server-jre17-check
-          mkdir -p build/server-jre17-check
-          tar -xJf "$ASSET_DIR/server-jre17-arm64.tar.xz" -C build/server-jre17-check
-
-          test -f build/server-jre17-check/release
-          grep -E '^JAVA_VERSION="17([.]|"|$)' build/server-jre17-check/release
-          grep -E '^OS_ARCH="(aarch64|arm64)"' build/server-jre17-check/release
-          test -f build/server-jre17-check/lib/server/libjvm.so
-          readelf -h build/server-jre17-check/lib/server/libjvm.so | grep -E 'Machine:.*AArch64'
-
-          echo "Runtime symlinks in archive:"
-          find build/server-jre17-check -type l -print || true
-          du -sh build/server-jre17-check "$ASSET_DIR/server-jre17-arm64.tar.xz"
-
-      - name: Verify Java runtime separation
-        run: |
-          set -euxo pipefail
-          ! grep -q 'forceReread("Internal")' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerService.java
-          grep -q 'LocalServerManager.getServerRuntime()' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerService.java
-          grep -q 'SERVER_RUNTIME_NAME = "SinglePlayerServer17"' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerManager.java
-          grep -q 'server-jre17-arm64.tar.xz' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/LocalServerManager.java
+          rm -rf build/runtime-check
+          mkdir -p build/runtime-check
+          tar -xJf "$ASSET_DIR/runtime-jre17.tar.xz" -C build/runtime-check
+          test -f build/runtime-check/release
+          grep -E '^JAVA_VERSION="17([.]|"|$)' build/runtime-check/release
+          grep -E '^OS_ARCH="(aarch64|arm64)"' build/runtime-check/release
+          test -f build/runtime-check/lib/server/libjvm.so
+          readelf -h build/runtime-check/lib/server/libjvm.so | grep -E 'Machine:.*AArch64'
 
       - name: Build single-player auto-login plugin
         run: |
           set -euxo pipefail
           rm -rf build/singleplayer-plugin
           mkdir -p build/singleplayer-plugin
-          # The plugin entry class is intentionally named "plugin" because that is
-          # what the launcher plugin loader expects. javac therefore requires the
-          # source file presented to it to be named plugin.java.
           cp singleplayer/client-plugin/LocalSinglePlayerLogin.java build/singleplayer-plugin/plugin.java
-          javac --release 8 \
-            -cp app_pojavlauncher/src/main/assets/rt4.jar \
-            -d build/singleplayer-plugin \
-            build/singleplayer-plugin/plugin.java
+          javac --release 8             -cp app_pojavlauncher/src/main/assets/rt4.jar             -d build/singleplayer-plugin             build/singleplayer-plugin/plugin.java
           rm -f build/singleplayer-plugin/plugin.java
           rm -f app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
           (cd build/singleplayer-plugin && zip -qr "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip" LocalSinglePlayerLogin)
           unzip -l app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
 
-      - name: Build self-contained single-player APK
+      - name: Verify single-process architecture in source
         run: |
-          # Bundling the embedded server + ARM64 JRE makes the asset set large.
-          # Give AGP's compressDebugAssets worker enough heap for the self-contained APK.
-          gradle :app_pojavlauncher:assembleDebug --no-daemon \
-            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
-          mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
+          set -euxo pipefail
+          ! grep -q 'LocalServerService' app_pojavlauncher/src/main/AndroidManifest.xml
+          grep -q 'SinglePlayerManager.getRuntime()' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          grep -q 'singleplayer.InProcessBootstrap' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          ! grep -q 'AsyncAssetManager.unpackRuntime' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/PojavApplication.java
+
+      - name: Build production self-contained APK
+        run: |
+          set -euxo pipefail
+          gradle :app_pojavlauncher:assembleDebug --no-daemon             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+          cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
           sha256sum out/2009scape-mobile.apk > out/2009scape-mobile.apk.sha256
 
-      - name: Upload APK
+      - name: Upload production APK
         uses: actions/upload-artifact@v4
         with:
           name: 2009scape-mobile
@@ -341,34 +297,36 @@ jobs:
             out/2009scape-mobile.apk.sha256
           if-no-files-found: error
 
-      - name: Verify APK contains local server and Java 17 payloads
+      - name: Verify combined production APK
         run: |
           set -euxo pipefail
           unzip -l out/2009scape-mobile.apk | tee out/apk-contents.txt
-          grep -q 'assets/singleplayer/server.jar' out/apk-contents.txt
-          grep -q 'assets/singleplayer/server-data.zip' out/apk-contents.txt
-          grep -q 'assets/singleplayer/server-default.conf' out/apk-contents.txt
-          grep -q 'assets/singleplayer/server-version.txt' out/apk-contents.txt
-          grep -q 'assets/singleplayer/server-jre17-arm64.tar.xz' out/apk-contents.txt
-          grep -q 'assets/singleplayer/server-jre17-version.txt' out/apk-contents.txt
+          grep -q 'assets/singleplayer/engine.jar' out/apk-contents.txt
+          grep -q 'assets/singleplayer/world-data.zip' out/apk-contents.txt
+          grep -q 'assets/singleplayer/world-default.conf' out/apk-contents.txt
+          grep -q 'assets/singleplayer/world-version.txt' out/apk-contents.txt
+          grep -q 'assets/singleplayer/runtime-jre17.tar.xz' out/apk-contents.txt
+          grep -q 'assets/singleplayer/runtime-jre17-version.txt' out/apk-contents.txt
+          grep -q 'assets/singleplayer-bootstrap.jar' out/apk-contents.txt
           grep -q 'assets/plugins/LocalSinglePlayerLogin.zip' out/apk-contents.txt
 
-          # Validate the nested payloads rather than only checking their filenames.
+          unzip -p out/2009scape-mobile.apk assets/singleplayer-bootstrap.jar > out/singleplayer-bootstrap.jar
+          unzip -t out/singleplayer-bootstrap.jar
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'singleplayer/InProcessBootstrap.class'
+
           unzip -p out/2009scape-mobile.apk assets/plugins/LocalSinglePlayerLogin.zip > out/LocalSinglePlayerLogin.zip
           unzip -t out/LocalSinglePlayerLogin.zip
           unzip -l out/LocalSinglePlayerLogin.zip | grep -q 'LocalSinglePlayerLogin/plugin.class'
 
-          unzip -p out/2009scape-mobile.apk assets/singleplayer/server-data.zip > out/server-data.zip
-          unzip -t out/server-data.zip
-          # Player saves are intentionally gitignored upstream and are created at runtime.
-          # Verify durable server inputs that the embedded world actually requires instead.
-          unzip -l out/server-data.zip | grep -q 'data/cache/main_file_cache.dat2'
-          unzip -l out/server-data.zip | grep -q 'data/configs/npc_spawns.json'
+          unzip -p out/2009scape-mobile.apk assets/singleplayer/world-data.zip > out/world-data.zip
+          unzip -t out/world-data.zip
+          unzip -l out/world-data.zip | grep -q 'data/cache/main_file_cache.dat2'
+          unzip -l out/world-data.zip | grep -q 'data/configs/npc_spawns.json'
 
-          unzip -p out/2009scape-mobile.apk assets/singleplayer/server-jre17-arm64.tar.xz > out/server-jre17-arm64.tar.xz
-          echo "c64583ac2e0ec8857e43456fa9adcf482c6a8e454a7133173bf15692d2478b8d  out/server-jre17-arm64.tar.xz" | sha256sum -c -
+          unzip -p out/2009scape-mobile.apk assets/singleplayer/runtime-jre17.tar.xz > out/runtime-jre17-arm64.tar.xz
+          echo "c64583ac2e0ec8857e43456fa9adcf482c6a8e454a7133173bf15692d2478b8d  out/runtime-jre17-arm64.tar.xz" | sha256sum -c -
 
-      - name: Verify APK signing identity
+      - name: Verify production APK signing identity
         run: |
           set -euxo pipefail
           APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)
@@ -376,19 +334,49 @@ jobs:
           "$APKSIGNER" verify --print-certs out/2009scape-mobile.apk | tee out/apk-signing.txt
           grep -qi 'd0d0886a0d7e3486e6627f9b8011027fe3c6b0fb09424530b6d7be14f8c2cc33' out/apk-signing.txt
 
-  emulator-bootstrap:
-    name: Fresh-install launcher bootstrap
+      - name: Build x86_64 emulator test APK
+        run: |
+          set -euxo pipefail
+          ASSET_DIR="app_pojavlauncher/src/main/assets/singleplayer"
+          JRE_TAG="jre17-ec28559"
+          JRE_FILE="jre17-x86_64-20210825-release.tar.xz"
+          JRE_URL="https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/${JRE_TAG}/${JRE_FILE}"
+
+          curl --fail --location --retry 5 --retry-delay 2             "$JRE_URL" -o "$ASSET_DIR/runtime-jre17.tar.xz"
+          printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/runtime-jre17-version.txt"
+
+          rm -rf build/runtime-check-x86
+          mkdir -p build/runtime-check-x86
+          tar -xJf "$ASSET_DIR/runtime-jre17.tar.xz" -C build/runtime-check-x86
+          test -f build/runtime-check-x86/release
+          grep -E '^JAVA_VERSION="17([.]|"|$)' build/runtime-check-x86/release
+          grep -E '^OS_ARCH="(x86_64|amd64)"' build/runtime-check-x86/release
+          test -f build/runtime-check-x86/lib/server/libjvm.so
+          readelf -h build/runtime-check-x86/lib/server/libjvm.so | grep -E 'Machine:.*X86-64'
+
+          gradle :app_pojavlauncher:assembleDebug --no-daemon --rerun-tasks             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+          cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile-x86-e2e.apk
+
+      - name: Upload x86_64 emulator APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2009scape-mobile-x86-e2e
+          path: out/2009scape-mobile-x86-e2e.apk
+          if-no-files-found: error
+
+  emulator-e2e:
+    name: Combined single-player Android E2E
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Download built APK
+      - name: Download x86_64 emulator APK
         uses: actions/download-artifact@v5
         with:
-          name: 2009scape-mobile
+          name: 2009scape-mobile-x86-e2e
           path: out
 
       - name: Enable KVM
@@ -397,16 +385,19 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Reproduce first-launch preparation on Android
+      - name: Install APK and reach local game
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          APK_PATH: out/2009scape-mobile-x86-e2e.apk
         with:
           api-level: 35
           target: google_apis
           arch: x86_64
           profile: pixel_5
-          cores: 2
-          ram-size: 4096M
+          cores: 4
+          ram-size: 6144M
           heap-size: 512M
+          disk-size: 8G
           emulator-boot-timeout: 900
           force-avd-creation: true
           disable-animations: true
@@ -414,61 +405,12 @@ jobs:
             -no-snapshot-load -no-snapshot-save -no-window
             -gpu swiftshader_indirect -noaudio -no-boot-anim
             -camera-back none -camera-front none
-          script: bash .github/scripts/android-singleplayer-e2e.sh bootstrap
-
-      - name: Upload bootstrap diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-bootstrap-diagnostics
-          path: out/android-e2e-bootstrap
-          if-no-files-found: ignore
-
-  emulator-arm64-e2e:
-    name: ARM64 single-player end-to-end
-    needs: build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Download built APK
-        uses: actions/download-artifact@v5
-        with:
-          name: 2009scape-mobile
-          path: out
-
-      # GitHub's standard ARM64 Linux runners currently do not expose KVM.
-      # Run an actual ARM64 Android guest under software emulation instead so
-      # Android reports arm64-v8a and the packaged ARM64 Java 17 server runtime
-      # is exercised without changing production architecture checks.
-      - name: Install, launch, start server, and reach local login
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: arm64-v8a
-          profile: pixel_5
-          cores: 4
-          ram-size: 6144M
-          heap-size: 512M
-          disk-size: 8G
-          emulator-boot-timeout: 1800
-          force-avd-creation: true
-          disable-animations: true
-          disable-linux-hw-accel: true
-          emulator-options: >-
-            -no-snapshot-load -no-snapshot-save -no-window
-            -gpu swiftshader_indirect -noaudio -no-boot-anim
-            -camera-back none -camera-front none
           script: bash .github/scripts/android-singleplayer-e2e.sh full
 
-      - name: Upload ARM64 E2E diagnostics
+      - name: Upload Android E2E diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-arm64-e2e-diagnostics
+          name: android-combined-e2e-diagnostics
           path: out/android-e2e-full
           if-no-files-found: ignore
-
