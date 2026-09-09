@@ -18,6 +18,7 @@ import com.kdt.mcgui.ProgressLayout;
 
 import net.kdt.pojavlaunch.progresskeeper.ProgressKeeper;
 import net.kdt.pojavlaunch.services.ProgressServiceKeeper;
+import net.kdt.pojavlaunch.tasks.AsyncAssetManager;
 
 import java.io.File;
 import java.io.IOException;
@@ -76,24 +77,44 @@ public class ScapeLauncher extends BaseActivity {
     private void prepareSinglePlayerFiles() {
         preparationRunning = true;
         setPrimaryControlsEnabled(false);
-        updateStatus.setText("Preparing single-player files...");
+        updateFromGitHub.setEnabled(false);
+        serverStatus.setText("Setup: preparing client runtime...");
+        updateStatus.setText("Preparing Java 8 client runtime...");
         new Thread(() -> {
             try {
-                while (!runtimeReadyWithoutToast()) {
-                    Thread.sleep(200L);
+                long deadline = android.os.SystemClock.elapsedRealtime() + 300_000L;
+                while (!AsyncAssetManager.isRuntimePreparationComplete()) {
+                    if (android.os.SystemClock.elapsedRealtime() >= deadline) {
+                        throw new IOException("Java 8 client runtime setup timed out after 5 minutes.");
+                    }
+                    Thread.sleep(250L);
                 }
+
+                String runtimeError = AsyncAssetManager.getRuntimePreparationError();
+                if (runtimeError != null) {
+                    throw new IOException("Java 8 client runtime setup failed: " + runtimeError);
+                }
+
+                runOnUiThread(() -> {
+                    serverStatus.setText("Setup: preparing server files...");
+                    updateStatus.setText("Preparing embedded 2009Scape files...");
+                });
                 LocalServerManager.ensureInstalled(getApplicationContext());
+
                 runOnUiThread(() -> {
                     preparationRunning = false;
                     setPrimaryControlsEnabled(true);
+                    updateFromGitHub.setEnabled(true);
                     updateStatus.setText("Single-player files ready.");
                     refreshServerStatus();
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     preparationRunning = false;
-                    setPrimaryControlsEnabled(true);
-                    updateStatus.setText("Single-player setup failed.");
+                    setPrimaryControlsEnabled(false);
+                    updateFromGitHub.setEnabled(false);
+                    serverStatus.setText("Setup: failed");
+                    updateStatus.setText("Setup failed: " + safeMessage(e));
                     Toast.makeText(this, "Single-player setup failed: " + safeMessage(e), Toast.LENGTH_LONG).show();
                 });
             }
