@@ -19,6 +19,48 @@ capture_screen() {
   adb exec-out screencap -p > "${ARTIFACT_DIR}/screen.png" 2>/dev/null || true
 }
 
+dismiss_fullscreen_cling() {
+  # Fresh emulators show Android's own immersive-mode education card over the
+  # launcher. UIAutomator then sees only that system window, not our PLAY button.
+  adb shell settings put secure immersive_mode_confirmations confirmed >/dev/null 2>&1 || true
+
+  for _ in $(seq 1 10); do
+    dump_ui
+    if [[ ! -f "${ARTIFACT_DIR}/window.xml" ]]; then
+      sleep 1
+      continue
+    fi
+
+    local coords
+    coords="$(python3 - "${ARTIFACT_DIR}/window.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+try:
+    root = ET.parse(sys.argv[1]).getroot()
+except Exception:
+    raise SystemExit(1)
+for node in root.iter('node'):
+    if node.attrib.get('resource-id') == 'android:id/ok' or node.attrib.get('text') == 'Got it':
+        m = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds', ''))
+        if not m:
+            continue
+        x1, y1, x2, y2 = map(int, m.groups())
+        print((x1 + x2) // 2, (y1 + y2) // 2)
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+)" || true
+
+    if [[ -n "${coords}" ]]; then
+      read -r x y <<< "${coords}"
+      echo "Dismissing Android fullscreen education at ${x},${y}"
+      adb shell input tap "${x}" "${y}"
+      sleep 1
+      continue
+    fi
+    return 0
+  done
+}
+
 copy_client_log() {
   adb shell cat "${CLIENT_LOG}" > "${ARTIFACT_DIR}/latestlog.txt" 2>/dev/null || true
 }
@@ -174,6 +216,7 @@ adb shell pm clear "${APP_ID}" || true
 adb logcat -c
 
 adb shell am start -W -n "${APP_ID}/net.kdt.pojavlaunch.TestStorageActivity"
+dismiss_fullscreen_cling
 
 echo "=== Wait for first-run preparation ==="
 wait_for_play_enabled 900
