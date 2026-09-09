@@ -18,7 +18,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import net.kdt.pojavlaunch.tasks.AsyncAssetManager;
 import net.kdt.pojavlaunch.utils.*;
 
 public class PojavApplication extends Application {
@@ -59,8 +58,7 @@ public class PojavApplication extends Application {
 			super.onCreate();
 			Tools.APP_NAME = getResources().getString(R.string.app_short_name);
 
-			// MultiRTUtils captures the runtime directory when its class is first loaded.
-			// Initialize every context-dependent Tools path before unpackRuntime() can touch it.
+			// Initialize context-dependent paths before any single-player runtime work.
 			Tools.initContextConstants(this);
 			Tools.DIR_ACCOUNT_NEW = Tools.DIR_DATA + "/accounts";
 			Tools.DEVICE_ARCHITECTURE = Architecture.getDeviceArchitecture();
@@ -72,14 +70,7 @@ public class PojavApplication extends Application {
 												.concat("/x86");
 			}
 
-			// The dedicated :server process never runs the RT4 client. Avoid scheduling
-			// extraction of the client "Internal" JRE there, especially on first launch
-			// while the launcher may already be installing the same runtime.
-			String processName = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-					? Application.getProcessName() : null;
-			if (processName == null || !processName.endsWith(":server")) {
-				AsyncAssetManager.unpackRuntime(getAssets());
-			}
+			// ScapeLauncher installs one explicit Java 17 runtime for both world and client.
 		} catch (Throwable throwable) {
 			Intent ferrorIntent = new Intent(this, FatalErrorActivity.class);
 			ferrorIntent.putExtra("throwable", throwable);
