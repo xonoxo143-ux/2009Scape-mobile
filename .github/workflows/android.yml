@@ -360,7 +360,10 @@ jobs:
 
           unzip -p out/2009scape-mobile.apk assets/singleplayer/server-data.zip > out/server-data.zip
           unzip -t out/server-data.zip
-          unzip -l out/server-data.zip | grep -q 'data/players/template/'
+          # Player saves are intentionally gitignored upstream and are created at runtime.
+          # Verify durable server inputs that the embedded world actually requires instead.
+          unzip -l out/server-data.zip | grep -q 'data/cache/main_file_cache.dat2'
+          unzip -l out/server-data.zip | grep -q 'data/configs/npc_spawns.json'
 
           unzip -p out/2009scape-mobile.apk assets/singleplayer/server-jre17-arm64.tar.xz > out/server-jre17-arm64.tar.xz
           echo "c64583ac2e0ec8857e43456fa9adcf482c6a8e454a7133173bf15692d2478b8d  out/server-jre17-arm64.tar.xz" | sha256sum -c -
