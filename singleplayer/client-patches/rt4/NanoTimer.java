@@ -15,7 +15,7 @@ public final class NanoTimer extends Timer {
     public int sleep(int minimumDelayMs, int tickMs) {
         if (MobileLifecycleBridge.isAppPaused()) {
             nextTick = System.nanoTime();
-            ThreadUtils.sleep(100L);
+            ThreadUtils.sleep(250L);
             return 0;
         }
         long minimumDelayNs = (long) minimumDelayMs * 1_000_000L;
@@ -34,7 +34,7 @@ public final class NanoTimer extends Timer {
             // Returning to the app resumes from "now" instead of running a burst
             // of catch-up client ticks.
             nextTick = System.nanoTime();
-            ThreadUtils.sleep(100L);
+            ThreadUtils.sleep(250L);
             return 0;
         }
         return advance(tickMs);
