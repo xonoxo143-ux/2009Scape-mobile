@@ -1,5 +1,7 @@
 package singleplayer;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -9,17 +11,16 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Starts the legacy game subsystems under one local game authority. */
+/** Starts the retained 2009Scape/RT4 engines under one local game authority. */
 public final class InProcessBootstrap {
     private static final String STAGE_FILE = "singleplayer-game-stage.txt";
 
     private InProcessBootstrap() {}
 
-    /** Temporary adapter for legacy code until it reads LocalGameRuntime directly. */
+    /** Temporary public adapter while retained RT4 classes cannot import package-private config. */
     public static int getViewDistance() {
         return LocalGameRuntime.get().config().viewDistance();
     }
@@ -27,184 +28,6 @@ public final class InProcessBootstrap {
     /** Called by the transitional login adapter once RT4 has entered the world. */
     public static void markClientReady() {
         LocalGameRuntime.get().markClientReady();
-    }
-
-    /**
-     * Client-facing direct command API. The world implementation is deliberately
-     * located in 2009Scape and reuses its existing typed Packet command classes.
-     * Reflection here keeps the bootstrap independent of the engine JAR at
-     * compile time; resolved Method objects are cached after first use.
-     */
-    public static final class LocalCommands {
-        private static final ConcurrentHashMap<String, Method> METHODS =
-                new ConcurrentHashMap<>();
-
-        private LocalCommands() {}
-
-        public static boolean ping() {
-            return invoke("ping", new Class<?>[]{String.class}, playerName());
-        }
-
-        public static boolean worldspaceWalk(int x, int y, boolean run) {
-            return invoke(
-                    "worldspaceWalk",
-                    new Class<?>[]{String.class, int.class, int.class, boolean.class},
-                    playerName(), x, y, run);
-        }
-
-        public static boolean minimapWalk(
-                int x,
-                int y,
-                int clickedX,
-                int clickedY,
-                int rotation,
-                boolean run) {
-            return invoke(
-                    "minimapWalk",
-                    new Class<?>[]{
-                        String.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        boolean.class
-                    },
-                    playerName(), x, y, clickedX, clickedY, rotation, run);
-        }
-
-        public static boolean npcAction(int option, int npcIndex) {
-            return invoke(
-                    "npcAction",
-                    new Class<?>[]{String.class, int.class, int.class},
-                    playerName(), option, npcIndex);
-        }
-
-        public static boolean playerAction(int option, int otherIndex) {
-            return invoke(
-                    "playerAction",
-                    new Class<?>[]{String.class, int.class, int.class},
-                    playerName(), option, otherIndex);
-        }
-
-        public static boolean sceneryAction(
-                int option, int sceneryId, int x, int y) {
-            return invoke(
-                    "sceneryAction",
-                    new Class<?>[]{
-                        String.class, int.class, int.class, int.class, int.class
-                    },
-                    playerName(), option, sceneryId, x, y);
-        }
-
-        public static boolean groundItemAction(
-                int option, int itemId, int x, int y) {
-            return invoke(
-                    "groundItemAction",
-                    new Class<?>[]{
-                        String.class, int.class, int.class, int.class, int.class
-                    },
-                    playerName(), option, itemId, x, y);
-        }
-
-        public static boolean itemAction(
-                int option,
-                int itemId,
-                int slot,
-                int iface,
-                int child) {
-            return invoke(
-                    "itemAction",
-                    new Class<?>[]{
-                        String.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        int.class
-                    },
-                    playerName(), option, itemId, slot, iface, child);
-        }
-
-        public static boolean interfaceAction(
-                int opcode,
-                int option,
-                int iface,
-                int child,
-                int slot,
-                int itemId) {
-            return invoke(
-                    "interfaceAction",
-                    new Class<?>[]{
-                        String.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        int.class
-                    },
-                    playerName(), opcode, option, iface, child, slot, itemId);
-        }
-
-        public static boolean continueOption(
-                int iface, int child, int slot, int opcode) {
-            return invoke(
-                    "continueOption",
-                    new Class<?>[]{
-                        String.class, int.class, int.class, int.class, int.class
-                    },
-                    playerName(), iface, child, slot, opcode);
-        }
-
-        public static boolean closeInterface() {
-            return invoke(
-                    "closeInterface",
-                    new Class<?>[]{String.class},
-                    playerName());
-        }
-
-        public static boolean inputPrompt(String response) {
-            return invoke(
-                    "inputPromptString",
-                    new Class<?>[]{String.class, String.class},
-                    playerName(), response);
-        }
-
-        public static boolean inputPrompt(int response) {
-            return invoke(
-                    "inputPromptInt",
-                    new Class<?>[]{String.class, int.class},
-                    playerName(), response);
-        }
-
-        private static String playerName() {
-            return System.getProperty("singlePlayerName", "Player");
-        }
-
-        private static boolean invoke(
-                String methodName, Class<?>[] parameterTypes, Object... args) {
-            try {
-                String key = methodName + Arrays.toString(parameterTypes);
-                Method method = METHODS.get(key);
-                if (method == null) {
-                    Class<?> ingress = Class.forName("core.local.LocalCommandIngress");
-                    method = ingress.getMethod(methodName, parameterTypes);
-                    Method existing = METHODS.putIfAbsent(key, method);
-                    if (existing != null) method = existing;
-                }
-                Object result = method.invoke(null, args);
-                return Boolean.TRUE.equals(result);
-            } catch (ClassNotFoundException e) {
-                // Expected until the native world overlay is packaged into the
-                // production engine. Keep the legacy protocol alive meanwhile.
-                return false;
-            } catch (Throwable failure) {
-                System.err.println(
-                        "SINGLEPLAYER_LOCAL_COMMAND: " + methodName + " failed: " + failure);
-                return false;
-            }
-        }
     }
 
     public static void main(String[] args) throws Throwable {
@@ -220,19 +43,255 @@ public final class InProcessBootstrap {
             verifySQLite();
             System.out.println("SINGLEPLAYER_E2E: SQLITE_READY");
 
+            // World and RT4 still contain historical independent distance fields.
+            // Until those classes are physically merged, write both from the one
+            // GameConfig value before either side begins normal gameplay.
+            applyWorldViewDistance(runtime.config().viewDistance());
+
             setStage("Loading world...");
             invokeMain("core.Server", new String[]{"worldprops/local.conf"});
             runtime.markWorldReady();
             System.out.println("SINGLEPLAYER_E2E: WORLD_READY");
 
-            // RT4 still enters through its legacy main/login path during this
-            // migration stage. LocalGameRuntime remains the authority around it;
-            // login/session/network assumptions are removed in later checkpoints.
+            applyClientViewDistance(runtime.config().viewDistance());
+
+            // RT4 still enters through its historical login path during this
+            // checkpoint. Login/session/socket removal follows after parity tests.
             setStage("Starting game...");
             invokeMain("rt4.client", new String[]{"1", "live", "english", "game0"});
         } catch (Throwable failure) {
             runtime.fail(failure);
             throw failure;
+        }
+    }
+
+    /**
+     * Reuses the existing MapDistance enum instead of forking world logic. The
+     * field is changed before gameplay begins and all existing users of
+     * MapDistance.RENDERING continue to work unchanged.
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void applyWorldViewDistance(int distance) throws Exception {
+        Class<? extends Enum> type =
+                (Class<? extends Enum>) Class.forName("core.game.world.map.MapDistance");
+        Enum rendering = Enum.valueOf(type, "RENDERING");
+        Field field = type.getDeclaredField("distance");
+        field.setAccessible(true);
+        field.setInt(rendering, distance);
+
+        int actual = (Integer) type.getMethod("getDistance").invoke(rendering);
+        if (actual != distance) {
+            throw new IllegalStateException(
+                    "World view distance authority mismatch: " + actual + " != " + distance);
+        }
+        System.out.println("SINGLEPLAYER_RUNTIME: WORLD_VIEW_DISTANCE=" + actual);
+    }
+
+    /**
+     * RT4's distance fields are already mutable. Drive them from the same value
+     * rather than maintaining an independent client setting.
+     */
+    private static void applyClientViewDistance(int distance) throws Exception {
+        Class<?> type = Class.forName("rt4.GlobalConfig");
+        type.getField("TILE_DISTANCE").setInt(null, distance);
+        type.getField("VIEW_DISTANCE").setInt(null, distance * 128);
+        type.getField("VIEW_FADE_DISTANCE").setFloat(
+                null, ((float) distance / 28.0f) * 256.0f);
+
+        int actual = type.getField("TILE_DISTANCE").getInt(null);
+        if (actual != distance) {
+            throw new IllegalStateException(
+                    "RT4 view distance authority mismatch: " + actual + " != " + distance);
+        }
+        System.out.println("SINGLEPLAYER_RUNTIME: CLIENT_VIEW_DISTANCE=" + actual);
+    }
+
+    /**
+     * Direct typed client -> world command boundary.
+     *
+     * 2009Scape already converts its protocol into Packet subclasses before game
+     * logic sees an action. Those classes are therefore retained as local game
+     * commands. Reflection keeps this bootstrap independently compilable while
+     * still bypassing packet serialization, TCP, decoding and ISAAC when a RT4
+     * call site is switched to this bridge.
+     */
+    public static final class LocalCommands {
+        private static final ConcurrentHashMap<String, Constructor<?>> CONSTRUCTORS =
+                new ConcurrentHashMap<>();
+        private static volatile Class<?> playerClass;
+        private static volatile Method getPlayerByName;
+        private static volatile Method enqueue;
+
+        private LocalCommands() {}
+
+        public static boolean isAvailable() {
+            try {
+                resolveEngineTypes();
+                return true;
+            } catch (Throwable ignored) {
+                return false;
+            }
+        }
+
+        public static boolean ping() {
+            return command("Ping", new Class<?>[0]);
+        }
+
+        public static boolean worldspaceWalk(int x, int y, boolean run) {
+            return command(
+                    "WorldspaceWalk",
+                    new Class<?>[]{int.class, int.class, boolean.class},
+                    x, y, run);
+        }
+
+        public static boolean minimapWalk(
+                int x,
+                int y,
+                int clickedX,
+                int clickedY,
+                int rotation,
+                boolean run) {
+            return command(
+                    "MinimapWalk",
+                    new Class<?>[]{
+                        int.class, int.class, int.class,
+                        int.class, int.class, boolean.class
+                    },
+                    x, y, clickedX, clickedY, rotation, run);
+        }
+
+        public static boolean npcAction(int option, int npcIndex) {
+            return command(
+                    "NpcAction",
+                    new Class<?>[]{int.class, int.class},
+                    option, npcIndex);
+        }
+
+        public static boolean playerAction(int option, int otherIndex) {
+            return command(
+                    "PlayerAction",
+                    new Class<?>[]{int.class, int.class},
+                    option, otherIndex);
+        }
+
+        public static boolean sceneryAction(int option, int id, int x, int y) {
+            return command(
+                    "SceneryAction",
+                    new Class<?>[]{int.class, int.class, int.class, int.class},
+                    option, id, x, y);
+        }
+
+        public static boolean groundItemAction(int option, int id, int x, int y) {
+            return command(
+                    "GroundItemAction",
+                    new Class<?>[]{int.class, int.class, int.class, int.class},
+                    option, id, x, y);
+        }
+
+        public static boolean itemAction(
+                int option,
+                int itemId,
+                int slot,
+                int iface,
+                int child) {
+            return command(
+                    "ItemAction",
+                    new Class<?>[]{int.class, int.class, int.class, int.class, int.class},
+                    option, itemId, slot, iface, child);
+        }
+
+        public static boolean interfaceAction(
+                int opcode,
+                int option,
+                int iface,
+                int child,
+                int slot,
+                int itemId) {
+            return command(
+                    "IfAction",
+                    new Class<?>[]{
+                        int.class, int.class, int.class,
+                        int.class, int.class, int.class
+                    },
+                    opcode, option, iface, child, slot, itemId);
+        }
+
+        public static boolean continueOption(
+                int iface, int child, int slot, int opcode) {
+            return command(
+                    "ContinueOption",
+                    new Class<?>[]{int.class, int.class, int.class, int.class},
+                    iface, child, slot, opcode);
+        }
+
+        public static boolean closeInterface() {
+            return command("CloseIface", new Class<?>[0]);
+        }
+
+        public static boolean inputPrompt(String response) {
+            return command(
+                    "InputPromptResponse",
+                    new Class<?>[]{Object.class},
+                    response);
+        }
+
+        public static boolean inputPrompt(int response) {
+            return command(
+                    "InputPromptResponse",
+                    new Class<?>[]{Object.class},
+                    Integer.valueOf(response));
+        }
+
+        private static boolean command(
+                String simpleName, Class<?>[] tailTypes, Object... tailArgs) {
+            try {
+                resolveEngineTypes();
+                Object player = getPlayerByName.invoke(null, playerName());
+                if (player == null) return false;
+
+                Class<?>[] types = new Class<?>[tailTypes.length + 1];
+                Object[] args = new Object[tailArgs.length + 1];
+                types[0] = playerClass;
+                args[0] = player;
+                System.arraycopy(tailTypes, 0, types, 1, tailTypes.length);
+                System.arraycopy(tailArgs, 0, args, 1, tailArgs.length);
+
+                String key = simpleName + java.util.Arrays.toString(types);
+                Constructor<?> constructor = CONSTRUCTORS.get(key);
+                if (constructor == null) {
+                    Class<?> commandType =
+                            Class.forName("core.net.packet.in.Packet$" + simpleName);
+                    constructor = commandType.getConstructor(types);
+                    Constructor<?> previous =
+                            CONSTRUCTORS.putIfAbsent(key, constructor);
+                    if (previous != null) constructor = previous;
+                }
+
+                Object packet = constructor.newInstance(args);
+                enqueue.invoke(null, packet);
+                return true;
+            } catch (Throwable failure) {
+                System.err.println(
+                        "SINGLEPLAYER_LOCAL_COMMAND: " + simpleName + " failed: " + failure);
+                return false;
+            }
+        }
+
+        private static synchronized void resolveEngineTypes() throws Exception {
+            if (enqueue != null) return;
+
+            playerClass = Class.forName("core.game.node.entity.player.Player");
+            Class<?> repository =
+                    Class.forName("core.game.world.repository.Repository");
+            getPlayerByName = repository.getMethod("getPlayerByName", String.class);
+
+            Class<?> packetClass = Class.forName("core.net.packet.in.Packet");
+            Class<?> processor = Class.forName("core.net.packet.PacketProcessor");
+            enqueue = processor.getMethod("enqueue", packetClass);
+        }
+
+        private static String playerName() {
+            return System.getProperty("singlePlayerName", "Player");
         }
     }
 
@@ -278,11 +337,7 @@ public final class InProcessBootstrap {
     }
 }
 
-/**
- * Authoritative configuration for the local game instance.
- * Legacy subsystems temporarily consume mirrored system properties; the value
- * itself is owned here and published before either subsystem initializes.
- */
+/** One authoritative configuration object for the local game instance. */
 final class GameConfig {
     static final String VIEW_DISTANCE_PROPERTY = "singleplayer.viewDistance";
     static final int DEFAULT_VIEW_DISTANCE = 28;
@@ -317,7 +372,7 @@ final class GameConfig {
     }
 }
 
-/** Single process authority around the legacy world/client during migration. */
+/** Single process authority around retained world/client engines during migration. */
 final class LocalGameRuntime {
     enum State {
         NEW,
