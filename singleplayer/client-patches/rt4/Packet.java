@@ -75,6 +75,11 @@ public final class Packet extends Buffer {
         return arg0 * 8 - this.bitOffset;
     }
 
+    private static boolean localGameplayReady() {
+        return Boolean.getBoolean("singleplayer")
+                && (client.gameState == 25 || client.gameState == 30);
+    }
+
     /**
      * Finish the current retained outbound packet, routing it through the
      * existing 2009Scape decoder in memory when possible. A successful local
@@ -95,7 +100,10 @@ public final class Packet extends Buffer {
         this.localPayloadStart = -1;
         this.localOpcode = -1;
 
-        if (!Boolean.getBoolean("singleplayer") || this != Protocol.outboundBuffer) {
+        // Login/reconnect/world-list protocol remains byte-for-byte legacy until
+        // that state machine is intentionally removed. Merely seeing p1isaac is
+        // not enough to classify a packet as an in-world command.
+        if (!localGameplayReady() || this != Protocol.outboundBuffer) {
             return;
         }
         if (packetStart < 0 || payloadStart != packetStart + 1
