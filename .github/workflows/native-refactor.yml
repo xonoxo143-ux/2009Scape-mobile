@@ -24,6 +24,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Generate pinned RT4 source overrides
+        run: |
+          set -euxo pipefail
+          rm -rf build/generated-rt4
+          python3 singleplayer/native-refactor/prepare_rt4.py build/generated-rt4
+          test -f build/generated-rt4/rt4/SignLink.java
+          grep -q 'LocalSocketPolicy.openJs5IfRequested' build/generated-rt4/rt4/SignLink.java
+
       - name: Compile local runtime authority and RT4 patch source set
         run: |
           set -euxo pipefail
@@ -38,11 +46,17 @@ jobs:
             singleplayer/inprocess/InProcessBootstrap.java \
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
-            "${RT4_PATCHES[@]}"
+            "${RT4_PATCHES[@]}" \
+            build/generated-rt4/rt4/SignLink.java
           test -f build/native-bootstrap/singleplayer/LocalGameRuntime.class
           test -f build/native-bootstrap/singleplayer/GameConfig.class
           test -f build/native-bootstrap/singleplayer/InProcessBootstrap\$LocalCommands.class
           test -f build/native-bootstrap/rt4/ClientProt.class
+          test -f build/native-bootstrap/rt4/SignLink.class
+          test -f build/native-bootstrap/rt4/LocalJs5Socket.class
+          test -f build/native-bootstrap/rt4/LocalSocketPolicy.class
+          test -f build/native-bootstrap/rt4/LocalLoginBridge.class
+          test -f build/native-bootstrap/rt4/LocalPresentationBridge.class
           grep -q 'LocalCommands.worldspaceWalk' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'LocalCommands.interactWalk' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'LocalCommands.minimapWalk' singleplayer/client-patches/rt4/ClientProt.java
@@ -60,7 +74,7 @@ jobs:
           git -C upstream-server checkout --detach FETCH_HEAD
           test "$(git -C upstream-server rev-parse HEAD)" = "$UPSTREAM_COMMIT"
 
-      - name: Apply shadow-only migration overlay
+      - name: Apply canonical single-player migration overlay
         run: |
           set -euxo pipefail
           python3 singleplayer/native-refactor/prepare_upstream.py \
@@ -70,8 +84,8 @@ jobs:
             upstream-server/Server/src/main/core/net/packet/PacketProcessor.kt
           grep -q 'LocalMigrationProbe.observeOutgoing' \
             upstream-server/Server/src/main/core/net/packet/PacketRepository.java
-          grep -q '127.0.0.1' \
-            upstream-server/Server/src/main/core/net/NioReactor.java
+          grep -q 'beginLocalLogin' \
+            upstream-server/Server/src/main/core/local/LocalMigrationProbe.kt
 
       - name: Build retained world engine
         working-directory: upstream-server/Server
@@ -160,7 +174,7 @@ jobs:
             -cp build/native-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar:"$ENGINE_JAR" \
             NativeBridgeSmoke
 
-      - name: Verify shadow observation boundary
+      - name: Verify migration boundaries
         run: |
           set -euxo pipefail
           ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \
@@ -170,6 +184,8 @@ jobs:
             | tee build/local-migration-probe.txt
           grep -q 'observeIncoming' build/local-migration-probe.txt
           grep -q 'observeOutgoing' build/local-migration-probe.txt
+          grep -q 'beginLocalLogin' build/local-migration-probe.txt
+          grep -q 'endLocalSession' build/local-migration-probe.txt
 
       - name: Architecture checkpoint summary
         run: |
@@ -178,4 +194,5 @@ jobs:
           echo 'Existing typed 2009Scape commands reachable without TCP: verified'
           echo 'RT4 migration patches compile as independent source files: verified'
           echo 'World, interaction, and minimap walking cut over to direct typed commands: compiled'
-          echo 'Incoming/outgoing legacy boundaries observable for parity migration: verified'
+          echo 'Socketless local login/session bridge present: verified'
+          echo 'Pinned RT4 SignLink override redirects JS5 to memory: compiled'
