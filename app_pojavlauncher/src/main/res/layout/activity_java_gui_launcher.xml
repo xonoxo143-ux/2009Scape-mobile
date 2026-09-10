@@ -148,5 +148,50 @@
 		android:visibility="gone"
 		/>
 
+	<LinearLayout
+		android:id="@+id/singleplayerLoadingOverlay"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent"
+		android:orientation="vertical"
+		android:gravity="center"
+		android:clickable="true"
+		android:focusable="true"
+		android:background="#231c09"
+		android:padding="24dp">
+
+		<TextView
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:text="2009Scape"
+			android:textColor="#E2C887"
+			android:textStyle="bold"
+			android:textSize="30sp" />
+
+		<TextView
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="4dp"
+			android:text="Single Player"
+			android:textColor="#B8A078"
+			android:textSize="16sp" />
+
+		<ProgressBar
+			android:layout_width="48dp"
+			android:layout_height="48dp"
+			android:layout_marginTop="22dp"
+			android:indeterminate="true" />
+
+		<TextView
+			android:id="@+id/singleplayerLoadingStatus"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="12dp"
+			android:gravity="center"
+			android:text="Starting single-player..."
+			android:textColor="#D8D0B0"
+			android:textSize="14sp" />
+
+	</LinearLayout>
+
 </FrameLayout>
 
