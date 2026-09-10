@@ -50,7 +50,8 @@ public final class AudioThread implements Runnable {
  * of bootstrap sources, so this package-private replacement lives in the same
  * compilation unit until ClientProt itself is deleted later in the migration.
  * All retained ClientProt callers are in package rt4, so package visibility is
- * sufficient. Ordinary world walking is the first real command to bypass TCP.
+ * sufficient. Operations are moved to LocalCommands one family at a time and
+ * retain the original wire path as a fallback until parity is proven.
  */
 class ClientProt {
 
@@ -79,6 +80,22 @@ class ClientProt {
     public static final int CLOSE_MODAL = 184;
     public static final int NO_TIMEOUT = 93;
 
+    private static int interfaceOpcode(int option) {
+        switch (option) {
+            case 1: return 155;
+            case 2: return 196;
+            case 3: return 124;
+            case 4: return 199;
+            case 5: return 234;
+            case 6: return 168;
+            case 7: return 166;
+            case 8: return 64;
+            case 9: return 53;
+            case 10: return 9;
+            default: return -1;
+        }
+    }
+
     @OriginalMember(owner = "client!vg", name = "a", descriptor = "(Lclient!na;IIBI)V")
     public static void method4512(@OriginalArg(0) JagString arg0, @OriginalArg(1) int arg1, @OriginalArg(2) int arg2, @OriginalArg(4) int arg3) {
         @Pc(8) Component local8 = InterfaceList.method1418(arg3, arg1);
@@ -100,56 +117,29 @@ class ClientProt {
         if (!local37 || !InterfaceList.getServerActiveProperties(local8).isButtonEnabled(arg2 - 1)) {
             return;
         }
-        if (arg2 == 1) {
-            Protocol.outboundBuffer.p1isaac(155);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
+
+        int opcode = interfaceOpcode(arg2);
+        if (opcode < 0) {
+            return;
         }
-        if (arg2 == 2) {
-            Protocol.outboundBuffer.p1isaac(196);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
+
+        if (Boolean.getBoolean("singleplayer")) {
+            int iface = arg3 >>> 16;
+            int child = arg3 & 0xFFFF;
+            int slot = arg1 & 0xFFFF;
+            if (singleplayer.InProcessBootstrap.LocalCommands.interfaceAction(
+                    opcode, arg2 - 1, iface, child, slot, -1)) {
+                System.out.println(
+                        "SINGLEPLAYER_LOCAL_COMMAND: IF_ACTION_DIRECT option=" + arg2
+                                + " iface=" + iface + " child=" + child + " slot=" + slot);
+                return;
+            }
+            System.err.println("SINGLEPLAYER_LOCAL_COMMAND: IF_ACTION_FALLBACK option=" + arg2);
         }
-        if (arg2 == 3) {
-            Protocol.outboundBuffer.p1isaac(124);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
-        }
-        if (arg2 == 4) {
-            Protocol.outboundBuffer.p1isaac(199);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
-        }
-        if (arg2 == 5) {
-            Protocol.outboundBuffer.p1isaac(234);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
-        }
-        if (arg2 == 6) {
-            Protocol.outboundBuffer.p1isaac(168);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
-        }
-        if (arg2 == 7) {
-            Protocol.outboundBuffer.p1isaac(166);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
-        }
-        if (arg2 == 8) {
-            Protocol.outboundBuffer.p1isaac(64);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
-        }
-        if (arg2 == 9) {
-            Protocol.outboundBuffer.p1isaac(53);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
-        }
-        if (arg2 == 10) {
-            Protocol.outboundBuffer.p1isaac(9);
-            Protocol.outboundBuffer.p4(arg3);
-            Protocol.outboundBuffer.p2(arg1);
-        }
+
+        Protocol.outboundBuffer.p1isaac(opcode);
+        Protocol.outboundBuffer.p4(arg3);
+        Protocol.outboundBuffer.p2(arg1);
     }
 
     @OriginalMember(owner = "client!pi", name = "c", descriptor = "(III)V")
@@ -203,7 +193,17 @@ class ClientProt {
 
     @OriginalMember(owner = "client!mc", name = "f", descriptor = "(B)V")
     public static void closeWidget() {
-        Protocol.outboundBuffer.p1isaac(ClientProt.CLOSE_MODAL);
+        boolean direct = Boolean.getBoolean("singleplayer")
+                && singleplayer.InProcessBootstrap.LocalCommands.closeInterface();
+        if (direct) {
+            System.out.println("SINGLEPLAYER_LOCAL_COMMAND: CLOSE_INTERFACE_DIRECT");
+        } else {
+            Protocol.outboundBuffer.p1isaac(ClientProt.CLOSE_MODAL);
+            if (Boolean.getBoolean("singleplayer")) {
+                System.err.println("SINGLEPLAYER_LOCAL_COMMAND: CLOSE_INTERFACE_FALLBACK");
+            }
+        }
+
         for (@Pc(18) ComponentPointer local18 = (ComponentPointer) InterfaceList.openInterfaces.head(); local18 != null; local18 = (ComponentPointer) InterfaceList.openInterfaces.next()) {
             if (local18.anInt5879 == 0) {
                 InterfaceList.closeInterface(true, local18);
@@ -268,13 +268,26 @@ class ClientProt {
             return;
         }
         Protocol.anInt3251 = 0;
+
+        boolean direct = Boolean.getBoolean("singleplayer")
+                && singleplayer.InProcessBootstrap.LocalCommands.ping();
+        if (direct) {
+            System.out.println("SINGLEPLAYER_LOCAL_COMMAND: PING_DIRECT");
+        }
+
         if (!LoginManager.aBoolean247 && Protocol.socket != null) {
-            Protocol.outboundBuffer.p1isaac(ClientProt.NO_TIMEOUT);
-            try {
-                Protocol.socket.write(Protocol.outboundBuffer.data, Protocol.outboundBuffer.offset);
-                Protocol.outboundBuffer.offset = 0;
-            } catch (@Pc(53) IOException local53) {
-                LoginManager.aBoolean247 = true;
+            // Preserve flushing of any still-legacy packets. Once every command
+            // family is local this socket write disappears with the socket itself.
+            if (!direct) {
+                Protocol.outboundBuffer.p1isaac(ClientProt.NO_TIMEOUT);
+            }
+            if (Protocol.outboundBuffer.offset > 0) {
+                try {
+                    Protocol.socket.write(Protocol.outboundBuffer.data, Protocol.outboundBuffer.offset);
+                    Protocol.outboundBuffer.offset = 0;
+                } catch (@Pc(53) IOException local53) {
+                    LoginManager.aBoolean247 = true;
+                }
             }
         }
         client.audioLoop();
