@@ -39,6 +39,10 @@ object LocalMigrationProbe {
      * Try to move an already-encoded world -> RT4 byte sequence into the shared
      * in-process stream. false means the legacy socket path remains responsible
      * for the buffer; true means ownership has moved to the local bridge.
+     *
+     * The first successful route also promotes the established human session
+     * away from its NIO channel. That operation intentionally preserves the
+     * Player/session/ISAAC state; it only retires the physical loopback link.
      */
     @JvmStatic
     fun routeOutgoingBytes(session: IoSession, buffer: ByteBuffer, canActivate: Boolean): Boolean {
@@ -60,7 +64,11 @@ object LocalMigrationProbe {
         val copy = ByteArray(buffer.remaining())
         buffer.duplicate().get(copy)
         return try {
-            offer.invoke(null, copy, canActivate) == true
+            val routed = offer.invoke(null, copy, canActivate) == true
+            if (routed) {
+                session.promoteToLocalTransport()
+            }
+            routed
         } catch (failure: Throwable) {
             System.err.println(
                 "SINGLEPLAYER_LOCAL_PRESENTATION: route failed: ${failure.javaClass.simpleName}: ${failure.message}"
