@@ -43,9 +43,11 @@ jobs:
           test -f build/native-bootstrap/singleplayer/GameConfig.class
           test -f build/native-bootstrap/singleplayer/InProcessBootstrap\$LocalCommands.class
           test -f build/native-bootstrap/rt4/ClientProt.class
-          grep -q 'WORLDSPACE_WALK_DIRECT' singleplayer/client-patches/rt4/ClientProt.java
-          grep -q 'INTERACT_WALK_DIRECT' singleplayer/client-patches/rt4/ClientProt.java
-          grep -q 'MINIMAP_WALK_DIRECT' singleplayer/client-patches/rt4/ClientProt.java
+          grep -q 'LocalCommands.worldspaceWalk' singleplayer/client-patches/rt4/ClientProt.java
+          grep -q 'LocalCommands.interactWalk' singleplayer/client-patches/rt4/ClientProt.java
+          grep -q 'LocalCommands.minimapWalk' singleplayer/client-patches/rt4/ClientProt.java
+          grep -q 'markDirectMinimapTrailer' singleplayer/client-patches/rt4/ClientProt.java
+          grep -q 'stripDirectMinimapTrailers' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'MINIMAP_TRAILERS_DISCARDED' singleplayer/client-patches/rt4/ClientProt.java
 
       - name: Fetch pinned 2009Scape source
