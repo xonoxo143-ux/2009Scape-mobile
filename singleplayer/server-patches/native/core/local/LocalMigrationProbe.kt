@@ -120,9 +120,11 @@ object LocalMigrationProbe {
         session.lastPing = System.currentTimeMillis()
 
         return try {
-            // false = normal first entry, not the old network reconnect mode.
+            // LoginParser performs the actual profile parse/player.init on the
+            // world pulse. LeagueRuntime is attached later, after RT4 receives
+            // the resulting successful rebuild, so persisted league attributes
+            // are guaranteed to have been parsed first.
             LoginParser(details).initialize(player, false)
-            LeagueRuntime.attach(player)
             println("SINGLEPLAYER_LOCAL_LOGIN: SESSION_CREATED username=$username")
             true
         } catch (failure: Throwable) {
@@ -134,6 +136,17 @@ object LocalMigrationProbe {
             )
             false
         }
+    }
+
+    /** Attach league rules only after normal save parsing/player.init completed. */
+    @JvmStatic
+    @Synchronized
+    fun attachLeagueRuntime(username: String): Boolean {
+        if (!java.lang.Boolean.getBoolean("singleplayer") || username.isBlank()) return false
+        val player = Repository.getPlayerByName(username) ?: return false
+        if (!player.getAttribute("logged-in-fully", false)) return false
+        LeagueRuntime.attach(player)
+        return true
     }
 
     /** Restore the protocol-safe entity synchronization radius. */
