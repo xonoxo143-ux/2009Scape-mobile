@@ -240,6 +240,9 @@ public class JavaGUILauncherActivity extends BaseActivity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            return super.dispatchKeyEvent(event);
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             KeyEncoder.sendEncodedChar(
                     event.getKeyCode(), (char) event.getUnicodeChar());
