@@ -2,7 +2,14 @@ package rt4;
 
 import singleplayer.MobileLifecycleBridge;
 
-/** RT4 timer that freezes client simulation while the Android app is backgrounded. */
+/**
+ * RT4 timer owned by the Android single-player runtime.
+ *
+ * Besides freezing simulation while Android is backgrounded, this is the small
+ * always-running client seam that advances socketless local world entry. That
+ * keeps login/bootstrap behavior inside the game runtime rather than depending
+ * on a separately packaged client plugin.
+ */
 public final class NanoTimer extends Timer {
     private long nextTick = System.nanoTime();
 
@@ -18,6 +25,7 @@ public final class NanoTimer extends Timer {
             ThreadUtils.sleep(250L);
             return 0;
         }
+        LocalLoginBridge.tickAutoLogin();
         long minimumDelayNs = (long) minimumDelayMs * 1_000_000L;
         long delayNs = nextTick - System.nanoTime();
         if (minimumDelayNs > delayNs) {
@@ -37,6 +45,7 @@ public final class NanoTimer extends Timer {
             ThreadUtils.sleep(250L);
             return 0;
         }
+        LocalLoginBridge.tickAutoLogin();
         return advance(tickMs);
     }
 
