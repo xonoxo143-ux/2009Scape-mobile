@@ -23,25 +23,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Compile local runtime authority and RT4 cutovers
+      - name: Compile local runtime authority and RT4 patch source set
         run: |
           set -euxo pipefail
           rm -rf build/native-bootstrap
           mkdir -p build/native-bootstrap
+          mapfile -t RT4_PATCHES < <(find singleplayer/client-patches/rt4 -maxdepth 1 -type f -name '*.java' | sort)
+          test "${#RT4_PATCHES[@]}" -ge 4
+          printf 'RT4 patch source: %s\n' "${RT4_PATCHES[@]}"
           javac --release 17 \
             -cp app_pojavlauncher/src/main/assets/rt4.jar \
             -d build/native-bootstrap \
             singleplayer/inprocess/InProcessBootstrap.java \
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
-            singleplayer/client-patches/rt4/AudioThread.java \
-            singleplayer/client-patches/rt4/NanoTimer.java \
-            singleplayer/client-patches/rt4/OpenALAudioChannel.java
+            "${RT4_PATCHES[@]}"
           test -f build/native-bootstrap/singleplayer/LocalGameRuntime.class
           test -f build/native-bootstrap/singleplayer/GameConfig.class
           test -f build/native-bootstrap/singleplayer/InProcessBootstrap\$LocalCommands.class
           test -f build/native-bootstrap/rt4/ClientProt.class
-          grep -q 'WORLDSPACE_WALK_DIRECT' singleplayer/client-patches/rt4/AudioThread.java
+          grep -q 'WORLDSPACE_WALK_DIRECT' singleplayer/client-patches/rt4/ClientProt.java
 
       - name: Fetch pinned 2009Scape source
         run: |
@@ -164,5 +165,6 @@ jobs:
           echo 'One LocalGameRuntime authority: compiled'
           echo 'One view-distance value drives retained world + RT4: verified'
           echo 'Existing typed 2009Scape commands reachable without TCP: verified'
+          echo 'RT4 migration patches compile as independent source files: verified'
           echo 'Ordinary RT4 world-click walking cut over to direct typed command: compiled'
           echo 'Incoming/outgoing legacy boundaries observable for parity migration: verified'
