@@ -269,9 +269,14 @@ public class JREUtils {
         purgeArg(userArgs, "-Xint");
         purgeArg(userArgs, "-Dorg.lwjgl.opengl.libname");
 
-        //Add automatically generated args
-        userArgs.add("-Xms" + LauncherPreferences.PREF_RAM_ALLOCATION + "M");
-        userArgs.add("-Xmx" + LauncherPreferences.PREF_RAM_ALLOCATION + "M");
+        // Add automatically generated args. The combined single-player build
+        // needs headroom for the world engine, but there is no reason to commit
+        // the full maximum heap at JVM startup on a phone.
+        boolean singlePlayerJvm = JVMArgs.contains("-Dsingleplayer=true");
+        int maxHeapMb = LauncherPreferences.PREF_RAM_ALLOCATION;
+        int initialHeapMb = singlePlayerJvm ? Math.min(512, maxHeapMb) : maxHeapMb;
+        userArgs.add("-Xms" + initialHeapMb + "M");
+        userArgs.add("-Xmx" + maxHeapMb + "M");
         if(LOCAL_RENDERER != null) userArgs.add("-Dorg.lwjgl.opengl.libname=" + graphicsLib);
 
         userArgs.addAll(JVMArgs);
