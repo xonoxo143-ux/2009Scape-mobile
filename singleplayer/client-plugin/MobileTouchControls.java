@@ -12,10 +12,10 @@ import rt4.Mouse;
 import singleplayer.MobileGestureBridge;
 
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
@@ -34,10 +34,13 @@ public class plugin extends Plugin {
     private static final int CLIENT_WIDTH = 765;
     private static final int CLIENT_HEIGHT = 503;
 
-    private List<HitRegion> collectingRegions = new ArrayList<HitRegion>(256);
-    private List<HitRegion> stableRegions = new ArrayList<HitRegion>(256);
-    private final Set<Component> collectingSeen =
-            Collections.newSetFromMap(new IdentityHashMap<Component, Boolean>());
+    private static final long HIT_REGION_MAX_AGE_MS = 250L;
+
+    // ComponentDraw is the reliable per-frame callback in this RT4 build.
+    // Keep a small identity-keyed cache of recently rendered hit regions rather
+    // than depending on Plugin.Draw(), whose call site is conditional.
+    private final IdentityHashMap<Component, HitRegion> hitRegions =
+            new IdentityHashMap<Component, HitRegion>(256);
 
     private DragMode dragMode = DragMode.NONE;
     private Component scrollComponent;
@@ -53,30 +56,16 @@ public class plugin extends Plugin {
     private boolean announcedCancel;
 
     @Override
-    public void Draw(long timeDelta) {
-        // A normal mouse drag release is deliberately delayed until the next
-        // rendered frame. That guarantees Mouse.loop() observes at least one
-        // held-button client loop even when Android delivers a very quick drag.
-        flushPendingMouseRelease();
-
-        // ComponentDraw callbacks collected between two Draw callbacks represent
-        // the previous rendered frame. Swap buffers so routing uses a stable,
-        // complete hit map while the next frame is being collected.
-        List<HitRegion> oldStable = stableRegions;
-        stableRegions = collectingRegions;
-        collectingRegions = oldStable;
-        collectingRegions.clear();
-        collectingSeen.clear();
-
-        drainGestures();
-    }
-
-    @Override
     public void ComponentDraw(
             int componentIndex,
             Component component,
             int screenX,
             int screenY) {
+        // This callback is emitted continuously for normal game interfaces.
+        // It is our client-thread pump for Android gestures.
+        flushPendingMouseRelease();
+        drainGestures();
+
         if (component == null || component.hidden) {
             return;
         }
@@ -160,7 +149,7 @@ public class plugin extends Plugin {
     }
 
     private void recordComponent(Component component, int screenX, int screenY) {
-        if (component == null || component.hidden || collectingSeen.contains(component)) {
+        if (component == null || component.hidden) {
             return;
         }
 
@@ -211,8 +200,7 @@ public class plugin extends Plugin {
             return;
         }
 
-        collectingSeen.add(component);
-        collectingRegions.add(new HitRegion(
+        hitRegions.put(component, new HitRegion(
                 component,
                 screenX,
                 screenY,
@@ -220,7 +208,8 @@ public class plugin extends Plugin {
                 height,
                 inventory,
                 genericDraggable,
-                scrollable));
+                scrollable,
+                MonotonicClock.currentTimeMillis()));
     }
 
     private void drainGestures() {
@@ -400,9 +389,20 @@ public class plugin extends Plugin {
         HitRegion scrollCandidate = null;
         HitRegion blockingCandidate = null;
 
-        // Later-drawn components are considered on top.
-        for (int i = stableRegions.size() - 1; i >= 0; i--) {
-            HitRegion region = stableRegions.get(i);
+        long now = MonotonicClock.currentTimeMillis();
+        List<HitRegion> recent = new ArrayList<HitRegion>(hitRegions.size());
+
+        for (Map.Entry<Component, HitRegion> entry : hitRegions.entrySet()) {
+            HitRegion region = entry.getValue();
+            if (now - region.lastSeenMs <= HIT_REGION_MAX_AGE_MS) {
+                recent.add(region);
+            }
+        }
+
+        // Component callbacks are refreshed continuously. Prefer the most recently
+        // rendered matching region as the topmost practical target.
+        recent.sort((a, b) -> Long.compare(b.lastSeenMs, a.lastSeenMs));
+        for (HitRegion region : recent) {
             if (!region.contains(x, y)) {
                 continue;
             }
@@ -579,6 +579,7 @@ public class plugin extends Plugin {
     public void OnLogout() {
         cancelDrag(Mouse.lastMouseX, Mouse.lastMouseY);
         MobileGestureBridge.clear();
+        hitRegions.clear();
         announcedTap = false;
         announcedLongPress = false;
         announcedCameraDrag = false;
@@ -599,6 +600,7 @@ public class plugin extends Plugin {
         final boolean inventory;
         final boolean genericDraggable;
         final boolean scrollable;
+        final long lastSeenMs;
 
         HitRegion(
                 Component component,
@@ -608,7 +610,8 @@ public class plugin extends Plugin {
                 int height,
                 boolean inventory,
                 boolean genericDraggable,
-                boolean scrollable) {
+                boolean scrollable,
+                long lastSeenMs) {
             this.component = component;
             this.x = x;
             this.y = y;
@@ -617,6 +620,7 @@ public class plugin extends Plugin {
             this.inventory = inventory;
             this.genericDraggable = genericDraggable;
             this.scrollable = scrollable;
+            this.lastSeenMs = lastSeenMs;
         }
 
         boolean contains(int px, int py) {
