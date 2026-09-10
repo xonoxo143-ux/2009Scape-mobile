@@ -23,7 +23,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Compile local runtime authority
+      - name: Compile local runtime authority and RT4 cutovers
         run: |
           set -euxo pipefail
           rm -rf build/native-bootstrap
@@ -36,10 +36,13 @@ jobs:
             singleplayer/inprocess/MobileLifecycleBridge.java \
             singleplayer/client-patches/rt4/AudioThread.java \
             singleplayer/client-patches/rt4/NanoTimer.java \
-            singleplayer/client-patches/rt4/OpenALAudioChannel.java
+            singleplayer/client-patches/rt4/OpenALAudioChannel.java \
+            singleplayer/client-patches/rt4/ClientProt.java
           test -f build/native-bootstrap/singleplayer/LocalGameRuntime.class
           test -f build/native-bootstrap/singleplayer/GameConfig.class
           test -f build/native-bootstrap/singleplayer/InProcessBootstrap\$LocalCommands.class
+          test -f build/native-bootstrap/rt4/ClientProt.class
+          grep -q 'WORLDSPACE_WALK_DIRECT' singleplayer/client-patches/rt4/ClientProt.java
 
       - name: Fetch pinned 2009Scape source
         run: |
@@ -124,7 +127,7 @@ jobs:
 
                   System.out.println(
                           "NATIVE_REFACTOR: VIEW_DISTANCE=" + world +
-                          " DIRECT_COMMAND_TYPES=READY");
+                          " DIRECT_COMMAND_TYPES=READY CLIENT_WALK_CUTOVER=COMPILED");
               }
 
               private static void requireCommand(
@@ -162,4 +165,5 @@ jobs:
           echo 'One LocalGameRuntime authority: compiled'
           echo 'One view-distance value drives retained world + RT4: verified'
           echo 'Existing typed 2009Scape commands reachable without TCP: verified'
+          echo 'Ordinary RT4 world-click walking cut over to direct typed command: compiled'
           echo 'Incoming/outgoing legacy boundaries observable for parity migration: verified'
