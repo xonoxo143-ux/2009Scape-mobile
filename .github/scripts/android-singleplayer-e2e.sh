@@ -118,8 +118,7 @@ import re, sys, xml.etree.ElementTree as ET
 screen_w, screen_h = 1768, 884
 wanted = {
     'playSinglePlayer',
-    'worldSettings',
-    'playerSettings',
+    'settings',
     'serverFiles',
     'updateFromGitHub',
 }
@@ -231,6 +230,10 @@ wait_for_combined_game() {
         echo "Login succeeded without expected combined-runtime milestones"
         return 1
       fi
+      adb shell run-as "${APP_ID}" test -f files/singleplayer-game-ready.flag || {
+        echo "Game-ready marker was not created"
+        return 1
+      }
       return 0
     fi
 
