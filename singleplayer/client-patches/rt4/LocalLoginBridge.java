@@ -44,8 +44,6 @@ public final class LocalLoginBridge {
         }
 
         try {
-            // Socketless means socketless: never leave a stale failed-login
-            // connection attached when beginning a local session.
             if (Protocol.socket != null) {
                 Protocol.socket.close();
                 Protocol.socket = null;
@@ -103,10 +101,7 @@ public final class LocalLoginBridge {
         }
     }
 
-    /**
-     * Advance the existing successful-login protocol from the local byte stream.
-     * Returns true once RT4 has consumed the first rebuild packet.
-     */
+    /** Advance the retained successful-login state from the local byte stream. */
     public static synchronized boolean poll() {
         if (state == COMPLETE) return true;
         if (state == IDLE || state == FAILED) return false;
@@ -125,9 +120,6 @@ public final class LocalLoginBridge {
             }
 
             if (state == WAIT_HEADER) {
-                // Successful LoginWriteEvent contributes 11 bytes after response;
-                // the following 3 bytes are the normal first game packet opcode
-                // and length, exactly as retained LoginManager step 8 expects.
                 if (LocalPresentationBridge.availableServerBytes() < 14) {
                     return false;
                 }
@@ -173,6 +165,12 @@ public final class LocalLoginBridge {
 
                 LoginManager.reply = 2;
                 LoginManager.step = 0;
+
+                // From this point onward the retained Protocol decoder should see
+                // exactly the same BufferedSocket API it always used, but backed
+                // solely by LocalPresentationBridge rather than java.net.Socket.
+                Protocol.socket = BufferedSocket.createLocal(GameShell.signLink);
+
                 client.method4221();
                 SceneGraph.centralZoneX = -1;
                 Protocol.readRebuildPacket(false);
@@ -198,6 +196,10 @@ public final class LocalLoginBridge {
     public static synchronized void reset() {
         state = IDLE;
         LoginManager.step = 0;
+        if (Protocol.socket != null) {
+            Protocol.socket.close();
+            Protocol.socket = null;
+        }
         LocalPresentationBridge.reset();
     }
 
