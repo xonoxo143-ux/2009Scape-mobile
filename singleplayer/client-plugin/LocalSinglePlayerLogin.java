@@ -67,8 +67,6 @@ public class plugin extends Plugin {
             loginScreenAnnounced = true;
         }
 
-        // Keep account-creation/world-list UI state from racing the local entry
-        // path. No LoginManager network state is started by this plugin anymore.
         if (CreateManager.step != 0 || WorldList.step != 0) {
             return;
         }
@@ -83,7 +81,9 @@ public class plugin extends Plugin {
             if (!localLoginStarted) {
                 Object started = localLoginBegin.invoke(null, username);
                 if (!Boolean.TRUE.equals(started)) {
-                    announceFailure("local session request was rejected");
+                    // A previous local player may still be finishing the retained
+                    // 2009Scape disconnection queue. This is a transient state,
+                    // not a login failure; simply retry on a later plugin tick.
                     return;
                 }
                 localLoginStarted = true;
