@@ -12,6 +12,7 @@ import core.net.IoSession
 import core.net.packet.Context
 import core.net.packet.`in`.Login
 import core.net.packet.`in`.Packet
+import core.net.producer.LoginEventProducer
 import java.lang.reflect.Method
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
@@ -83,6 +84,11 @@ object LocalMigrationProbe {
         val inputSeed = seed.copyOf()
         val outputSeed = IntArray(seed.size) { index -> seed[index] + 50 }
         session.isaacPair = ISAACPair(ISAACCipher(inputSeed), ISAACCipher(outputSeed))
+
+        // The TCP handshake normally performs this state transition. Keep the
+        // existing LoginWriteEvent/GameEventProducer path, but establish its
+        // producer directly because there is no handshake packet anymore.
+        session.producer = LoginEventProducer()
 
         // There is no transport to detach for a fresh local session, but this
         // puts IoSession into its explicit local mode before LoginParser begins
@@ -158,8 +164,6 @@ object LocalMigrationProbe {
         if (presentationResolved) return
         presentationResolved = true
         try {
-            // This class lives in the RT4 patch source set so the same compiled
-            // replacement that reads packets also owns the transitional stream.
             val bridge = Class.forName("rt4.LocalPresentationBridge")
             presentationRequested = bridge.getMethod("isCutoverRequested")
             presentationOffer = bridge.getMethod(
