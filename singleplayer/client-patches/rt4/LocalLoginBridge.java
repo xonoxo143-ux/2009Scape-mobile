@@ -1,14 +1,19 @@
 package rt4;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
 import java.lang.reflect.Method;
 import java.security.SecureRandom;
 
 /**
- * Socketless single-player login adapter.
+ * Socketless single-player login/runtime adapter.
  *
- * The world still runs its existing authenticator, Login.proceedWith(),
- * LoginParser and outgoing login/game encoders. This class only replaces the
- * transport handshake and consumes the retained success/rebuild stream locally.
+ * The world creates the Player directly and retains its normal LoginParser and
+ * initial presentation encoders. RT4 consumes that success/rebuild stream from
+ * memory. tickAutoLogin() is driven by the Android-owned NanoTimer, so entering
+ * the local world no longer depends on a client plugin or a network login form.
  */
 public final class LocalLoginBridge {
     private static final int IDLE = 0;
@@ -25,7 +30,71 @@ public final class LocalLoginBridge {
     private static Method beginLocalLogin;
     private static Method endLocalSession;
 
+    private static boolean loginScreenAnnounced;
+    private static boolean readyAnnounced;
+    private static long retryAfterMs;
+
     private LocalLoginBridge() {}
+
+    /**
+     * Per-frame single-player entry driver. This replaces the historical login
+     * plugin as the primary boot path while leaving RT4's ordinary login UI code
+     * untouched as dead compatibility code for now.
+     */
+    public static synchronized void tickAutoLogin() {
+        if (!Boolean.getBoolean("singleplayer")) return;
+
+        if (client.gameState == 30) {
+            if (!readyAnnounced) {
+                readyAnnounced = true;
+                writeStage("Ready");
+                markGameReady(true);
+                notifyLocalRuntimeReady();
+                System.out.println("SINGLEPLAYER_E2E: LOGGED_IN");
+            }
+            return;
+        }
+
+        // A real logout returns to state 10. Region rebuilds transiently use 25,
+        // so do not tear the world session down for those.
+        if (state == COMPLETE && client.gameState == 10) {
+            reset();
+            readyAnnounced = false;
+            loginScreenAnnounced = false;
+            markGameReady(false);
+            writeStage("Returning to game...");
+        }
+
+        if (client.gameState != 10 || CreateManager.step != 0 || WorldList.step != 0) {
+            return;
+        }
+
+        if (!loginScreenAnnounced) {
+            loginScreenAnnounced = true;
+            writeStage("Entering world...");
+            System.out.println("SINGLEPLAYER_E2E: LOGIN_SCREEN");
+        }
+
+        if (state == FAILED) {
+            writeStage("Local login failed");
+            return;
+        }
+
+        if (state == IDLE) {
+            long now = System.currentTimeMillis();
+            if (now < retryAfterMs) return;
+            if (!begin(loadProfileName())) {
+                retryAfterMs = now + 250L;
+                return;
+            }
+            writeStage("Loading local player...");
+            System.out.println("SINGLEPLAYER_E2E: LOGIN_ATTEMPT");
+        }
+
+        if (isInProgress()) {
+            poll();
+        }
+    }
 
     public static synchronized boolean begin(String username) {
         if (!Boolean.getBoolean("singleplayer") || client.gameState != 10) {
@@ -91,8 +160,8 @@ public final class LocalLoginBridge {
                     GameShell.canvasHeight,
                     seed);
             if (!Boolean.TRUE.equals(accepted)) {
-                // Repository teardown after a previous logout is intentionally
-                // asynchronous in 2009Scape. Stay idle and let the plugin retry.
+                // Repository teardown after a previous logout may still be
+                // settling. Stay idle and retry on a later game tick.
                 LocalPresentationBridge.reset();
                 return false;
             }
@@ -178,6 +247,7 @@ public final class LocalLoginBridge {
                 Protocol.readRebuildPacket(false);
                 Protocol.opcode = -1;
                 state = COMPLETE;
+                writeStage("Loading world...");
                 System.out.println("SINGLEPLAYER_LOCAL_LOGIN: RT4_REBUILD_READY");
                 return true;
             }
@@ -199,6 +269,7 @@ public final class LocalLoginBridge {
         closeWorldSession();
         state = IDLE;
         LoginManager.step = 0;
+        retryAfterMs = System.currentTimeMillis() + 250L;
         if (Protocol.socket != null) {
             Protocol.socket.close();
             Protocol.socket = null;
@@ -243,11 +314,64 @@ public final class LocalLoginBridge {
         }
     }
 
+    private static void notifyLocalRuntimeReady() {
+        try {
+            Class<?> bootstrap = Class.forName("singleplayer.InProcessBootstrap");
+            bootstrap.getMethod("markClientReady").invoke(null);
+            System.out.println("SINGLEPLAYER_RUNTIME: CLIENT_ATTACHED");
+        } catch (Throwable failure) {
+            System.err.println("SINGLEPLAYER_RUNTIME: client attach failed: " + failure);
+        }
+    }
+
+    private static String loadProfileName() {
+        String direct = System.getProperty("singlePlayerName", "").trim();
+        if (!direct.isEmpty()) return direct;
+
+        String home = System.getProperty("clientHomeOverride", "");
+        if (!home.isEmpty()) {
+            File profile = new File(home, "singleplayer-profile.txt");
+            if (profile.isFile()) {
+                try (BufferedReader reader = new BufferedReader(new FileReader(profile))) {
+                    String line = reader.readLine();
+                    if (line != null && !line.trim().isEmpty()) return line.trim();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return "Player";
+    }
+
+    private static void writeStage(String value) {
+        String home = System.getProperty("clientHomeOverride", "").trim();
+        if (home.isEmpty()) return;
+        try (FileWriter writer = new FileWriter(new File(home, "singleplayer-game-stage.txt"), false)) {
+            writer.write(value);
+            writer.write(System.lineSeparator());
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void markGameReady(boolean ready) {
+        String home = System.getProperty("clientHomeOverride", "").trim();
+        if (home.isEmpty()) return;
+        File marker = new File(home, "singleplayer-game-ready.flag");
+        try {
+            if (ready) {
+                if (!marker.exists()) marker.createNewFile();
+            } else if (marker.exists()) {
+                marker.delete();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     private static void fail(int reply, String reason) {
         closeWorldSession();
         state = FAILED;
         LoginManager.reply = reply;
         LoginManager.step = 0;
+        writeStage("Local login failed");
         System.err.println("SINGLEPLAYER_LOCAL_LOGIN: FAILED " + reason);
     }
 }
