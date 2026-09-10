@@ -35,7 +35,11 @@ public class plugin extends Plugin {
     private DragMode dragMode = DragMode.NONE;
     private Component scrollComponent;
     private boolean mouseHeld;
-    private boolean announcedReady;
+    private boolean announcedTap;
+    private boolean announcedLongPress;
+    private boolean announcedCameraDrag;
+    private boolean announcedDragEnd;
+    private boolean announcedCancel;
 
     @Override
     public void Draw(long timeDelta) {
@@ -126,18 +130,20 @@ public class plugin extends Plugin {
             case MobileGestureBridge.TAP:
                 endHeldMouseIfNecessary(event.x, event.y);
                 injectClick(event.x, event.y, false);
-                announce("TAP");
+                announceOnce("TAP");
                 break;
 
             case MobileGestureBridge.LONG_PRESS:
                 endHeldMouseIfNecessary(event.x, event.y);
                 injectClick(event.x, event.y, true);
-                announce("LONG_PRESS");
+                announceOnce("LONG_PRESS");
                 break;
 
             case MobileGestureBridge.DRAG_BEGIN:
                 beginDrag(event.x, event.y);
-                announce("DRAG_BEGIN:" + dragMode.name());
+                if (dragMode == DragMode.CAMERA) {
+                    announceOnce("DRAG_BEGIN:CAMERA");
+                }
                 break;
 
             case MobileGestureBridge.DRAG_MOVE:
@@ -146,18 +152,17 @@ public class plugin extends Plugin {
 
             case MobileGestureBridge.DRAG_END:
                 endDrag(event.x, event.y);
-                announce("DRAG_END");
+                announceOnce("DRAG_END");
                 break;
 
             case MobileGestureBridge.PINCH:
                 endHeldMouseIfNecessary(event.x, event.y);
                 applyPinch(event.value1);
-                announceOnceReady();
                 break;
 
             case MobileGestureBridge.CANCEL:
                 cancelDrag(event.x, event.y);
-                announce("CANCEL");
+                announceOnce("CANCEL");
                 break;
 
             default:
@@ -387,22 +392,35 @@ public class plugin extends Plugin {
         }
     }
 
-    private void announce(String event) {
-        System.out.println("SINGLEPLAYER_TOUCH: " + event);
-    }
-
-    private void announceOnceReady() {
-        if (!announcedReady) {
-            announcedReady = true;
-            System.out.println("SINGLEPLAYER_TOUCH: BRIDGE_READY");
+    private void announceOnce(String event) {
+        if ("TAP".equals(event)) {
+            if (announcedTap) return;
+            announcedTap = true;
+        } else if ("LONG_PRESS".equals(event)) {
+            if (announcedLongPress) return;
+            announcedLongPress = true;
+        } else if ("DRAG_BEGIN:CAMERA".equals(event)) {
+            if (announcedCameraDrag) return;
+            announcedCameraDrag = true;
+        } else if ("DRAG_END".equals(event)) {
+            if (announcedDragEnd) return;
+            announcedDragEnd = true;
+        } else if ("CANCEL".equals(event)) {
+            if (announcedCancel) return;
+            announcedCancel = true;
         }
+        System.out.println("SINGLEPLAYER_TOUCH: " + event);
     }
 
     @Override
     public void OnLogout() {
         cancelDrag(Mouse.lastMouseX, Mouse.lastMouseY);
         MobileGestureBridge.clear();
-        announcedReady = false;
+        announcedTap = false;
+        announcedLongPress = false;
+        announcedCameraDrag = false;
+        announcedDragEnd = false;
+        announcedCancel = false;
     }
 
     private static int clamp(int value, int min, int max) {
