@@ -33,6 +33,7 @@ public final class LocalLoginBridge {
 
     private static boolean loginScreenAnnounced;
     private static boolean readyAnnounced;
+    private static boolean leagueAttached;
     private static long retryAfterMs;
 
     private LocalLoginBridge() {}
@@ -46,6 +47,10 @@ public final class LocalLoginBridge {
         if (!Boolean.getBoolean("singleplayer")) return;
 
         if (client.gameState == 30) {
+            if (!leagueAttached) {
+                leagueAttached = tryAttachLeagueRuntime();
+                if (!leagueAttached) return;
+            }
             if (!readyAnnounced) {
                 readyAnnounced = true;
                 writeStage("Ready");
@@ -168,6 +173,7 @@ public final class LocalLoginBridge {
             }
 
             activeUsername = normalized;
+            leagueAttached = false;
             state = WAIT_RESPONSE;
             System.out.println("SINGLEPLAYER_LOCAL_LOGIN: REQUESTED username=" + normalized);
             return true;
@@ -248,13 +254,10 @@ public final class LocalLoginBridge {
                 Protocol.readRebuildPacket(false);
                 Protocol.opcode = -1;
 
-                // The rebuild bytes can only exist after LoginParser's deferred
-                // world pulse parsed the profile and called player.init(). Attach
-                // league rules here so persisted league attributes are loaded.
-                Object attached = resolveAttachLeagueRuntime().invoke(null, activeUsername);
-                if (!Boolean.TRUE.equals(attached)) {
-                    throw new IllegalStateException("league runtime could not attach after profile load");
-                }
+                // Save parsing happens before the success/rebuild stream exists.
+                // Player.init may still be finishing concurrently, so attachment
+                // is retried from tickAutoLogin until the world reports ready.
+                leagueAttached = tryAttachLeagueRuntime();
 
                 state = COMPLETE;
                 writeStage("Loading world...");
@@ -278,6 +281,7 @@ public final class LocalLoginBridge {
     public static synchronized void reset() {
         closeWorldSession();
         state = IDLE;
+        leagueAttached = false;
         LoginManager.step = 0;
         retryAfterMs = System.currentTimeMillis() + 250L;
         if (Protocol.socket != null) {
@@ -319,6 +323,18 @@ public final class LocalLoginBridge {
         method = probe.getMethod("endLocalSession", String.class);
         endLocalSession = method;
         return method;
+    }
+
+    private static boolean tryAttachLeagueRuntime() {
+        String username = activeUsername;
+        if (username == null || username.isEmpty()) return false;
+        try {
+            return Boolean.TRUE.equals(resolveAttachLeagueRuntime().invoke(null, username));
+        } catch (Throwable failure) {
+            System.err.println(
+                    "SINGLEPLAYER_LEAGUE: attachment retry: " + failure.getClass().getSimpleName());
+            return false;
+        }
     }
 
     private static void closeWorldSession() {
@@ -388,6 +404,7 @@ public final class LocalLoginBridge {
     private static void fail(int reply, String reason) {
         closeWorldSession();
         state = FAILED;
+        leagueAttached = false;
         LoginManager.reply = reply;
         LoginManager.step = 0;
         writeStage("Local login failed");
