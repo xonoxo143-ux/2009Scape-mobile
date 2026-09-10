@@ -4,8 +4,8 @@
 The retained 2009Scape source remains authoritative game/content code. This
 script adds observability around the existing typed command/presentation
 boundaries, the temporary loopback-only safety constraint, and the narrow
-world->RT4 in-process byte-stream cutover used while the packet encoders and RT4
-decoders are still retained for parity.
+world->RT4 in-process transport used while the packet encoders and RT4 decoders
+are still retained for parity.
 """
 from __future__ import annotations
 
@@ -80,8 +80,16 @@ def patch_local_presentation_transport(server_root: Path) -> None:
         "import core.cache.crypto.ISAACPair;\nimport core.local.LocalMigrationProbe;\n",
         "IoSession local presentation import",
     )
+    replace_once(
+        session,
+        "\tprivate boolean active = true;\n",
+        "\tprivate boolean active = true;\n\n"
+        "\t/** True once normal gameplay has left the NIO socket behind. */\n"
+        "\tprivate volatile boolean localTransport = false;\n",
+        "IoSession local transport state",
+    )
 
-    old = """\tpublic void queue(ByteBuffer buffer) {
+    old_queue = """\tpublic void queue(ByteBuffer buffer) {
 \t\ttry {
 \t\t\twritingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
 \t\t} catch (Exception e){
@@ -93,7 +101,7 @@ def patch_local_presentation_transport(server_root: Path) -> None:
 \t\twrite();
 \t}
 """
-    new = """\tpublic void queue(ByteBuffer buffer) {
+    new_queue = """\tpublic void queue(ByteBuffer buffer) {
 \t\tboolean locked = false;
 \t\ttry {
 \t\t\tlocked = writingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
@@ -101,9 +109,9 @@ def patch_local_presentation_transport(server_root: Path) -> None:
 \t\t\t\tthrow new IllegalStateException(\"Timed out acquiring session write lock\");
 \t\t\t}
 
-\t\t\t// During migration, switch the human player's already-encoded output to
-\t\t\t// the shared in-process stream only when no older socket bytes remain
-\t\t\t// queued. The current ByteBuffer position is not modified by the probe.
+\t\t\t// Once the retained encoder has produced bytes, move them straight to
+\t\t\t// RT4's in-process presentation stream whenever that bridge owns the
+\t\t\t// session. Only bootstrap/fallback bytes ever enter the NIO queue.
 \t\t\tif (LocalMigrationProbe.routeOutgoingBytes(this, buffer, writingQueue.isEmpty())) {
 \t\t\t\treturn;
 \t\t\t}
@@ -119,7 +127,165 @@ def patch_local_presentation_transport(server_root: Path) -> None:
 \t\twrite();
 \t}
 """
-    replace_once(session, old, new, "IoSession local presentation queue")
+    replace_once(session, old_queue, new_queue, "IoSession local presentation queue")
+
+    old_write = """\tpublic void write() {
+\t\tif (!key.isValid()) {
+\t\t\tdisconnect();
+\t\t\treturn;
+\t\t}
+\t\ttry {
+\t\t\twritingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
+\t\t} catch (Exception e){
+\t\t\te.printStackTrace();
+\t\t\twritingLock.unlock();
+\t\t\treturn;
+\t\t}
+\t\tSocketChannel channel = (SocketChannel) key.channel();
+\t\ttry {
+\t\t\twhile (!writingQueue.isEmpty()) {
+\t\t\t\tByteBuffer buffer = writingQueue.get(0);
+\t\t\t\tchannel.write(buffer);
+\t\t\t\tif (buffer.hasRemaining()) {
+\t\t\t\t\tkey.interestOps(key.interestOps() | SelectionKey.OP_WRITE);
+\t\t\t\t\tbreak;
+\t\t\t\t}
+\t\t\t\twritingQueue.remove(0);
+\t\t\t}
+\t\t} catch (IOException e) {
+\t\t\tdisconnect();
+\t\t}
+\t\twritingLock.unlock();
+\t}
+"""
+    new_write = """\tpublic void write() {
+\t\tif (localTransport) {
+\t\t\t// queue() normally routes before anything is retained here. Drain any
+\t\t\t// race-time leftovers through the same in-process bridge rather than
+\t\t\t// interpreting the intentionally closed SocketChannel as a logout.
+\t\t\tboolean locked = false;
+\t\t\ttry {
+\t\t\t\tlocked = writingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
+\t\t\t\tif (!locked) return;
+\t\t\t\twhile (!writingQueue.isEmpty()) {
+\t\t\t\t\tByteBuffer buffer = writingQueue.get(0);
+\t\t\t\t\tif (!LocalMigrationProbe.routeOutgoingBytes(this, buffer, true)) {
+\t\t\t\t\t\tSystem.err.println(\"SINGLEPLAYER_LOCAL_PRESENTATION: retained local write could not be routed\");
+\t\t\t\t\t\treturn;
+\t\t\t\t\t}
+\t\t\t\t\twritingQueue.remove(0);
+\t\t\t\t}
+\t\t\t} catch (Exception e) {
+\t\t\t\te.printStackTrace();
+\t\t\t} finally {
+\t\t\t\tif (locked) writingLock.unlock();
+\t\t\t}
+\t\t\treturn;
+\t\t}
+\n\t\tif (key == null || !key.isValid()) {
+\t\t\tdisconnect();
+\t\t\treturn;
+\t\t}
+\t\tboolean locked = false;
+\t\ttry {
+\t\t\tlocked = writingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
+\t\t\tif (!locked) return;
+\t\t\tSocketChannel channel = (SocketChannel) key.channel();
+\t\t\twhile (!writingQueue.isEmpty()) {
+\t\t\t\tByteBuffer buffer = writingQueue.get(0);
+\t\t\t\tchannel.write(buffer);
+\t\t\t\tif (buffer.hasRemaining()) {
+\t\t\t\t\tkey.interestOps(key.interestOps() | SelectionKey.OP_WRITE);
+\t\t\t\t\tbreak;
+\t\t\t\t}
+\t\t\t\twritingQueue.remove(0);
+\t\t\t}
+\t\t} catch (IOException e) {
+\t\t\tdisconnect();
+\t\t} catch (InterruptedException e) {
+\t\t\tThread.currentThread().interrupt();
+\t\t} finally {
+\t\t\tif (locked) writingLock.unlock();
+\t\t}
+\t}
+"""
+    replace_once(session, old_write, new_write, "IoSession local transport write")
+
+    replace_once(
+        session,
+        "\tpublic String getRemoteAddress() {\n\t\ttry {\n\t\t\treturn ((SocketChannel) key.channel()).getRemoteAddress().toString();\n",
+        "\tpublic String getRemoteAddress() {\n"
+        "\t\tif (localTransport || key == null) {\n"
+        "\t\t\treturn address;\n"
+        "\t\t}\n"
+        "\t\ttry {\n"
+        "\t\t\treturn ((SocketChannel) key.channel()).getRemoteAddress().toString();\n",
+        "IoSession local remote address",
+    )
+
+    marker = """\t/**
+\t * Gets the IP-address (without the port).
+\t * @return The address.
+\t */
+\tpublic String getAddress() {
+"""
+    detach = """\t/**
+\t * Permanently removes only the physical NIO transport from an established
+\t * single-player session. The Player, ISAAC state, producer and logical
+\t * session remain active; logical logout still uses disconnect().
+\t */
+\tpublic synchronized void promoteToLocalTransport() {
+\t\tif (localTransport) return;
+\t\tlocalTransport = true;
+\t\tif (key != null) {
+\t\t\tkey.cancel();
+\t\t\ttry {
+\t\t\t\tif (key.channel() instanceof SocketChannel) {
+\t\t\t\t\t((SocketChannel) key.channel()).close();
+\t\t\t\t}
+\t\t\t} catch (IOException e) {
+\t\t\t\te.printStackTrace();
+\t\t\t}
+\t\t}
+\t\tSystem.out.println(\"SINGLEPLAYER_LOCAL_SESSION: NIO_DETACHED\");
+\t}
+
+\tpublic boolean isLocalTransport() {
+\t\treturn localTransport;
+\t}
+
+""" + marker
+    replace_once(session, marker, detach, "IoSession local transport detach")
+
+
+def patch_local_disconnect_semantics(server_root: Path) -> None:
+    handler = server_root / "src/main/core/net/IoEventHandler.java"
+    replace_once(
+        handler,
+        "\t\t\t\tif (session != null) {\n\t\t\t\t\tsession.disconnect();\n\t\t\t\t}\n\t\t\t\tkey.cancel();\n",
+        "\t\t\t\tif (session != null && !session.isLocalTransport()) {\n"
+        "\t\t\t\t\tsession.disconnect();\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tkey.cancel();\n",
+        "IoEventHandler EOF detach guard",
+    )
+    replace_once(
+        handler,
+        "\t\t\tif (e.getMessage().contains(\"reset by peer\") && session != null) {\n\t\t\t\tsession.disconnect();\n",
+        "\t\t\tString message = e.getMessage();\n"
+        "\t\t\tif (message != null && message.contains(\"reset by peer\") && session != null) {\n"
+        "\t\t\t\tif (!session.isLocalTransport()) session.disconnect();\n",
+        "IoEventHandler reset detach guard",
+    )
+    replace_once(
+        handler,
+        "\t\t\tif (session != null) {\n\t\t\t\tsession.disconnect();\n\t\t\t}\n\t\t} catch (Throwable e) {\n",
+        "\t\t\tif (session != null && !session.isLocalTransport()) {\n"
+        "\t\t\t\tsession.disconnect();\n"
+        "\t\t\t}\n"
+        "\t\t} catch (Throwable e) {\n",
+        "IoEventHandler exception detach guard",
+    )
 
 
 def patch_loopback_only(server_root: Path) -> None:
@@ -147,6 +313,7 @@ def main() -> None:
     patch_command_shadow(server_root)
     patch_presentation_shadow(server_root)
     patch_local_presentation_transport(server_root)
+    patch_local_disconnect_semantics(server_root)
     patch_loopback_only(server_root)
     print("native refactor migration overlay prepared")
 
