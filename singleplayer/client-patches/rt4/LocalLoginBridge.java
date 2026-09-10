@@ -28,6 +28,7 @@ public final class LocalLoginBridge {
     private static int state = IDLE;
     private static String activeUsername;
     private static Method beginLocalLogin;
+    private static Method attachLeagueRuntime;
     private static Method endLocalSession;
 
     private static boolean loginScreenAnnounced;
@@ -246,6 +247,15 @@ public final class LocalLoginBridge {
                 SceneGraph.centralZoneX = -1;
                 Protocol.readRebuildPacket(false);
                 Protocol.opcode = -1;
+
+                // The rebuild bytes can only exist after LoginParser's deferred
+                // world pulse parsed the profile and called player.init(). Attach
+                // league rules here so persisted league attributes are loaded.
+                Object attached = resolveAttachLeagueRuntime().invoke(null, activeUsername);
+                if (!Boolean.TRUE.equals(attached)) {
+                    throw new IllegalStateException("league runtime could not attach after profile load");
+                }
+
                 state = COMPLETE;
                 writeStage("Loading world...");
                 System.out.println("SINGLEPLAYER_LOCAL_LOGIN: RT4_REBUILD_READY");
@@ -290,6 +300,15 @@ public final class LocalLoginBridge {
                 int.class,
                 int[].class);
         beginLocalLogin = method;
+        return method;
+    }
+
+    private static Method resolveAttachLeagueRuntime() throws Exception {
+        Method method = attachLeagueRuntime;
+        if (method != null) return method;
+        Class<?> probe = Class.forName("core.local.LocalMigrationProbe");
+        method = probe.getMethod("attachLeagueRuntime", String.class);
+        attachLeagueRuntime = method;
         return method;
     }
 
