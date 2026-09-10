@@ -9,6 +9,7 @@ import core.game.node.entity.player.info.ClientInfo
 import core.game.node.entity.player.info.PlayerDetails
 import core.game.node.entity.player.info.login.LoginParser
 import core.game.world.GameWorld
+import core.game.world.map.MapDistance
 import core.game.world.repository.Repository
 import core.net.IoSession
 import core.net.packet.Context
@@ -30,6 +31,13 @@ import java.util.concurrent.atomic.AtomicLong
  * server presence, socket login packet, or network session is involved.
  */
 object LocalMigrationProbe {
+    /**
+     * Revision-530 NPC/player add packets encode signed relative coordinates in
+     * five bits, so the retained entity synchronization radius must remain 15.
+     * This is deliberately independent from RT4's terrain/visual view distance.
+     */
+    private const val ENTITY_SYNC_DISTANCE = 15
+
     private val incomingCounts = ConcurrentHashMap<String, AtomicLong>()
     private val outgoingCounts = ConcurrentHashMap<String, AtomicLong>()
 
@@ -72,6 +80,12 @@ object LocalMigrationProbe {
     ): Boolean {
         if (!java.lang.Boolean.getBoolean("singleplayer")) return false
         if (username.isBlank() || seed.size != 4) return false
+
+        // InProcessBootstrap historically coupled this value to the client's
+        // visual distance. Correct it before any human entity can enter the
+        // repository so retained five-bit relative entity coordinates stay safe.
+        enforceEntitySyncDistance()
+
         if (Repository.getPlayerByName(username) != null) return false
 
         val (response, accountInfo) = GameWorld.authenticator.checkLogin(username, "local")
@@ -116,6 +130,29 @@ object LocalMigrationProbe {
             )
             false
         }
+    }
+
+    /**
+     * Restore the server-side entity synchronization radius independently of the
+     * client terrain/view distance. MapDistance stores the value in a private
+     * final field, so use the same narrow reflective technique already used by
+     * the migration bootstrap and verify the result immediately.
+     */
+    private fun enforceEntitySyncDistance() {
+        val rendering = MapDistance.RENDERING
+        if (rendering.distance == ENTITY_SYNC_DISTANCE) return
+
+        val field = MapDistance::class.java.getDeclaredField("distance")
+        field.isAccessible = true
+        field.setInt(rendering, ENTITY_SYNC_DISTANCE)
+
+        val actual = rendering.distance
+        if (actual != ENTITY_SYNC_DISTANCE) {
+            throw IllegalStateException(
+                "Entity sync distance mismatch: $actual != $ENTITY_SYNC_DISTANCE"
+            )
+        }
+        println("SINGLEPLAYER_RUNTIME: ENTITY_SYNC_DISTANCE=$actual")
     }
 
     /**
