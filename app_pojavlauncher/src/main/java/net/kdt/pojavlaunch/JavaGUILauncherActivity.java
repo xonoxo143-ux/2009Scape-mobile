@@ -217,6 +217,9 @@ public class JavaGUILauncherActivity extends BaseActivity {
         if (mTouchInputController != null) {
             mTouchInputController.cancel();
         }
+        if (mTextureView != null) {
+            mTextureView.setRenderingPaused(true);
+        }
         AWTInputBridge.setMobileAppPaused(true);
         super.onPause();
     }
@@ -238,6 +241,9 @@ public class JavaGUILauncherActivity extends BaseActivity {
     public void onResume() {
         super.onResume();
         AWTInputBridge.setMobileAppPaused(false);
+        if (mTextureView != null) {
+            mTextureView.setRenderingPaused(false);
+        }
         final int uiOptions = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
         getWindow().getDecorView().setSystemUiVisibility(uiOptions);
     }
