@@ -5,6 +5,7 @@ import plugin.annotations.PluginMeta;
 import plugin.api.API;
 import rt4.Component;
 import rt4.Cs1ScriptRunner;
+import rt4.HookRequest;
 import rt4.InterfaceList;
 import rt4.MonotonicClock;
 import rt4.Mouse;
@@ -34,6 +35,7 @@ public class plugin extends Plugin {
 
     private DragMode dragMode = DragMode.NONE;
     private Component scrollComponent;
+    private int scrollHookRemainder;
     private boolean mouseHeld;
     private boolean pendingMouseRelease;
     private int pendingReleaseX;
@@ -193,6 +195,7 @@ public class plugin extends Plugin {
             if (hit.scrollable) {
                 dragMode = DragMode.SCROLL;
                 scrollComponent = hit.component;
+                scrollHookRemainder = 0;
                 moveMouse(x, y);
                 return;
             }
@@ -230,6 +233,20 @@ public class plugin extends Plugin {
                     int target = scrollComponent.scrollY - dy;
                     scrollComponent.scrollY = clamp(target, 0, max);
                     InterfaceList.redraw(scrollComponent);
+
+                    if (scrollComponent.onScroll != null) {
+                        scrollHookRemainder += -dy;
+                        while (Math.abs(scrollHookRemainder) >= 45) {
+                            int wheelStep = scrollHookRemainder > 0 ? 1 : -1;
+                            HookRequest request = new HookRequest();
+                            request.aBoolean158 = true;
+                            request.source = scrollComponent;
+                            request.mouseY = wheelStep;
+                            request.arguments = scrollComponent.onScroll;
+                            InterfaceList.lowPriorityRequests.addTail(request);
+                            scrollHookRemainder -= wheelStep * 45;
+                        }
+                    }
                 }
                 moveMouse(x, y);
                 break;
@@ -251,6 +268,7 @@ public class plugin extends Plugin {
         }
         dragMode = DragMode.NONE;
         scrollComponent = null;
+        scrollHookRemainder = 0;
     }
 
     private void cancelDrag(int x, int y) {
@@ -259,6 +277,7 @@ public class plugin extends Plugin {
         }
         dragMode = DragMode.NONE;
         scrollComponent = null;
+        scrollHookRemainder = 0;
     }
 
     private void applyPinch(int spanDelta) {
@@ -415,6 +434,7 @@ public class plugin extends Plugin {
         }
         dragMode = DragMode.NONE;
         scrollComponent = null;
+        scrollHookRemainder = 0;
     }
 
     private void moveMouse(int x, int y) {
