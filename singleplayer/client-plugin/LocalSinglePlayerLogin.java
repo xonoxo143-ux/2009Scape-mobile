@@ -17,8 +17,8 @@ import java.io.FileWriter;
 
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
-        description = "Automatically enters the prepared local single-player profile.",
-        version = 1.4
+        description = "Transitional login adapter while local session removal is in progress.",
+        version = 1.5
 )
 public class plugin extends Plugin {
     private long lastAttemptMs = 0L;
@@ -36,9 +36,6 @@ public class plugin extends Plugin {
             Component component,
             int screenX,
             int screenY) {
-        // ComponentDraw is a fast path when the login UI is rendering. Update()
-        // is the authoritative path so single-player login does not depend on a
-        // particular interface component existing or being visible.
         driveSinglePlayerLogin();
     }
 
@@ -46,6 +43,7 @@ public class plugin extends Plugin {
         if (API.IsLoggedIn() || client.gameState == 30) {
             if (!loggedInAnnounced) {
                 System.out.println("SINGLEPLAYER_E2E: LOGGED_IN");
+                notifyLocalRuntimeReady();
                 writeStage("Ready");
                 markGameReady(true);
                 loggedInAnnounced = true;
@@ -86,6 +84,29 @@ public class plugin extends Plugin {
                 JagString.of(username),
                 JagString.of(password),
                 0);
+    }
+
+    private void notifyLocalRuntimeReady() {
+        try {
+            Class<?> bootstrap = Class.forName("singleplayer.InProcessBootstrap");
+            bootstrap.getMethod("markClientReady").invoke(null);
+            System.out.println("SINGLEPLAYER_RUNTIME: CLIENT_ATTACHED");
+
+            // Shadow proof for the new client->world direct command boundary.
+            // This does not replace any gameplay command yet and is intentionally
+            // harmless: Ping only refreshes the local player's heartbeat.
+            Class<?> localCommands =
+                    Class.forName("singleplayer.InProcessBootstrap$LocalCommands");
+            Object directPing = localCommands.getMethod("ping").invoke(null);
+            if (Boolean.TRUE.equals(directPing)) {
+                System.out.println("SINGLEPLAYER_LOCAL_COMMAND: DIRECT_PING_OK");
+            }
+        } catch (ClassNotFoundException ignored) {
+            // The known-good legacy APK can still run without native overlay code.
+        } catch (Throwable failure) {
+            System.err.println(
+                    "SINGLEPLAYER_RUNTIME: client attach failed: " + failure);
+        }
     }
 
     private void writeStage(String value) {
