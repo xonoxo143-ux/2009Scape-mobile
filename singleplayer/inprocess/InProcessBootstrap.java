@@ -9,6 +9,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Starts the legacy game subsystems under one local game authority. */
 public final class InProcessBootstrap {
@@ -84,5 +85,123 @@ public final class InProcessBootstrap {
             if (cause != null) throw cause;
             throw e;
         }
+    }
+}
+
+/**
+ * Authoritative configuration for the local game instance.
+ * Legacy subsystems temporarily consume mirrored system properties; the value
+ * itself is owned here and published before either subsystem initializes.
+ */
+final class GameConfig {
+    static final String VIEW_DISTANCE_PROPERTY = "singleplayer.viewDistance";
+    static final int DEFAULT_VIEW_DISTANCE = 28;
+    static final int MIN_VIEW_DISTANCE = 15;
+    static final int MAX_LEGACY_SCENE_VIEW_DISTANCE = 48;
+
+    private final int viewDistance;
+
+    private GameConfig(int viewDistance) {
+        this.viewDistance = Math.max(
+                MIN_VIEW_DISTANCE,
+                Math.min(MAX_LEGACY_SCENE_VIEW_DISTANCE, viewDistance));
+    }
+
+    static GameConfig load() {
+        return new GameConfig(Integer.getInteger(
+                VIEW_DISTANCE_PROPERTY,
+                DEFAULT_VIEW_DISTANCE));
+    }
+
+    void publishLegacyProperties() {
+        System.setProperty(VIEW_DISTANCE_PROPERTY, Integer.toString(viewDistance));
+    }
+
+    int viewDistance() {
+        return viewDistance;
+    }
+
+    @Override
+    public String toString() {
+        return "GameConfig{viewDistance=" + viewDistance + '}';
+    }
+}
+
+/** Single process authority around the legacy world/client during migration. */
+final class LocalGameRuntime {
+    enum State {
+        NEW,
+        STARTING,
+        WORLD_READY,
+        RUNNING,
+        PAUSED,
+        STOPPED,
+        FAILED
+    }
+
+    private static final LocalGameRuntime INSTANCE = new LocalGameRuntime();
+
+    private final AtomicReference<State> state = new AtomicReference<>(State.NEW);
+    private volatile GameConfig config = GameConfig.load();
+    private volatile boolean appPaused;
+
+    private LocalGameRuntime() {}
+
+    static LocalGameRuntime get() {
+        return INSTANCE;
+    }
+
+    synchronized void beginStart() {
+        State current = state.get();
+        if (current != State.NEW && current != State.STOPPED) {
+            throw new IllegalStateException(
+                    "Local game runtime cannot start from " + current);
+        }
+        config = GameConfig.load();
+        config.publishLegacyProperties();
+        appPaused = false;
+        state.set(State.STARTING);
+        log("STARTING " + config);
+    }
+
+    void markWorldReady() {
+        if (!state.compareAndSet(State.STARTING, State.WORLD_READY)
+                && state.get() != State.WORLD_READY) {
+            throw new IllegalStateException(
+                    "World became ready from unexpected state " + state.get());
+        }
+        log("WORLD_READY");
+    }
+
+    synchronized void setAppPaused(boolean paused) {
+        appPaused = paused;
+        State current = state.get();
+        if (paused && (current == State.WORLD_READY || current == State.RUNNING)) {
+            state.set(State.PAUSED);
+        } else if (!paused && current == State.PAUSED) {
+            state.set(State.RUNNING);
+        }
+        log(paused ? "PAUSED" : "RESUMED");
+    }
+
+    boolean isAppPaused() {
+        return appPaused;
+    }
+
+    GameConfig config() {
+        return config;
+    }
+
+    State state() {
+        return state.get();
+    }
+
+    void fail(Throwable failure) {
+        state.set(State.FAILED);
+        log("FAILED " + failure.getClass().getName() + ": " + failure.getMessage());
+    }
+
+    private static void log(String message) {
+        System.out.println("SINGLEPLAYER_RUNTIME: " + message);
     }
 }
