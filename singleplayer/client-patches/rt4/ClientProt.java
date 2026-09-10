@@ -62,6 +62,11 @@ public final class ClientProt {
     }
 
     private static void stripDirectMinimapTrailers() {
+        // Closing the currently serialized packet before mutating the buffer is
+        // important: routing may rewind that packet, while the trailer-removal
+        // pass may shift later compatibility packets to a lower offset.
+        Protocol.outboundBuffer.finishLocalPacket();
+
         synchronized (pendingMinimapTrailerOffsets) {
             if (pendingMinimapTrailerOffsets.isEmpty()) {
                 return;
@@ -323,6 +328,13 @@ public final class ClientProt {
 
     @OriginalMember(owner = "client!ej", name = "i", descriptor = "(I)V")
     public static void sendWindowDetails() {
+        if (LocalClientCommands.trackingDisplay(
+                DisplayMode.getWindowMode(),
+                GameShell.canvasWidth,
+                GameShell.canvasHeight,
+                Preferences.antiAliasingMode)) {
+            return;
+        }
         Protocol.outboundBuffer.p1isaac(ClientProt.WINDOW_STATUS);
         Protocol.outboundBuffer.p1(DisplayMode.getWindowMode());
         Protocol.outboundBuffer.p2(GameShell.canvasWidth);
@@ -348,8 +360,9 @@ public final class ClientProt {
             System.out.println("SINGLEPLAYER_LOCAL_COMMAND: PING_DIRECT");
         }
 
-        // Gameplay flush boundary. Any stock minimap trailers produced after a
-        // direct local walk must be gone before remaining legacy packets leave.
+        // Gameplay flush boundary. Finish the last retained packet in memory and
+        // remove any stock minimap trailers before remaining compatibility bytes
+        // are allowed to reach the loopback socket.
         stripDirectMinimapTrailers();
 
         if (!LoginManager.aBoolean247 && Protocol.socket != null) {
@@ -357,6 +370,7 @@ public final class ClientProt {
             // family is local this socket write disappears with the socket itself.
             if (!direct) {
                 Protocol.outboundBuffer.p1isaac(ClientProt.NO_TIMEOUT);
+                Protocol.outboundBuffer.finishLocalPacket();
             }
             if (Protocol.outboundBuffer.offset > 0) {
                 try {
