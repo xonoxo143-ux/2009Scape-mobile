@@ -80,12 +80,20 @@ public class plugin extends Plugin {
             return;
         }
 
+        // RT4's ComponentDraw hook historically passes the draw call's most
+        // convenient coordinate, which is not always the component's top-left.
+        // Normalize it before it participates in hit-testing or parent recovery.
+        int[] origin = normalizeOrigin(component, screenX, screenY);
+        if (origin == null) {
+            return;
+        }
+
         // Record the rendered component and then reconstruct its container
         // ancestors. RT4 does not emit ComponentDraw for type-0 containers, yet
         // those are exactly the components that own most scrollY state.
         Component child = component;
-        int childScreenX = screenX;
-        int childScreenY = screenY;
+        int childScreenX = origin[0];
+        int childScreenY = origin[1];
         recordComponent(child, childScreenX, childScreenY);
 
         for (int depth = 0; depth < 16 && child.overlayer != -1; depth++) {
@@ -104,6 +112,49 @@ public class plugin extends Plugin {
             child = parent;
             childScreenX = parentScreenX;
             childScreenY = parentScreenY;
+        }
+    }
+
+    private int[] normalizeOrigin(Component component, int screenX, int screenY) {
+        switch (component.type) {
+            case 6:
+                // Models report their render center.
+                return new int[]{
+                        screenX - component.width / 2,
+                        screenY - component.height / 2
+                };
+
+            case 7:
+                // Text-inventory rendering reports the first cell's text anchor.
+                return new int[]{
+                        screenX - component.invMarginX - 115,
+                        screenY - component.invMarginY - 12
+                };
+
+            case 8:
+                // Tooltip rendering reports the tooltip box/text position rather
+                // than the owning component position. It is transient and not a
+                // useful drag target, so never let it pollute the touch hit map.
+                return null;
+
+            case 9:
+                // Lines report the far X endpoint and one of the Y endpoints.
+                return new int[]{
+                        screenX - component.width,
+                        screenY - (component.aBoolean20 ? component.height : 0)
+                };
+
+            case 5:
+                // Normal sprites report top-left. Tiled sprites can report a tile
+                // endpoint in older RT4 callback paths; omit those from routing
+                // rather than inventing a false rectangle.
+                if (component.spriteTiling) {
+                    return null;
+                }
+                return new int[]{screenX, screenY};
+
+            default:
+                return new int[]{screenX, screenY};
         }
     }
 
