@@ -1,25 +1,14 @@
 package net.kdt.pojavlaunch;
 
 import static net.kdt.pojavlaunch.MainActivity.fullyExit;
-import static net.kdt.pojavlaunch.Tools.currentDisplayMetrics;
 
-import static java.security.AccessController.getContext;
-
-import android.annotation.SuppressLint;
 import android.content.ClipboardManager;
-import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import android.view.GestureDetector;
 import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.ScaleGestureDetector;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.ImageView;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -29,14 +18,10 @@ import com.kdt.LoggerView;
 
 import net.kdt.pojavlaunch.customcontrols.keyboard.AwtCharSender;
 import net.kdt.pojavlaunch.customcontrols.keyboard.TouchCharInput;
-import net.kdt.pojavlaunch.multirt.MultiRTUtils;
 import net.kdt.pojavlaunch.multirt.Runtime;
 import net.kdt.pojavlaunch.prefs.LauncherPreferences;
 import net.kdt.pojavlaunch.utils.JREUtils;
 import net.kdt.pojavlaunch.utils.KeyEncoder;
-import net.kdt.pojavlaunch.utils.MathUtils;
-
-import org.lwjgl.glfw.CallbackBridge;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -46,24 +31,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouchListener {
+public class JavaGUILauncherActivity extends BaseActivity {
+
+    private static final int CHAT_KEYBOARD_MAX_X = 520;
+    private static final int CHAT_KEYBOARD_MIN_Y = 430;
+    private static final long EXIT_BACK_WINDOW_MS = 1500L;
 
     private AWTCanvasView mTextureView;
     private LoggerView mLoggerView;
     private TouchCharInput mTouchCharInput;
-
-    private LinearLayout mTouchPad;
-    private ImageView mMousePointerImageView;
-    private GestureDetector mGestureDetector;
-
-    private GestureDetector longPressDetector;
-    private boolean cameraMode = false;
-    float prevX = 0, prevY = 0;
-    private long lastPress = 0;
-    private ScaleGestureDetector scaleGestureDetector;
-    private boolean rcState = false;
-    private boolean mSkipDetectMod;
-    private static boolean mIsVirtualMouseEnabled;
+    private TouchInputController mTouchInputController;
 
     private View mSinglePlayerLoadingOverlay;
     private TextView mSinglePlayerLoadingStatus;
@@ -72,7 +49,8 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
     private File mSinglePlayerStageFile;
     private File mSinglePlayerReadyFile;
 
-    @SuppressLint("ClickableViewAccessibility")
+    private long mLastBackPressMs;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -81,208 +59,150 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
         mSinglePlayerLoadingOverlay = findViewById(R.id.singleplayerLoadingOverlay);
         mSinglePlayerLoadingStatus = findViewById(R.id.singleplayerLoadingStatus);
         mSinglePlayerLoadingHandler = new Handler(Looper.getMainLooper());
-        mSinglePlayerStageFile = new File(Tools.DIR_DATA, "singleplayer-game-stage.txt");
-        mSinglePlayerReadyFile = new File(Tools.DIR_DATA, "singleplayer-game-ready.flag");
-        if (mSinglePlayerReadyFile.exists()) mSinglePlayerReadyFile.delete();
-        if (mSinglePlayerStageFile.exists()) mSinglePlayerStageFile.delete();
+        mSinglePlayerStageFile =
+                new File(Tools.DIR_DATA, "singleplayer-game-stage.txt");
+        mSinglePlayerReadyFile =
+                new File(Tools.DIR_DATA, "singleplayer-game-ready.flag");
+
+        if (mSinglePlayerReadyFile.exists()) {
+            mSinglePlayerReadyFile.delete();
+        }
+        if (mSinglePlayerStageFile.exists()) {
+            mSinglePlayerStageFile.delete();
+        }
         startSinglePlayerLoadingPoll();
 
         try {
             File latestLogFile = new File(Tools.DIR_GAME_HOME, "latestlog.txt");
-            if (!latestLogFile.exists() && !latestLogFile.createNewFile())
+            if (!latestLogFile.exists() && !latestLogFile.createNewFile()) {
                 throw new IOException("Failed to create a new log file");
+            }
             Logger.begin(latestLogFile.getAbsolutePath());
-        }catch (IOException e) {
+        } catch (IOException e) {
             Tools.showError(this, e, true);
         }
-        MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+
+        MainActivity.GLOBAL_CLIPBOARD =
+                (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+
         mTouchCharInput = findViewById(R.id.awt_touch_char);
         mTouchCharInput.setCharacterSender(new AwtCharSender());
 
-        findViewById(R.id.mouseMode).setOnTouchListener(this);
-        findViewById(R.id.keyboard).setOnTouchListener(this);
-        findViewById(R.id.camera).setOnTouchListener(this);
-        findViewById(R.id.mb2).setOnTouchListener(this);
-
-        mTouchPad = findViewById(R.id.main_touchpad);
         mLoggerView = findViewById(R.id.launcherLoggerView);
-        mMousePointerImageView = findViewById(R.id.main_mouse_pointer);
+        mLoggerView.setVisibility(View.GONE);
+
         mTextureView = findViewById(R.id.installmod_surfaceview);
-        scaleGestureDetector = new ScaleGestureDetector(this, new ScaleListener());
-        mGestureDetector = new GestureDetector(this, new SingleTapConfirm());
-        mTouchPad.setFocusable(false);
-        mTouchPad.setVisibility(View.GONE);
+        mTouchInputController =
+                new TouchInputController(mTextureView, this::onClientTap);
+        mTextureView.setOnTouchListener(mTouchInputController);
 
-        mMousePointerImageView.post(() -> {
-            ViewGroup.LayoutParams params = mMousePointerImageView.getLayoutParams();
-            params.width = (int) (36 / 100f * LauncherPreferences.PREF_MOUSESCALE);
-            params.height = (int) (54 / 100f * LauncherPreferences.PREF_MOUSESCALE);
-            if(LauncherPreferences.PREF_VIRTUAL_MOUSE_START)
-                toggleVirtualMouse();
-        });
+        installBackHandling();
+        launchCombinedRuntime();
+    }
 
-        mTouchPad.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                // MotionEvent reports input details from the touch screen
-                // and other input controls. In this case, you are only
-                // interested in events where the touch position changed.
-                // int index = event.getActionIndex();
-                int action = event.getActionMasked();
-                float mouseSpeed = LauncherPreferences.PREF_MOUSESPEED;
-
-                float x = event.getX();
-                float y = event.getY();
-                float mouseX, mouseY;
-
-                // Scale the mouse speed
-                mouseX = mMousePointerImageView.getX();
-                mouseY = mMousePointerImageView.getY();
-
-                if (mGestureDetector.onTouchEvent(event)) {
-                    sendScaledMousePosition(mouseX,mouseY);
-                    AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
-                    if(rcState) {
-                        clearRC();
-                    }
-                } else {
-                    if (action == MotionEvent.ACTION_MOVE) { // 2
-                        mouseX = Math.max(0, Math.min(currentDisplayMetrics.widthPixels, mouseX + (x - prevX) * mouseSpeed));
-                        mouseY = Math.max(0, Math.min(currentDisplayMetrics.heightPixels, mouseY + (y - prevY) * mouseSpeed));
-                        placeMouseAt(mouseX, mouseY);
-                        sendScaledMousePosition(mouseX, mouseY);
-                    }
-                    // Check if there are two fingers on the screen
-                    if (action == MotionEvent.ACTION_POINTER_DOWN) {
-                        if (event.getPointerCount() == 2) {
-                            // Right-click event when a second finger touches the screen
-                            // Simulating right-click by sending GLFW_MOUSE_BUTTON_RIGHT event
-                            AWTInputBridge.sendKey((char)AWTInputEvent.VK_F11,AWTInputEvent.VK_F11);
-                            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
-                        }
-                    }
-                }
-
-                prevY = y;
-                prevX = x;
-                return true;
-            }
-        });
-
-        mTextureView.setOnTouchListener((v, event) -> {
-            scaleGestureDetector.onTouchEvent(event);
-            longPressDetector.onTouchEvent(event);
-            float x = event.getX();
-            float y = event.getY();
-            if (mGestureDetector.onTouchEvent(event)) {
-                sendScaledMousePosition(x + mTextureView.getX(), y);
-                AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
-                if(rcState) {
-                    clearRC();
-                }
-                return true;
-            }
-
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_UP: // 1
-                case MotionEvent.ACTION_CANCEL: // 3
-                case MotionEvent.ACTION_POINTER_UP: // 6
-                    break;
-                case MotionEvent.ACTION_MOVE: // 2
-                    sendScaledMousePosition(x + mTextureView.getX(), y);
-                    try {
-                        panCamera(prevX-x, prevY-y);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                    break;
-            }
-
-            prevY = y;
-            prevX = x;
-            return true;
-        });
-
-        longPressDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
-            @Override
-            public void onLongPress(MotionEvent e) {
-                // Send RightClick
-                AWTInputBridge.sendKey((char)AWTInputEvent.VK_F11,AWTInputEvent.VK_F11);
-                AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
-                super.onLongPress(e);
-            }
-
-            @Override
-            public boolean onSingleTapUp(MotionEvent e) {
-                return super.onSingleTapUp(e);
-            }
-        });
-
+    private void launchCombinedRuntime() {
         try {
-
-            placeMouseAt(CallbackBridge.physicalWidth / 2f, CallbackBridge.physicalHeight / 2f);
-
             final Runtime runtime = SinglePlayerManager.getRuntime();
 
-            mSkipDetectMod = false;
-            if (mSkipDetectMod) {
-                new Thread(() -> launchJavaRuntime(runtime, ""), "JREMainThread").start();
-                return;
-            }
-
-            // No visible launcher/login logger: the custom loading overlay stays on
-            // top until the local character is actually in the world.
-            mLoggerView.setVisibility(View.GONE);
             new Thread(() -> {
                 try {
                     final int exit = launchJavaRuntime(runtime, "");
-                    Logger.appendToLog(getString(R.string.toast_optifine_success));
-                    if (exit != 0) return;
-                    runOnUiThread(() -> {
-                        Toast.makeText(JavaGUILauncherActivity.this, R.string.toast_optifine_success, Toast.LENGTH_SHORT).show();
-                        fullyExit();
-                    });
-
+                    if (exit != 0) {
+                        return;
+                    }
+                    runOnUiThread(() -> fullyExit());
                 } catch (Throwable e) {
-                    Logger.appendToLog("Install failed:");
+                    Logger.appendToLog("Combined single-player launch failed:");
                     Logger.appendToLog(Log.getStackTraceString(e));
                     Tools.showError(JavaGUILauncherActivity.this, e);
                 }
-            }, "Installer").start();
+            }, "SinglePlayerRuntime").start();
         } catch (Throwable th) {
             Tools.showError(this, th, true);
         }
+    }
+
+    private void onClientTap(int clientX, int clientY) {
+        // In fixed-mode RT4 the chat entry area occupies the lower-left portion
+        // of the canvas. Tapping it should behave like a native mobile text box.
+        // Other text prompts continue to receive hardware-key input normally;
+        // additional prompt-specific keyboard requests can be added without
+        // reintroducing a permanent keyboard control.
+        if (clientX <= CHAT_KEYBOARD_MAX_X
+                && clientY >= CHAT_KEYBOARD_MIN_Y
+                && !TouchCharInput.softKeyboardIsActive) {
+            mTouchCharInput.switchKeyboardState();
+        }
+    }
+
+    private void installBackHandling() {
+        getOnBackPressedDispatcher().addCallback(
+                this,
+                new OnBackPressedCallback(true) {
+                    @Override
+                    public void handleOnBackPressed() {
+                        if (TouchCharInput.softKeyboardIsActive) {
+                            mTouchCharInput.disable();
+                            return;
+                        }
+
+                        long now = android.os.SystemClock.elapsedRealtime();
+                        if (now - mLastBackPressMs <= EXIT_BACK_WINDOW_MS) {
+                            if (mTouchInputController != null) {
+                                mTouchInputController.cancel();
+                            }
+                            fullyExit();
+                            return;
+                        }
+
+                        mLastBackPressMs = now;
+                        AWTInputBridge.sendKey(
+                                (char) AWTInputEvent.VK_ESCAPE,
+                                AWTInputEvent.VK_ESCAPE);
+                        Toast.makeText(
+                                JavaGUILauncherActivity.this,
+                                "Back again to exit",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
     }
 
     private void startSinglePlayerLoadingPoll() {
         mSinglePlayerLoadingOverlay.setVisibility(View.VISIBLE);
         mSinglePlayerLoadingStatus.setText("Starting single-player...");
 
-        mSinglePlayerLoadingPoll = new Runnable() {
-            @Override
-            public void run() {
-                if (isFinishing() || isDestroyed()) return;
+        mSinglePlayerLoadingPoll =
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || isDestroyed()) {
+                            return;
+                        }
 
-                String stage = readSinglePlayerStage();
-                if (stage.length() > 0) {
-                    mSinglePlayerLoadingStatus.setText(stage);
-                }
+                        String stage = readSinglePlayerStage();
+                        if (stage.length() > 0) {
+                            mSinglePlayerLoadingStatus.setText(stage);
+                        }
 
-                if (mSinglePlayerReadyFile.isFile()) {
-                    mSinglePlayerLoadingOverlay.setVisibility(View.GONE);
-                    Logger.appendToLog("SINGLEPLAYER_UI: GAME_VISIBLE");
-                    return;
-                }
+                        if (mSinglePlayerReadyFile.isFile()) {
+                            mSinglePlayerLoadingOverlay.setVisibility(View.GONE);
+                            Logger.appendToLog("SINGLEPLAYER_UI: GAME_VISIBLE");
+                            return;
+                        }
 
-                mSinglePlayerLoadingHandler.postDelayed(this, 250L);
-            }
-        };
+                        mSinglePlayerLoadingHandler.postDelayed(this, 250L);
+                    }
+                };
         mSinglePlayerLoadingHandler.post(mSinglePlayerLoadingPoll);
     }
 
     private String readSinglePlayerStage() {
-        if (!mSinglePlayerStageFile.isFile()) return "";
-        try (BufferedReader reader = new BufferedReader(new FileReader(mSinglePlayerStageFile))) {
+        if (!mSinglePlayerStageFile.isFile()) {
+            return "";
+        }
+
+        try (BufferedReader reader =
+                new BufferedReader(new FileReader(mSinglePlayerStageFile))) {
             String line = reader.readLine();
             return line == null ? "" : line.trim();
         } catch (IOException ignored) {
@@ -291,153 +211,40 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
     }
 
     @Override
-    protected void onDestroy() {
-        if (mSinglePlayerLoadingHandler != null && mSinglePlayerLoadingPoll != null) {
-            mSinglePlayerLoadingHandler.removeCallbacks(mSinglePlayerLoadingPoll);
+    protected void onPause() {
+        if (mTouchInputController != null) {
+            mTouchInputController.cancel();
         }
-        super.onDestroy();
+        super.onPause();
     }
 
-    private void panCamera(float dx, float dy) throws InterruptedException {
-        //Log.i("downthecrop-pan","dx: " +dx + " dy: " + dy);
-        final float threshold = 8.0f; // adjust this value as needed to control the sensitivity of the panning
-
-        // Check horizontal panning
-        if(dx > threshold) {
-            // Finger moved to the right, pan camera to the right
-            AWTInputBridge.sendKey((char)AWTInputEvent.VK_RIGHT, AWTInputEvent.VK_RIGHT);
-        } else if(dx < -threshold) {
-            AWTInputBridge.sendKey((char)AWTInputEvent.VK_LEFT, AWTInputEvent.VK_LEFT);
+    @Override
+    protected void onDestroy() {
+        if (mTouchInputController != null) {
+            mTouchInputController.cancel();
         }
-
-        // Check vertical panning
-        if(dy > threshold) {
-            // Finger moved down, pan camera up
-            AWTInputBridge.sendKey((char)AWTInputEvent.VK_UP, AWTInputEvent.VK_UP);
-        } else if(dy < -threshold) {
-            // Finger moved up, pan camera down
-            AWTInputBridge.sendKey((char)AWTInputEvent.VK_DOWN, AWTInputEvent.VK_DOWN);
+        if (mSinglePlayerLoadingHandler != null
+                && mSinglePlayerLoadingPoll != null) {
+            mSinglePlayerLoadingHandler.removeCallbacks(
+                    mSinglePlayerLoadingPoll);
         }
+        super.onDestroy();
     }
 
     @Override
     public void onResume() {
         super.onResume();
         final int uiOptions = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
-        final View decorView = getWindow().getDecorView();
-        decorView.setSystemUiVisibility(uiOptions);
-    }
-
-    public static class ScaleListener extends ScaleGestureDetector.SimpleOnScaleGestureListener {
-        @Override
-        public boolean onScale(ScaleGestureDetector detector) {
-            float scaleFactor = detector.getScaleFactor();
-            if (scaleFactor > 1) { //Send F4 To Zoom Out
-                AWTInputBridge.sendKey((char)AWTInputEvent.VK_F3, AWTInputEvent.VK_F3);
-            } else { //116 F3 To Zoom In
-                AWTInputBridge.sendKey((char)AWTInputEvent.VK_F4,AWTInputEvent.VK_F4);
-            }
-            return true;
-        }
-
-        @Override
-        public boolean onScaleBegin(ScaleGestureDetector detector) {
-            return true;
-        }
-
-        @Override
-        public void onScaleEnd(ScaleGestureDetector detector) {
-
-        }
-    }
-
-    @Override
-    public boolean onTouch(View v, MotionEvent e) { // these AWTInputEvent doesn't work for some reason
-        long time = System.currentTimeMillis();
-        if (time > lastPress + 500) {
-            switch (v.getId()) {
-                case R.id.keyboard:
-                    toggleKeyboard(this.getCurrentFocus());
-                    break;
-                case R.id.mb2:
-                    if (!rcState) {
-                        activateRC(); // Send F11 to activate RightClick
-                    } else {
-                        clearRC(); // Send F10 to clear RightClick
-                    }
-                    break;
-                case R.id.camera:
-                    if (!cameraMode) { // Camera Mode On
-                        AWTInputBridge.sendKey((char) AWTInputEvent.VK_F9, AWTInputEvent.VK_F9); // Send F9
-                        cameraMode = true;
-                        findViewById(R.id.camera).setBackground(getResources().getDrawable( R.drawable.control_button_pressed ));
-                    } else { // Camera Mode off
-                        AWTInputBridge.sendKey((char) AWTInputEvent.VK_F8, AWTInputEvent.VK_F8);
-                        cameraMode = false;
-                        findViewById(R.id.camera).setBackground(getResources().getDrawable( R.drawable.control_button_normal ));
-                    }
-                    break;
-                case R.id.mouseMode:
-                    toggleVirtualMouse();
-            }
-            lastPress = time;
-        }
-        return true;
+        getWindow().getDecorView().setSystemUiVisibility(uiOptions);
     }
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if(event.getAction() == KeyEvent.ACTION_DOWN){
-            KeyEncoder.sendEncodedChar(event.getKeyCode(),(char)event.getUnicodeChar());
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            KeyEncoder.sendEncodedChar(
+                    event.getKeyCode(), (char) event.getUnicodeChar());
         }
         return true;
-    }
-
-    public void placeMouseAt(float x, float y) {
-        mMousePointerImageView.setX(x);
-        mMousePointerImageView.setY(y);
-    }
-
-    private void clearRC(){
-        rcState = false;
-        findViewById(R.id.mb2).setBackground(getResources().getDrawable( R.drawable.control_button_normal ));
-        AWTInputBridge.sendKey((char)AWTInputEvent.VK_F10,AWTInputEvent.VK_F10);
-    }
-
-    private void activateRC(){
-        rcState = true;
-        findViewById(R.id.mb2).setBackground(getResources().getDrawable( R.drawable.control_button_pressed ));
-        AWTInputBridge.sendKey((char)AWTInputEvent.VK_F11,AWTInputEvent.VK_F11);
-    }
-
-    @SuppressWarnings("SuspiciousNameCombination")
-    void sendScaledMousePosition(float x, float y){
-        // Clamp positions to the borders of the usable view, then scale them
-        x = androidx.core.math.MathUtils.clamp(x, mTextureView.getX(), mTextureView.getX() + mTextureView.getWidth());
-        y = androidx.core.math.MathUtils.clamp(y, mTextureView.getY(), mTextureView.getY() + mTextureView.getHeight());
-
-        AWTInputBridge.sendMousePos(
-                (int) MathUtils.map(x, mTextureView.getX(), mTextureView.getX() + mTextureView.getWidth(), 0, AWTCanvasView.AWT_CANVAS_WIDTH),
-                (int) MathUtils.map(y, mTextureView.getY(), mTextureView.getY() + mTextureView.getHeight(), 0, AWTCanvasView.AWT_CANVAS_HEIGHT)
-                );
-    }
-
-    public void openLogOutput(View v) {
-        mLoggerView.setVisibility(View.VISIBLE);
-    }
-
-    public void toggleVirtualMouse() {
-        mIsVirtualMouseEnabled = !mIsVirtualMouseEnabled;
-        ImageView view = findViewById(R.id.mouseModeIco);
-        if(!mIsVirtualMouseEnabled){
-            view.setImageResource(R.drawable.touch);
-        } else{
-            view.setImageResource(R.drawable.ic_mouse3);
-        }
-        mTouchPad.setVisibility(mIsVirtualMouseEnabled ? View.VISIBLE : View.GONE);
-        Toast.makeText(this,
-                mIsVirtualMouseEnabled ? R.string.control_mouseon : R.string.control_mouseoff,
-                Toast.LENGTH_SHORT).show();
     }
 
     public int launchJavaRuntime(Runtime runtime, String javaArgs) {
@@ -445,48 +252,60 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
         try {
             File worldRoot = SinglePlayerManager.getWorldRoot(this);
             File engineJar = new File(worldRoot, "engine.jar");
-            File bootstrapJar = new File(Tools.DIR_DATA, "singleplayer-bootstrap.jar");
+            File bootstrapJar =
+                    new File(Tools.DIR_DATA, "singleplayer-bootstrap.jar");
             File clientJar = new File(Tools.DIR_DATA, "rt4.jar");
 
             if (!engineJar.isFile()) {
-                throw new IOException("Single-player world engine is missing: " + engineJar);
+                throw new IOException(
+                        "Single-player world engine is missing: " + engineJar);
             }
             if (!bootstrapJar.isFile()) {
-                throw new IOException("Single-player bootstrap is missing: " + bootstrapJar);
+                throw new IOException(
+                        "Single-player bootstrap is missing: " + bootstrapJar);
             }
             if (!clientJar.isFile()) {
-                throw new IOException("RT4 client is missing: " + clientJar);
+                throw new IOException(
+                        "RT4 client is missing: " + clientJar);
             }
 
             List<String> javaArgList = new ArrayList<>();
 
-            // One Java 17 VM now owns both halves of single-player mode.
             Tools.getCacioJavaArgs(javaArgList, false);
-            javaArgList.add("-DconfigFile=" + Tools.DIR_DATA + "/config.json");
-            javaArgList.add("-DpluginDir=" + Tools.DIR_DATA + "/plugins/");
-            javaArgList.add("-DclientHomeOverride=" + Tools.DIR_DATA);
-            javaArgList.add("-DsinglePlayerName=" + SinglePlayerManager.getProfileName(this));
+            javaArgList.add(
+                    "-DconfigFile=" + Tools.DIR_DATA + "/config.json");
+            javaArgList.add(
+                    "-DpluginDir=" + Tools.DIR_DATA + "/plugins/");
+            javaArgList.add(
+                    "-DclientHomeOverride=" + Tools.DIR_DATA);
+            javaArgList.add(
+                    "-DsinglePlayerName="
+                            + SinglePlayerManager.getProfileName(this));
             javaArgList.add("-Dsingleplayer=true");
-            // Xerial's desktop Linux sqlite-jdbc native depends on glibc and cannot
-            // load on Android/Bionic. CI packages the matching Android JNI build
-            // directly into the APK; force sqlite-jdbc to load that exact library.
-            javaArgList.add("-Dorg.sqlite.lib.path=" + getApplicationInfo().nativeLibraryDir);
-            javaArgList.add("-Dorg.sqlite.lib.name=libsqlitejdbc.so");
+            javaArgList.add(
+                    "-Dorg.sqlite.lib.path="
+                            + getApplicationInfo().nativeLibraryDir);
+            javaArgList.add(
+                    "-Dorg.sqlite.lib.name=libsqlitejdbc.so");
             javaArgList.add("-Djava.awt.headless=false");
             javaArgList.add("-cp");
             javaArgList.add(
-                    bootstrapJar.getAbsolutePath() + ":" +
-                    engineJar.getAbsolutePath() + ":" +
-                    clientJar.getAbsolutePath());
+                    bootstrapJar.getAbsolutePath()
+                            + ":"
+                            + engineJar.getAbsolutePath()
+                            + ":"
+                            + clientJar.getAbsolutePath());
             javaArgList.add("singleplayer.InProcessBootstrap");
 
-            // The world engine previously needed a 3 GiB VM by itself. The client now
-            // shares that VM, so reserve a 4 GiB ceiling on the target single-player device.
             LauncherPreferences.PREF_RAM_ALLOCATION =
-                    Math.max(LauncherPreferences.PREF_RAM_ALLOCATION, 4096);
+                    Math.max(
+                            LauncherPreferences.PREF_RAM_ALLOCATION,
+                            4096);
 
-            Logger.appendToLog("Info: combined Java arguments: "
-                    + Arrays.toString(javaArgList.toArray(new String[0])));
+            Logger.appendToLog(
+                    "Info: combined Java arguments: "
+                            + Arrays.toString(
+                                    javaArgList.toArray(new String[0])));
 
             return JREUtils.launchJavaVM(
                     this,
@@ -495,14 +314,11 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
                     javaArgList,
                     LauncherPreferences.PREF_CUSTOM_JAVA_ARGS);
         } catch (Throwable th) {
-            Logger.appendToLog("Combined single-player launch failed:");
+            Logger.appendToLog(
+                    "Combined single-player launch failed:");
             Logger.appendToLog(Log.getStackTraceString(th));
             Tools.showError(this, th, true);
             return -1;
         }
-    }
-
-    public void toggleKeyboard(View view) {
-        mTouchCharInput.switchKeyboardState();
     }
 }
