@@ -3,7 +3,7 @@
 
 The upstream world remains authoritative for game/content behavior. This overlay
 only removes transport/multiplayer plumbing, applies Android lifecycle/runtime
-compatibility, and writes the one packaged single-player configuration.
+compatibility, and writes the packaged single-player configuration.
 """
 from __future__ import annotations
 
@@ -20,6 +20,30 @@ def replace_once(path: Path, old: str, new: str, label: str) -> None:
     path.write_text(text.replace(old, new, 1))
 
 
+def patch_sqlite_dependency(server_root: Path) -> None:
+    pom = server_root / "pom.xml"
+    old = """    <dependency>
+      <groupId>org.xerial</groupId>
+      <artifactId>sqlite-jdbc</artifactId>
+      <version>3.36.0.3</version>
+      <scope>compile</scope>
+    </dependency>"""
+    new = """    <dependency>
+      <groupId>org.xerial</groupId>
+      <artifactId>sqlite-jdbc</artifactId>
+      <version>3.53.4.0</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>1.7.36</version>
+      <scope>compile</scope>
+    </dependency>"""
+    replace_once(pom, old, new, "sqlite-jdbc dependency")
+    print("overlay: Android sqlite-jdbc")
+
+
 def install_probe(repo_root: Path, server_root: Path) -> None:
     source = repo_root / "singleplayer/server-patches/native/core/local/LocalMigrationProbe.kt"
     destination = server_root / "src/main/core/local/LocalMigrationProbe.kt"
@@ -30,38 +54,7 @@ def install_probe(repo_root: Path, server_root: Path) -> None:
     print("overlay: local/LocalMigrationProbe.kt")
 
 
-def patch_sqlite_dependency(server_root: Path) -> None:
-    pom = server_root / "pom.xml"
-    source = pom.read_text()
-    old = (
-        "    <dependency>\n"
-        "      <groupId>org.xerial</groupId>\n"
-        "      <artifactId>sqlite-jdbc</artifactId>\n"
-        "      <version>3.36.0.3</version>\n"
-        "      <scope>compile</scope>\n"
-        "    </dependency>"
-    )
-    new = (
-        "    <dependency>\n"
-        "      <groupId>org.xerial</groupId>\n"
-        "      <artifactId>sqlite-jdbc</artifactId>\n"
-        "      <version>3.53.4.0</version>\n"
-        "      <scope>compile</scope>\n"
-        "    </dependency>\n"
-        "    <dependency>\n"
-        "      <groupId>org.slf4j</groupId>\n"
-        "      <artifactId>slf4j-api</artifactId>\n"
-        "      <version>1.7.36</version>\n"
-        "      <scope>compile</scope>\n"
-        "    </dependency>"
-    )
-    if old not in source:
-        raise SystemExit("sqlite-jdbc dependency anchor not found")
-    pom.write_text(source.replace(old, new, 1))
-    print("overlay: Android sqlite-jdbc")
-
-
-def patch_command_shadow(server_root: Path) -> None:
+def patch_command_boundary(server_root: Path) -> None:
     processor = server_root / "src/main/core/net/packet/PacketProcessor.kt"
     replace_once(
         processor,
@@ -79,7 +72,7 @@ def patch_command_shadow(server_root: Path) -> None:
     )
 
 
-def patch_presentation_shadow(server_root: Path) -> None:
+def patch_presentation_boundary(server_root: Path) -> None:
     repository = server_root / "src/main/core/net/packet/PacketRepository.java"
     replace_once(
         repository,
@@ -110,7 +103,7 @@ def patch_local_session_transport(server_root: Path) -> None:
         session,
         "\tprivate boolean active = true;\n",
         "\tprivate boolean active = true;\n\n"
-        "\t/** True for the human single-player session after network transport is removed. */\n"
+        "\t/** True for the human single-player session. */\n"
         "\tprivate volatile boolean localTransport = false;\n",
         "IoSession local transport state",
     )
@@ -132,9 +125,6 @@ def patch_local_session_transport(server_root: Path) -> None:
 \t\ttry {
 \t\t\tlocked = writingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
 \t\t\tif (!locked) throw new IllegalStateException(\"Timed out acquiring session write lock\");
-
-\t\t\t// The retained encoder still creates the exact RT4 bytes. For the human
-\t\t\t// local session, ownership moves directly into RT4's in-memory stream.
 \t\t\tif (LocalMigrationProbe.routeOutgoingBytes(this, buffer, writingQueue.isEmpty())) {
 \t\t\t\treturn;
 \t\t\t}
@@ -188,8 +178,7 @@ def patch_local_session_transport(server_root: Path) -> None:
 \t\t\t\twhile (!writingQueue.isEmpty()) {
 \t\t\t\t\tByteBuffer buffer = writingQueue.get(0);
 \t\t\t\t\tif (!LocalMigrationProbe.routeOutgoingBytes(this, buffer, true)) {
-\t\t\t\t\t\tSystem.err.println(\"SINGLEPLAYER_LOCAL_PRESENTATION: retained local write could not be routed\");
-\t\t\t\t\t\treturn;
+\t\t\t\t\t\tthrow new IllegalStateException(\"Local presentation route unavailable\");
 \t\t\t\t\t}
 \t\t\t\t\twritingQueue.remove(0);
 \t\t\t\t}
@@ -246,7 +235,7 @@ def patch_local_session_transport(server_root: Path) -> None:
 \t */
 \tpublic String getAddress() {
 """
-    local_api = """\t/** Mark this logical player session as in-process; logical logout still uses disconnect(). */
+    local_api = """\t/** Enter in-process transport mode; logical logout still uses disconnect(). */
 \tpublic synchronized void promoteToLocalTransport() {
 \t\tif (localTransport) return;
 \t\tlocalTransport = true;
@@ -272,10 +261,7 @@ def patch_local_session_transport(server_root: Path) -> None:
 def patch_mobile_pause(server_root: Path) -> None:
     worker = server_root / "src/main/core/worker/MajorUpdateWorker.kt"
     source = worker.read_text()
-    loop_old = (
-        "        while (running) {\n"
-        "            Grafana.startTick()\n"
-    )
+    loop_old = "        while (running) {\n            Grafana.startTick()\n"
     loop_new = (
         "        while (running) {\n"
         "            val singlePlayerPaused = isSinglePlayerPaused()\n"
@@ -308,19 +294,13 @@ def patch_mobile_pause(server_root: Path) -> None:
         "        try {\n"
         "            Class.forName(\"singleplayer.MobileLifecycleBridge\")\n"
         "                .getMethod(\"isAppPaused\")\n"
-        "        } catch (_: Throwable) {\n"
-        "            null\n"
-        "        }\n"
+        "        } catch (_: Throwable) { null }\n"
         "    }\n\n"
         "    private fun isSinglePlayerPaused(): Boolean {\n"
-        "        return try {\n"
-        "            singlePlayerPauseProbe?.invoke(null) == true\n"
-        "        } catch (_: Throwable) {\n"
-        "            false\n"
-        "        }\n"
+        "        return try { singlePlayerPauseProbe?.invoke(null) == true }\n"
+        "        catch (_: Throwable) { false }\n"
         "    }\n\n"
-        "    fun tickOffline()\n"
-        "    {\n"
+        "    fun tickOffline()\n    {\n"
     )
     if method_old not in source:
         raise SystemExit("MajorUpdateWorker helper anchor not found")
@@ -328,9 +308,59 @@ def patch_mobile_pause(server_root: Path) -> None:
     print("overlay: Android lifecycle pause")
 
 
-def patch_singleplayer_console(server_root: Path) -> None:
+def patch_server_host_mode(server_root: Path) -> None:
     server = server_root / "src/main/core/Server.kt"
-    old_console = """        val scanner = Scanner(System.`in`)
+    source = server.read_text()
+
+    network_old = """        log(this::class.java, Log.INFO, "Starting networking...")
+        try {
+            reactor = NioReactor.configure(43594 + GameWorld.settings?.worldId!!)
+            reactor!!.start()
+            if (ServerConstants.WEBSOCKET_ENABLED) {
+                val websocketPort = if (ServerConstants.WEBSOCKET_PORT > 0) {
+                    ServerConstants.WEBSOCKET_PORT
+                } else {
+                    53594 + GameWorld.settings?.worldId!!
+                }
+                webSocketServer = GameWebSocketServer(websocketPort, 1)
+                WebSocketTls.configure(webSocketServer!!)
+                webSocketServer!!.start()
+            }
+        } catch (e: BindException) {
+            log(this::class.java, Log.ERR, "Port " + (43594 + GameWorld.settings?.worldId!!) + " is already in use!")
+            throw e
+        }
+"""
+    network_new = """        if (!java.lang.Boolean.getBoolean("singleplayer")) {
+            log(this::class.java, Log.INFO, "Starting networking...")
+            try {
+                reactor = NioReactor.configure(43594 + GameWorld.settings?.worldId!!)
+                reactor!!.start()
+                if (ServerConstants.WEBSOCKET_ENABLED) {
+                    val websocketPort = if (ServerConstants.WEBSOCKET_PORT > 0) {
+                        ServerConstants.WEBSOCKET_PORT
+                    } else {
+                        53594 + GameWorld.settings?.worldId!!
+                    }
+                    webSocketServer = GameWebSocketServer(websocketPort, 1)
+                    WebSocketTls.configure(webSocketServer!!)
+                    webSocketServer!!.start()
+                }
+            } catch (e: BindException) {
+                log(this::class.java, Log.ERR, "Port " + (43594 + GameWorld.settings?.worldId!!) + " is already in use!")
+                throw e
+            }
+        } else {
+            reactor = null
+            webSocketServer = null
+            println("SINGLEPLAYER_WORLD: NETWORK_LISTENER_DISABLED")
+        }
+"""
+    if network_old not in source:
+        raise SystemExit("Server networking startup anchor not found")
+    source = source.replace(network_old, network_new, 1)
+
+    console_old = """        val scanner = Scanner(System.`in`)
 
         running = true
         GlobalScope.launch {
@@ -347,7 +377,7 @@ def patch_singleplayer_console(server_root: Path) -> None:
             }
         }
 """
-    new_console = """        running = true
+    console_new = """        running = true
         if (!java.lang.Boolean.getBoolean("singleplayer")) {
             val scanner = Scanner(System.`in`)
             GlobalScope.launch {
@@ -363,34 +393,10 @@ def patch_singleplayer_console(server_root: Path) -> None:
             }
         }
 """
-    replace_once(server, old_console, new_console, "Server single-player console")
-
-
-def patch_js5_only_listener(server_root: Path) -> None:
-    handshake = server_root / "src/main/core/net/event/HSReadEvent.java"
-    replace_once(
-        handshake,
-        "\t\tint opcode = buffer.get() & 0xFF;\n\t\tswitch (opcode) {\n",
-        "\t\tint opcode = buffer.get() & 0xFF;\n"
-        "\t\t// Human login/session creation is in-process. The temporary listener\n"
-        "\t\t// exists only for RT4 JS5 cache compatibility until JS5 is localized.\n"
-        "\t\tif (Boolean.getBoolean(\"singleplayer\") && opcode != 15) {\n"
-        "\t\t\tsession.disconnect();\n"
-        "\t\t\treturn;\n"
-        "\t\t}\n"
-        "\t\tswitch (opcode) {\n",
-        "HSReadEvent JS5-only gate",
-    )
-
-
-def patch_loopback_only(server_root: Path) -> None:
-    reactor = server_root / "src/main/core/net/NioReactor.java"
-    replace_once(
-        reactor,
-        "channel.bind(new InetSocketAddress(port));",
-        "channel.bind(new InetSocketAddress(\"127.0.0.1\", port));",
-        "NioReactor loopback bind",
-    )
+    if console_old not in source:
+        raise SystemExit("Server console anchor not found")
+    server.write_text(source.replace(console_old, console_new, 1))
+    print("overlay: networkless single-player host")
 
 
 def write_singleplayer_config(repo_root: Path, server_root: Path) -> Path:
@@ -399,7 +405,6 @@ def write_singleplayer_config(repo_root: Path, server_root: Path) -> Path:
         raise SystemExit(f"Missing single-player config: {source}")
     generated = repo_root / "singleplayer-generated.conf"
     shutil.copy2(source, generated)
-    # Also make local.conf available to source-level/manual world launches.
     shutil.copy2(source, server_root / "worldprops/local.conf")
     print("overlay: singleplayer-generated.conf")
     return generated
@@ -413,15 +418,15 @@ def write_version_manifest(repo_root: Path, server_root: Path, config: Path) -> 
     upstream = upstream_file.read_text().strip() if upstream_file.is_file() else "source-check"
     entries = [
         "upstream=" + upstream,
+        "server=" + digest(server_root / "src/main/core/Server.kt"),
         "io-session=" + digest(server_root / "src/main/core/net/IoSession.java"),
-        "handshake=" + digest(server_root / "src/main/core/net/event/HSReadEvent.java"),
-        "network=" + digest(server_root / "src/main/core/net/NioReactor.java"),
         "pause-worker=" + digest(server_root / "src/main/core/worker/MajorUpdateWorker.kt"),
         "local-probe=" + digest(server_root / "src/main/core/local/LocalMigrationProbe.kt"),
         "config=" + digest(config),
         "bootstrap=" + digest(repo_root / "singleplayer/inprocess/InProcessBootstrap.java"),
         "lifecycle=" + digest(repo_root / "singleplayer/inprocess/MobileLifecycleBridge.java"),
-        "audio-patch=" + digest(repo_root / "singleplayer/client-patches/rt4/OpenALAudioChannel.java"),
+        "local-login=" + digest(repo_root / "singleplayer/client-patches/rt4/LocalLoginBridge.java"),
+        "local-js5=" + digest(repo_root / "singleplayer/client-patches/rt4/LocalJs5Socket.java"),
         "sqlite-jdbc=3.53.4.0",
     ]
     (repo_root / "singleplayer-world-version.txt").write_text("\n".join(entries) + "\n")
@@ -440,13 +445,11 @@ def main() -> None:
 
     patch_sqlite_dependency(server_root)
     install_probe(repo_root, server_root)
-    patch_command_shadow(server_root)
-    patch_presentation_shadow(server_root)
+    patch_command_boundary(server_root)
+    patch_presentation_boundary(server_root)
     patch_local_session_transport(server_root)
     patch_mobile_pause(server_root)
-    patch_singleplayer_console(server_root)
-    patch_js5_only_listener(server_root)
-    patch_loopback_only(server_root)
+    patch_server_host_mode(server_root)
     config = write_singleplayer_config(repo_root, server_root)
     write_version_manifest(repo_root, server_root, config)
     print("single-player Android world overlay prepared")
