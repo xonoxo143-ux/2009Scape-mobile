@@ -71,8 +71,8 @@ jobs:
             upstream-server/Server/src/main/core/net/packet/PacketRepository.java
           grep -q 'beginLocalLogin' \
             upstream-server/Server/src/main/core/local/LocalMigrationProbe.kt
-          grep -q 'opcode != 15' \
-            upstream-server/Server/src/main/core/net/event/HSReadEvent.java
+          grep -q 'NETWORK_LISTENER_DISABLED' \
+            upstream-server/Server/src/main/core/Server.kt
 
       - name: Build world engine on Java 17
         working-directory: upstream-server/Server
@@ -80,17 +80,16 @@ jobs:
           chmod +x mvnw
           ./mvnw clean package -DskipTests
 
-      - name: Smoke-test world engine protocol
+      - name: Smoke-test networkless world startup
         run: |
           set -euxo pipefail
           ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) | head -n 1)
           test -n "$ENGINE_JAR"
           ENGINE_JAR=$(readlink -f "$ENGINE_JAR")
           mkdir -p out
-          cp singleplayer-generated.conf upstream-server/Server/worldprops/local.conf
 
           pushd upstream-server/Server >/dev/null
-          java -Xms512m -Xmx3072m -jar "$ENGINE_JAR" worldprops/local.conf > "$GITHUB_WORKSPACE/out/world-engine-smoke.log" 2>&1 &
+          java -Dsingleplayer=true -Xms512m -Xmx3072m -jar "$ENGINE_JAR" worldprops/local.conf > "$GITHUB_WORKSPACE/out/world-engine-smoke.log" 2>&1 &
           ENGINE_PID=$!
           popd >/dev/null
 
@@ -109,35 +108,18 @@ jobs:
           }
           trap cleanup EXIT
 
-          python3 - <<'PY'
-          import socket, time
-          deadline = time.time() + 300
-          last = None
-          while time.time() < deadline:
-              try:
-                  with socket.create_connection(('127.0.0.1', 43595), timeout=1):
-                      print('World engine JS5 compatibility socket is ready', flush=True)
-                      break
-              except Exception as exc:
-                  last = exc
-                  time.sleep(0.5)
-          else:
-              raise SystemExit('World engine did not open JS5 compatibility socket: %r' % (last,))
-          PY
+          deadline=$((SECONDS + 300))
+          until grep -q 'SINGLEPLAYER_WORLD: NETWORK_LISTENER_DISABLED' out/world-engine-smoke.log; do
+            kill -0 "$ENGINE_PID"
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo 'Timed out waiting for networkless world startup'
+              exit 1
+            fi
+            sleep 1
+          done
 
           ss -ltn | tee out/world-engine-listeners.txt
-          python3 - <<'PY'
-          import re
-          lines = open('out/world-engine-listeners.txt').read().splitlines()
-          listeners = [line for line in lines if re.search(r':43595\s', line)]
-          print('JS5 compatibility listeners:', listeners)
-          allowed = ('127.0.0.1:43595', '[::ffff:127.0.0.1]:43595')
-          if not any(any(token in line for token in allowed) for line in listeners):
-              raise SystemExit('JS5 compatibility socket is not loopback-only')
-          forbidden = ('0.0.0.0:43595', '*:43595', '[::]:43595')
-          if any(any(token in line for token in forbidden) for line in listeners):
-              raise SystemExit('JS5 compatibility socket is exposed beyond loopback')
-          PY
+          ! grep -E '(:43595|:53595)[[:space:]]' out/world-engine-listeners.txt
 
           cleanup
           trap - EXIT
@@ -185,6 +167,14 @@ jobs:
           (cd upstream-server/Server && zip -qr "$GITHUB_WORKSPACE/$ASSET_DIR/world-data.zip" data)
           ls -lh "$ASSET_DIR"
 
+      - name: Generate pinned RT4 source overrides
+        run: |
+          set -euxo pipefail
+          rm -rf build/generated-rt4
+          python3 singleplayer/native-refactor/prepare_rt4.py build/generated-rt4
+          test -f build/generated-rt4/rt4/SignLink.java
+          grep -q 'LocalSocketPolicy.openJs5IfRequested' build/generated-rt4/rt4/SignLink.java
+
       - name: Build combined JVM bootstrap
         run: |
           set -euxo pipefail
@@ -199,26 +189,33 @@ jobs:
             singleplayer/inprocess/InProcessBootstrap.java \
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
-            "${RT4_PATCHES[@]}"
+            "${RT4_PATCHES[@]}" \
+            build/generated-rt4/rt4/SignLink.java
           rm -f app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
           jar --create \
             --file app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar \
             -C build/singleplayer-bootstrap singleplayer \
             -C build/singleplayer-bootstrap rt4
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'singleplayer/InProcessBootstrap.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileGestureBridge.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileLifecycleBridge.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/AudioThread.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/NanoTimer.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/OpenALAudioChannel.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/ClientProt.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/FriendsList.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/IgnoreList.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/ClanChat.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/LocalLoginBridge.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/LocalPresentationBridge.class'
-          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/BufferedSocket.class'
+          for class in \
+            singleplayer/InProcessBootstrap.class \
+            singleplayer/MobileGestureBridge.class \
+            singleplayer/MobileLifecycleBridge.class \
+            rt4/AudioThread.class \
+            rt4/NanoTimer.class \
+            rt4/OpenALAudioChannel.class \
+            rt4/ClientProt.class \
+            rt4/FriendsList.class \
+            rt4/IgnoreList.class \
+            rt4/ClanChat.class \
+            rt4/LocalLoginBridge.class \
+            rt4/LocalPresentationBridge.class \
+            rt4/LocalJs5Socket.class \
+            rt4/LocalSocketPolicy.class \
+            rt4/BufferedSocket.class \
+            rt4/SignLink.class; do
+            jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q "$class"
+          done
 
       - name: Package production ARM64 Java 17 runtime
         run: |
@@ -262,10 +259,10 @@ jobs:
             app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so \
             app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
 
-          unzip -p "$SQLITE_ANDROID_JAR" \
+          unzip -p "build/$SQLITE_ANDROID_JAR" \
             org/sqlite/native/Linux-Android/aarch64/libsqlitejdbc.so \
             > app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so
-          unzip -p "$SQLITE_ANDROID_JAR" \
+          unzip -p "build/$SQLITE_ANDROID_JAR" \
             org/sqlite/native/Linux-Android/x86_64/libsqlitejdbc.so \
             > app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
 
@@ -374,19 +371,25 @@ jobs:
 
           unzip -p out/2009scape-mobile.apk assets/singleplayer-bootstrap.jar > out/singleplayer-bootstrap.jar
           unzip -t out/singleplayer-bootstrap.jar
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'singleplayer/InProcessBootstrap.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileGestureBridge.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileLifecycleBridge.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/AudioThread.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/NanoTimer.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/OpenALAudioChannel.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/ClientProt.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/FriendsList.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/IgnoreList.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/ClanChat.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/LocalLoginBridge.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/LocalPresentationBridge.class'
-          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/BufferedSocket.class'
+          for class in \
+            singleplayer/InProcessBootstrap.class \
+            singleplayer/MobileGestureBridge.class \
+            singleplayer/MobileLifecycleBridge.class \
+            rt4/AudioThread.class \
+            rt4/NanoTimer.class \
+            rt4/OpenALAudioChannel.class \
+            rt4/ClientProt.class \
+            rt4/FriendsList.class \
+            rt4/IgnoreList.class \
+            rt4/ClanChat.class \
+            rt4/LocalLoginBridge.class \
+            rt4/LocalPresentationBridge.class \
+            rt4/LocalJs5Socket.class \
+            rt4/LocalSocketPolicy.class \
+            rt4/BufferedSocket.class \
+            rt4/SignLink.class; do
+            unzip -l out/singleplayer-bootstrap.jar | grep -q "$class"
+          done
 
           unzip -p out/2009scape-mobile.apk assets/plugins/LocalSinglePlayerLogin.zip > out/LocalSinglePlayerLogin.zip
           unzip -t out/LocalSinglePlayerLogin.zip
@@ -422,7 +425,7 @@ jobs:
 
           curl --fail --location --retry 5 --retry-delay 2 \
             "$JRE_URL" -o "$ASSET_DIR/runtime-jre17.tar.xz"
-          printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/runtime-jre17-version.txt"
+          printf '%s/%s\n' "$JRE_TAG/$JRE_FILE" > "$ASSET_DIR/runtime-jre17-version.txt"
 
           rm -rf build/runtime-check-x86
           mkdir -p build/runtime-check-x86
