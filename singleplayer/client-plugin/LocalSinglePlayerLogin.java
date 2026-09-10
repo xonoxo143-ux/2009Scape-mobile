@@ -13,11 +13,12 @@ import rt4.client;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
+import java.io.FileWriter;
 
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
         description = "Automatically enters the prepared local single-player profile.",
-        version = 1.2
+        version = 1.3
 )
 public class plugin extends Plugin {
     private long lastAttemptMs = 0L;
@@ -29,6 +30,8 @@ public class plugin extends Plugin {
         if (API.IsLoggedIn()) {
             if (!loggedInAnnounced) {
                 System.out.println("SINGLEPLAYER_E2E: LOGGED_IN");
+                writeStage("Ready");
+                markGameReady(true);
                 loggedInAnnounced = true;
             }
             return;
@@ -41,6 +44,7 @@ public class plugin extends Plugin {
         }
         if (!loginScreenAnnounced) {
             System.out.println("SINGLEPLAYER_E2E: LOGIN_SCREEN");
+            writeStage("Entering world...");
             loginScreenAnnounced = true;
         }
 
@@ -68,6 +72,29 @@ public class plugin extends Plugin {
         LoginManager.method3896(JagString.of(username), JagString.of(password), 0);
     }
 
+    private void writeStage(String value) {
+        String home = System.getProperty("clientHomeOverride", "").trim();
+        if (home.length() == 0) return;
+        File stage = new File(home, "singleplayer-game-stage.txt");
+        try (FileWriter writer = new FileWriter(stage, false)) {
+            writer.write(value);
+            writer.write(System.lineSeparator());
+        } catch (Exception ignored) { }
+    }
+
+    private void markGameReady(boolean ready) {
+        String home = System.getProperty("clientHomeOverride", "").trim();
+        if (home.length() == 0) return;
+        File marker = new File(home, "singleplayer-game-ready.flag");
+        try {
+            if (ready) {
+                if (!marker.exists()) marker.createNewFile();
+            } else if (marker.exists()) {
+                marker.delete();
+            }
+        } catch (Exception ignored) { }
+    }
+
     private String loadProfileName() {
         String direct = System.getProperty("singlePlayerName", "").trim();
         if (direct.length() > 0) return direct;
@@ -89,6 +116,8 @@ public class plugin extends Plugin {
 
     @Override
     public void OnLogout() {
+        markGameReady(false);
+        writeStage("Returning to game...");
         lastAttemptMs = 0L;
         loginScreenAnnounced = false;
         loggedInAnnounced = false;
