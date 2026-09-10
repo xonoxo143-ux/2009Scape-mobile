@@ -36,13 +36,12 @@ jobs:
             singleplayer/inprocess/MobileLifecycleBridge.java \
             singleplayer/client-patches/rt4/AudioThread.java \
             singleplayer/client-patches/rt4/NanoTimer.java \
-            singleplayer/client-patches/rt4/OpenALAudioChannel.java \
-            singleplayer/client-patches/rt4/ClientProt.java
+            singleplayer/client-patches/rt4/OpenALAudioChannel.java
           test -f build/native-bootstrap/singleplayer/LocalGameRuntime.class
           test -f build/native-bootstrap/singleplayer/GameConfig.class
           test -f build/native-bootstrap/singleplayer/InProcessBootstrap\$LocalCommands.class
           test -f build/native-bootstrap/rt4/ClientProt.class
-          grep -q 'WORLDSPACE_WALK_DIRECT' singleplayer/client-patches/rt4/ClientProt.java
+          grep -q 'WORLDSPACE_WALK_DIRECT' singleplayer/client-patches/rt4/AudioThread.java
 
       - name: Fetch pinned 2009Scape source
         run: |
