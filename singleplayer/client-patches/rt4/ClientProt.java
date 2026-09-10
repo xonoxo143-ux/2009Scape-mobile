@@ -5,6 +5,7 @@ import org.openrs2.deob.annotation.OriginalMember;
 import org.openrs2.deob.annotation.Pc;
 
 import java.io.IOException;
+import java.util.ArrayList;
 
 /**
  * Transitional RT4 protocol cutover.
@@ -40,19 +41,63 @@ public final class ClientProt {
     public static final int CLOSE_MODAL = 184;
     public static final int NO_TIMEOUT = 93;
 
-    /**
-     * PathFinder has to report false for a successfully direct-routed minimap
-     * walk so the historical MiniMenu caller does not append the 14-byte minimap
-     * trailer to Protocol.outboundBuffer after no packet prefix was written.
-     */
-    private static boolean directMinimapWalkPending;
+    private static final int MINIMAP_TRAILER_BYTES = 14;
+    private static final ArrayList<Integer> pendingMinimapTrailerOffsets =
+            new ArrayList<>();
 
     private ClientProt() {}
 
-    public static boolean consumeDirectMinimapWalk() {
-        boolean direct = directMinimapWalkPending;
-        directMinimapWalkPending = false;
-        return direct;
+    /**
+     * A stock minimap caller appends 14 presentation/input bytes after
+     * PathFinder returns. A direct local minimap walk deliberately writes no
+     * packet prefix, so remember where that trailer will begin and remove it
+     * before the gameplay socket can flush. Removing newest-to-oldest preserves
+     * the offsets of any earlier trailers and any real packets queued between
+     * clicks.
+     */
+    private static void markDirectMinimapTrailer() {
+        synchronized (pendingMinimapTrailerOffsets) {
+            pendingMinimapTrailerOffsets.add(Protocol.outboundBuffer.offset);
+        }
+    }
+
+    private static void stripDirectMinimapTrailers() {
+        synchronized (pendingMinimapTrailerOffsets) {
+            if (pendingMinimapTrailerOffsets.isEmpty()) {
+                return;
+            }
+
+            int removed = 0;
+            for (int i = pendingMinimapTrailerOffsets.size() - 1; i >= 0; i--) {
+                int start = pendingMinimapTrailerOffsets.get(i);
+                int end = Protocol.outboundBuffer.offset;
+                if (start < 0 || start + MINIMAP_TRAILER_BYTES > end) {
+                    System.err.println(
+                            "SINGLEPLAYER_LOCAL_COMMAND: MINIMAP_TRAILER_INVALID start="
+                                    + start + " end=" + end);
+                    continue;
+                }
+
+                int trailingBytes = end - start - MINIMAP_TRAILER_BYTES;
+                if (trailingBytes > 0) {
+                    System.arraycopy(
+                            Protocol.outboundBuffer.data,
+                            start + MINIMAP_TRAILER_BYTES,
+                            Protocol.outboundBuffer.data,
+                            start,
+                            trailingBytes);
+                }
+                Protocol.outboundBuffer.offset = end - MINIMAP_TRAILER_BYTES;
+                removed++;
+            }
+            pendingMinimapTrailerOffsets.clear();
+
+            if (removed > 0) {
+                System.out.println(
+                        "SINGLEPLAYER_LOCAL_COMMAND: MINIMAP_TRAILERS_DISCARDED count="
+                                + removed);
+            }
+        }
     }
 
     private static int interfaceOpcode(int option) {
@@ -129,7 +174,9 @@ public final class ClientProt {
 
     @OriginalMember(owner = "client!pi", name = "c", descriptor = "(III)V")
     public static void method3502(@OriginalArg(1) int arg0, @OriginalArg(2) int arg1) {
-        directMinimapWalkPending = false;
+        // If a previous direct minimap click has already returned to MiniMenu,
+        // its 14-byte stock trailer is now present and can be removed safely.
+        stripDirectMinimapTrailers();
 
         if (arg0 > 0 && Boolean.getBoolean("singleplayer")) {
             int destinationX = Camera.originX + PathFinder.queueX[0];
@@ -161,7 +208,7 @@ public final class ClientProt {
                 LoginManager.mapFlagZ = PathFinder.queueZ[0];
                 LoginManager.mapFlagX = PathFinder.queueX[0];
                 if (arg1 == 1) {
-                    directMinimapWalkPending = true;
+                    markDirectMinimapTrailer();
                 }
                 System.out.println(
                         "SINGLEPLAYER_LOCAL_COMMAND: " + directLabel + "_DIRECT "
@@ -300,6 +347,10 @@ public final class ClientProt {
         if (direct) {
             System.out.println("SINGLEPLAYER_LOCAL_COMMAND: PING_DIRECT");
         }
+
+        // Gameplay flush boundary. Any stock minimap trailers produced after a
+        // direct local walk must be gone before remaining legacy packets leave.
+        stripDirectMinimapTrailers();
 
         if (!LoginManager.aBoolean247 && Protocol.socket != null) {
             // Preserve flushing of any still-legacy packets. Once every command
