@@ -1,0 +1,145 @@
+name: Native Refactor Checks
+
+on:
+  push:
+    branches:
+      - singleplayer-native-refactor
+  workflow_dispatch:
+
+concurrency:
+  group: native-refactor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  architecture:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Compile local authority and RT4 adapters
+        run: |
+          set -euxo pipefail
+          rm -rf build/native-bootstrap
+          mkdir -p build/native-bootstrap
+          javac --release 17 \
+            -cp app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/native-bootstrap \
+            singleplayer/inprocess/InProcessBootstrap.java \
+            singleplayer/inprocess/MobileGestureBridge.java \
+            singleplayer/inprocess/MobileLifecycleBridge.java \
+            singleplayer/client-patches/rt4/AudioThread.java \
+            singleplayer/client-patches/rt4/NanoTimer.java \
+            singleplayer/client-patches/rt4/OpenALAudioChannel.java \
+            singleplayer/client-patches/rt4/GlobalConfig.java
+          test -f build/native-bootstrap/singleplayer/LocalGameRuntime.class
+          test -f build/native-bootstrap/singleplayer/GameConfig.class
+          test -f build/native-bootstrap/rt4/GlobalConfig.class
+
+      - name: Verify one authoritative client view distance
+        run: |
+          set -euxo pipefail
+          cat > build/ViewDistanceClientSmoke.java <<'JAVA'
+          public final class ViewDistanceClientSmoke {
+              public static void main(String[] args) {
+                  System.setProperty("singleplayer.viewDistance", "40");
+                  int runtime = singleplayer.InProcessBootstrap.getViewDistance();
+                  int client = rt4.GlobalConfig.TILE_DISTANCE;
+                  if (runtime != 40 || client != runtime) {
+                      throw new AssertionError(
+                              "view distance authority mismatch runtime=" + runtime +
+                              " client=" + client);
+                  }
+                  System.out.println("NATIVE_REFACTOR: CLIENT_VIEW_DISTANCE=" + client);
+              }
+          }
+          JAVA
+          javac --release 17 \
+            -cp build/native-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/native-bootstrap \
+            build/ViewDistanceClientSmoke.java
+          java -cp build/native-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar \
+            ViewDistanceClientSmoke
+
+      - name: Fetch pinned 2009Scape source
+        run: |
+          set -euxo pipefail
+          UPSTREAM_COMMIT=9f634148bab11fad821943864cb71d7c6af98da4
+          git init upstream-server
+          git -C upstream-server remote add origin https://gitlab.com/2009scape/2009scape.git
+          git -C upstream-server fetch --depth 1 origin "$UPSTREAM_COMMIT"
+          git -C upstream-server checkout --detach FETCH_HEAD
+          test "$(git -C upstream-server rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+
+      - name: Apply native migration overlay
+        run: |
+          set -euxo pipefail
+          python3 singleplayer/native-refactor/prepare_upstream.py \
+            upstream-server/Server \
+            --repo-root "$GITHUB_WORKSPACE"
+          grep -q 'LocalMigrationProbe.observeIncoming' \
+            upstream-server/Server/src/main/core/net/packet/PacketProcessor.kt
+          grep -q 'LocalMigrationProbe.observeOutgoing' \
+            upstream-server/Server/src/main/core/net/packet/PacketRepository.java
+          grep -q 'singleplayer.viewDistance' \
+            upstream-server/Server/src/main/core/game/world/map/MapDistance.java
+
+      - name: Build patched world engine
+        working-directory: upstream-server/Server
+        run: |
+          set -euxo pipefail
+          chmod +x mvnw
+          ./mvnw clean package -DskipTests
+
+      - name: Verify direct command ingress and shadow hooks
+        run: |
+          set -euxo pipefail
+          ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \
+            \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) \
+            | head -n 1)
+          test -n "$ENGINE_JAR"
+          jar -tf "$ENGINE_JAR" | grep -q 'core/local/LocalCommandIngress.class'
+          jar -tf "$ENGINE_JAR" | grep -q 'core/local/LocalMigrationProbe.class'
+
+          javap -classpath "$ENGINE_JAR" core.local.LocalCommandIngress \
+            | tee build/local-command-ingress.txt
+          grep -q 'worldspaceWalk' build/local-command-ingress.txt
+          grep -q 'npcAction' build/local-command-ingress.txt
+          grep -q 'sceneryAction' build/local-command-ingress.txt
+          grep -q 'itemAction' build/local-command-ingress.txt
+          grep -q 'interfaceAction' build/local-command-ingress.txt
+
+      - name: Verify one authoritative world view distance
+        run: |
+          set -euxo pipefail
+          ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \
+            \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) \
+            | head -n 1)
+          cat > build/ViewDistanceWorldSmoke.java <<'JAVA'
+          public final class ViewDistanceWorldSmoke {
+              public static void main(String[] args) {
+                  int world = core.game.world.map.MapDistance.RENDERING.getDistance();
+                  if (world != 40) {
+                      throw new AssertionError("world view distance=" + world);
+                  }
+                  System.out.println("NATIVE_REFACTOR: WORLD_VIEW_DISTANCE=" + world);
+              }
+          }
+          JAVA
+          javac --release 17 -cp "$ENGINE_JAR" \
+            -d build/native-bootstrap build/ViewDistanceWorldSmoke.java
+          java -Dsingleplayer.viewDistance=40 \
+            -cp build/native-bootstrap:"$ENGINE_JAR" ViewDistanceWorldSmoke
+
+      - name: Architecture checkpoint summary
+        run: |
+          echo 'LocalGameRuntime authority: compiled'
+          echo 'Shared view distance: verified at 40 for RT4 + world'
+          echo 'Direct typed command ingress: compiled'
+          echo 'Legacy command/presentation shadow probes: compiled'
