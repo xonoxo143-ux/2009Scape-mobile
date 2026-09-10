@@ -33,6 +33,12 @@ public final class LocalPresentationBridge {
         }
     }
 
+    public static boolean isCutoverRequested() {
+        synchronized (LOCK) {
+            return cutoverRequested;
+        }
+    }
+
     /**
      * Called reflectively from the retained world engine at its final byte-write
      * boundary. The world supplies canActivate only when its legacy socket write
