@@ -58,164 +58,21 @@ jobs:
           ! grep -a -q 'git-lfs.github.com/spec/v1' "$CACHE"
 
       - name: Prepare embedded single-player world engine
-        shell: python
         run: |
-          from pathlib import Path
-          import hashlib, re
-
-          root = Path('upstream-server/Server')
-
-          # Upgrade sqlite-jdbc to a release with maintained Android support. The Java
-          # driver stays inside the world-engine fat JAR; matching Android/Bionic JNI
-          # libraries are packaged into the APK separately below.
-          pom = root / 'pom.xml'
-          pom_source = pom.read_text()
-          sqlite_old = (
-              '    <dependency>\n'
-              '      <groupId>org.xerial</groupId>\n'
-              '      <artifactId>sqlite-jdbc</artifactId>\n'
-              '      <version>3.36.0.3</version>\n'
-              '      <scope>compile</scope>\n'
-              '    </dependency>'
-          )
-          sqlite_new = (
-              '    <dependency>\n'
-              '      <groupId>org.xerial</groupId>\n'
-              '      <artifactId>sqlite-jdbc</artifactId>\n'
-              '      <version>3.53.4.0</version>\n'
-              '      <scope>compile</scope>\n'
-              '    </dependency>\n'
-              '    <dependency>\n'
-              '      <groupId>org.slf4j</groupId>\n'
-              '      <artifactId>slf4j-api</artifactId>\n'
-              '      <version>1.7.36</version>\n'
-              '      <scope>compile</scope>\n'
-              '    </dependency>'
-          )
-          if sqlite_old not in pom_source:
-              raise SystemExit('Could not locate pinned sqlite-jdbc dependency')
-          pom_source = pom_source.replace(sqlite_old, sqlite_new, 1)
-          pom.write_text(pom_source)
-
-          # Keep the stock RT4 protocol as an internal compatibility boundary, but
-          # never expose the socket beyond this device.
-          nio = root / 'src/main/core/net/NioReactor.java'
-          nio_source = nio.read_text()
-          bind_needle = 'channel.bind(new InetSocketAddress(port));'
-          if bind_needle not in nio_source:
-              raise SystemExit('Could not locate upstream game socket bind')
-          nio_source = nio_source.replace(
-              bind_needle,
-              'channel.bind(new InetSocketAddress("127.0.0.1", port));',
-              1)
-          nio.write_text(nio_source)
-
-          # Freeze the single-player world while Android is backgrounded. Keep
-          # the local session heartbeat fresh so a long phone/app switch cannot
-          # make the server immediately disconnect the player on resume.
-          worker = root / 'src/main/core/worker/MajorUpdateWorker.kt'
-          worker_source = worker.read_text()
-          loop_needle = (
-              '        while (running) {\n'
-              '            Grafana.startTick()\n'
-          )
-          loop_replacement = (
-              '        while (running) {\n'
-              '            val singlePlayerPaused = isSinglePlayerPaused()\n'
-              '            if (singlePlayerPaused) {\n'
-              '                if (!singlePlayerWasPaused) {\n'
-              '                    singlePlayerWasPaused = true\n'
-              '                    println("SINGLEPLAYER_WORLD: PAUSED")\n'
-              '                }\n'
-              '                Server.heartbeat()\n'
-              '                val now = System.currentTimeMillis()\n'
-              '                for (player in Repository.players.filter { !it.isArtificial }) {\n'
-              '                    player.session.lastPing = now\n'
-              '                }\n'
-              '                Thread.sleep(500L)\n'
-              '                continue\n'
-              '            } else if (singlePlayerWasPaused) {\n'
-              '                singlePlayerWasPaused = false\n'
-              '                println("SINGLEPLAYER_WORLD: RESUMED")\n'
-              '            }\n'
-              '\n'
-              '            Grafana.startTick()\n'
-          )
-          if loop_needle not in worker_source:
-              raise SystemExit('Could not locate major update worker loop')
-          worker_source = worker_source.replace(loop_needle, loop_replacement, 1)
-
-          method_needle = (
-              '    fun tickOffline()\n'
-              '    {\n'
-          )
-          method_replacement = (
-              '    private var singlePlayerWasPaused = false\n'
-              '\n'
-              '    private val singlePlayerPauseProbe by lazy {\n'
-              '        try {\n'
-              '            Class.forName("singleplayer.MobileLifecycleBridge")\n'
-              '                .getMethod("isAppPaused")\n'
-              '        } catch (_: Throwable) {\n'
-              '            null\n'
-              '        }\n'
-              '    }\n'
-              '\n'
-              '    private fun isSinglePlayerPaused(): Boolean {\n'
-              '        return try {\n'
-              '            singlePlayerPauseProbe?.invoke(null) == true\n'
-              '        } catch (_: Throwable) {\n'
-              '            false\n'
-              '        }\n'
-              '    }\n'
-              '\n'
-              '    fun tickOffline()\n'
-              '    {\n'
-          )
-          if method_needle not in worker_source:
-              raise SystemExit('Could not locate major worker helper insertion point')
-          worker_source = worker_source.replace(method_needle, method_replacement, 1)
-          worker.write_text(worker_source)
-
-          conf = (root / 'worldprops/default.conf').read_text()
-          replacements = {
-              'name = "2009Scape"': 'name = "2009Scape Single Player"',
-              'name_ge = "2009Scape"': 'name_ge = "2009Scape Single Player"',
-              'activity = "2009Scape Classic."': 'activity = "Single Player"',
-              'log_level = "verbose"': 'log_level = "silent"',
-              'debug = true': 'debug = false',
-              'dev = true': 'dev = false',
-              'enable_default_clan = true': 'enable_default_clan = false',
-              'enable_bots = true': 'enable_bots = false',
-              'bots_influence_ge_price = true': 'bots_influence_ge_price = false',
-              'watchdog_enabled = true': 'watchdog_enabled = false',
-              'daily_accounts_per_ip = 3': 'daily_accounts_per_ip = 1',
-              'player_commands = false': 'player_commands = true',
-          }
-          for old, new in replacements.items():
-              conf = conf.replace(old, new)
-          conf = re.sub(r'(?m)^use_auth\s*=.*$', 'use_auth = false', conf)
-          conf = re.sub(r'(?m)^persist_accounts\s*=.*$', 'persist_accounts = false', conf)
-          conf = re.sub(r'(?m)^noauth_default_admin\s*=.*$', 'noauth_default_admin = true', conf)
-          conf = re.sub(r'(?m)^show_rules\s*=.*$', 'show_rules = false', conf)
-
-          generated_conf = Path('singleplayer-generated.conf')
-          generated_conf.write_text(conf)
-
-          def digest(path):
-              return hashlib.sha256(path.read_bytes()).hexdigest()
-
-          version = [
-              'upstream=' + Path('upstream-server-commit.txt').read_text().strip(),
-              'network=' + digest(nio),
-              'pause-worker=' + digest(worker),
-              'config=' + digest(generated_conf),
-              'bootstrap=' + digest(Path('singleplayer/inprocess/InProcessBootstrap.java')),
-              'lifecycle=' + digest(Path('singleplayer/inprocess/MobileLifecycleBridge.java')),
-              'audio-patch=' + digest(Path('singleplayer/client-patches/rt4/OpenALAudioChannel.java')),
-              'sqlite-jdbc=3.53.4.0',
-          ]
-          Path('singleplayer-world-version.txt').write_text('\n'.join(version) + '\n')
+          set -euxo pipefail
+          python3 singleplayer/native-refactor/prepare_upstream.py \
+            upstream-server/Server \
+            --repo-root "$GITHUB_WORKSPACE"
+          test -f singleplayer-generated.conf
+          test -f singleplayer-world-version.txt
+          grep -q 'LocalMigrationProbe.observeIncoming' \
+            upstream-server/Server/src/main/core/net/packet/PacketProcessor.kt
+          grep -q 'LocalMigrationProbe.observeOutgoing' \
+            upstream-server/Server/src/main/core/net/packet/PacketRepository.java
+          grep -q 'beginLocalLogin' \
+            upstream-server/Server/src/main/core/local/LocalMigrationProbe.kt
+          grep -q 'opcode != 15' \
+            upstream-server/Server/src/main/core/net/event/HSReadEvent.java
 
       - name: Build world engine on Java 17
         working-directory: upstream-server/Server
@@ -259,13 +116,13 @@ jobs:
           while time.time() < deadline:
               try:
                   with socket.create_connection(('127.0.0.1', 43595), timeout=1):
-                      print('World engine game socket is ready', flush=True)
+                      print('World engine JS5 compatibility socket is ready', flush=True)
                       break
               except Exception as exc:
                   last = exc
                   time.sleep(0.5)
           else:
-              raise SystemExit('World engine did not open game socket: %r' % (last,))
+              raise SystemExit('World engine did not open JS5 compatibility socket: %r' % (last,))
           PY
 
           ss -ltn | tee out/world-engine-listeners.txt
@@ -273,13 +130,13 @@ jobs:
           import re
           lines = open('out/world-engine-listeners.txt').read().splitlines()
           listeners = [line for line in lines if re.search(r':43595\s', line)]
-          print('Game listeners:', listeners)
+          print('JS5 compatibility listeners:', listeners)
           allowed = ('127.0.0.1:43595', '[::ffff:127.0.0.1]:43595')
           if not any(any(token in line for token in allowed) for line in listeners):
-              raise SystemExit('Game socket is not loopback-only')
+              raise SystemExit('JS5 compatibility socket is not loopback-only')
           forbidden = ('0.0.0.0:43595', '*:43595', '[::]:43595')
           if any(any(token in line for token in forbidden) for line in listeners):
-              raise SystemExit('Game socket is exposed beyond loopback')
+              raise SystemExit('JS5 compatibility socket is exposed beyond loopback')
           PY
 
           cleanup
@@ -359,6 +216,9 @@ jobs:
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/FriendsList.class'
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/IgnoreList.class'
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/ClanChat.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/LocalLoginBridge.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/LocalPresentationBridge.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/BufferedSocket.class'
 
       - name: Package production ARM64 Java 17 runtime
         run: |
@@ -369,7 +229,8 @@ jobs:
           JRE_SHA256="c64583ac2e0ec8857e43456fa9adcf482c6a8e454a7133173bf15692d2478b8d"
           JRE_URL="https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/${JRE_TAG}/${JRE_FILE}"
 
-          curl --fail --location --retry 5 --retry-delay 2             "$JRE_URL" -o "$ASSET_DIR/runtime-jre17.tar.xz"
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "$JRE_URL" -o "$ASSET_DIR/runtime-jre17.tar.xz"
           echo "$JRE_SHA256  $ASSET_DIR/runtime-jre17.tar.xz" | sha256sum -c -
           printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/runtime-jre17-version.txt"
 
@@ -390,14 +251,23 @@ jobs:
           SQLITE_ANDROID_JAR="sqlite-jdbc-${SQLITE_VERSION}-natives-android.jar"
           SQLITE_ANDROID_URL="https://github.com/xerial/sqlite-jdbc/releases/download/${SQLITE_VERSION}/${SQLITE_ANDROID_JAR}"
 
-          curl --fail --location --retry 5 --retry-delay 2             "$SQLITE_ANDROID_URL" -o "build/$SQLITE_ANDROID_JAR"
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "$SQLITE_ANDROID_URL" -o "build/$SQLITE_ANDROID_JAR"
           echo "$SQLITE_ANDROID_SHA256  build/$SQLITE_ANDROID_JAR" | sha256sum -c -
 
-          mkdir -p             app_pojavlauncher/src/main/jniLibs/arm64-v8a             app_pojavlauncher/src/main/jniLibs/x86_64
-          rm -f             app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so             app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
+          mkdir -p \
+            app_pojavlauncher/src/main/jniLibs/arm64-v8a \
+            app_pojavlauncher/src/main/jniLibs/x86_64
+          rm -f \
+            app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so \
+            app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
 
-          unzip -p "build/$SQLITE_ANDROID_JAR"             org/sqlite/native/Linux-Android/aarch64/libsqlitejdbc.so             > app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so
-          unzip -p "build/$SQLITE_ANDROID_JAR"             org/sqlite/native/Linux-Android/x86_64/libsqlitejdbc.so             > app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
+          unzip -p "$SQLITE_ANDROID_JAR" \
+            org/sqlite/native/Linux-Android/aarch64/libsqlitejdbc.so \
+            > app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so
+          unzip -p "$SQLITE_ANDROID_JAR" \
+            org/sqlite/native/Linux-Android/x86_64/libsqlitejdbc.so \
+            > app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
 
           test -s app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so
           test -s app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
@@ -471,7 +341,8 @@ jobs:
       - name: Build production self-contained APK
         run: |
           set -euxo pipefail
-          gradle :app_pojavlauncher:assembleDebug --no-daemon             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+          gradle :app_pojavlauncher:assembleDebug --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
           cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
           sha256sum out/2009scape-mobile.apk > out/2009scape-mobile.apk.sha256
 
@@ -513,6 +384,9 @@ jobs:
           unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/FriendsList.class'
           unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/IgnoreList.class'
           unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/ClanChat.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/LocalLoginBridge.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/LocalPresentationBridge.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/BufferedSocket.class'
 
           unzip -p out/2009scape-mobile.apk assets/plugins/LocalSinglePlayerLogin.zip > out/LocalSinglePlayerLogin.zip
           unzip -t out/LocalSinglePlayerLogin.zip
@@ -546,7 +420,8 @@ jobs:
           JRE_FILE="jre17-x86_64-20210825-release.tar.xz"
           JRE_URL="https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/${JRE_TAG}/${JRE_FILE}"
 
-          curl --fail --location --retry 5 --retry-delay 2             "$JRE_URL" -o "$ASSET_DIR/runtime-jre17.tar.xz"
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "$JRE_URL" -o "$ASSET_DIR/runtime-jre17.tar.xz"
           printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/runtime-jre17-version.txt"
 
           rm -rf build/runtime-check-x86
@@ -558,7 +433,8 @@ jobs:
           test -f build/runtime-check-x86/lib/server/libjvm.so
           readelf -h build/runtime-check-x86/lib/server/libjvm.so | grep -E 'Machine:.*X86-64'
 
-          gradle :app_pojavlauncher:assembleDebug --no-daemon --rerun-tasks             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+          gradle :app_pojavlauncher:assembleDebug --no-daemon --rerun-tasks \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
           cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile-x86-e2e.apk
 
       - name: Upload x86_64 emulator APK
