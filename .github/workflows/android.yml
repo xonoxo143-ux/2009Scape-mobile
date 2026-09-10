@@ -135,7 +135,7 @@ jobs:
               '                for (player in Repository.players.filter { !it.isArtificial }) {\n'
               '                    player.session.lastPing = now\n'
               '                }\n'
-              '                Thread.sleep(100L)\n'
+              '                Thread.sleep(500L)\n'
               '                continue\n'
               '            } else if (singlePlayerWasPaused) {\n'
               '                singlePlayerWasPaused = false\n'
