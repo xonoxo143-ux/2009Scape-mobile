@@ -10,22 +10,10 @@ import java.util.Arrays;
  * Semantic adapter between retained RT4 call sites and the single-player local
  * world authority.
  *
- * There are two migration levels here:
- *
- * 1. Preferred direct calls use the existing typed 2009Scape Packet subclasses
- *    without serializing anything.
- * 2. Retained RT4 call sites that have not been converted yet may still build
- *    their historical packet payload. Packet.java captures that completed
- *    payload before the socket boundary and this class feeds it directly into
- *    the existing 2009Scape Decoders530 decoder in memory. That preserves the
- *    proven decoder and game logic while removing the kernel/TCP hop.
- *
- * A length-valid packet that the retained server itself classifies as
- * UnhandledOp is consumed here as a no-op. That exactly preserves its gameplay
- * semantics while avoiding a loopback trip whose only effect was a warning log.
- * Returning false means the original wire packet must remain available for the
- * compatibility socket (for example, login/session traffic before a local
- * player exists, malformed data, or a decoder failure).
+ * Preferred direct calls use the existing typed 2009Scape Packet subclasses.
+ * Retained RT4 call sites that have not been converted yet may still build their
+ * historical payload; Packet.java captures it before transport and this class
+ * feeds it directly into the existing Decoders530 decoder in memory.
  */
 public final class LocalClientCommands {
     private static volatile Method getPlayerByName;
@@ -52,12 +40,7 @@ public final class LocalClientCommands {
         return direct;
     }
 
-    /**
-     * Route one completed historical RT4 gameplay packet through the retained
-     * server decoder without a socket. wirePayload starts immediately after the
-     * ISAAC opcode byte and therefore still includes a one/two-byte variable
-     * packet length prefix when the protocol uses one.
-     */
+    /** Route one completed historical RT4 gameplay packet without a socket. */
     public static boolean routeEncodedPacket(int opcode, byte[] wirePayload) {
         if (!enabled() || opcode < 0 || opcode > 255 || wirePayload == null) {
             return false;
@@ -68,6 +51,18 @@ public final class LocalClientCommands {
             Object player = getPlayerByName.invoke(null, playerName());
             if (player == null) {
                 return false;
+            }
+
+            int packetShape = packetSizes[opcode];
+            if (packetShape == -3) {
+                // The network server treated these as malformed and counted them
+                // toward anti-bot disconnects. In a trusted in-process client that
+                // punishment is meaningless; preserve the actual gameplay effect
+                // (none) and discard the obsolete transport-abuse bookkeeping.
+                System.out.println(
+                        "SINGLEPLAYER_LOCAL_PACKET: IGNORED_UNSUPPORTED opcode=" + opcode
+                                + " payloadBytes=" + wirePayload.length);
+                return true;
             }
 
             byte[] payload = stripAndValidateLengthHeader(opcode, wirePayload);
@@ -84,10 +79,6 @@ public final class LocalClientCommands {
                 return false;
             }
 
-            // The retained socket path also gives these packets no gameplay
-            // effect: GameReadEvent merely logs the UnhandledOp. Once the local
-            // player exists, swallowing the validated packet is equivalent and
-            // avoids keeping TCP alive solely for a warning message.
             if (unhandledClass.isInstance(decoded)) {
                 System.out.println(
                         "SINGLEPLAYER_LOCAL_PACKET: IGNORED_UNHANDLED opcode=" + opcode
@@ -150,7 +141,6 @@ public final class LocalClientCommands {
             return Arrays.copyOfRange(wirePayload, 2, wirePayload.length);
         }
 
-        // -3 means the retained server has no packet shape for this opcode.
         return null;
     }
 
