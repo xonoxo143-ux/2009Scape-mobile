@@ -144,6 +144,13 @@ public final class InProcessBootstrap {
                     x, y, run);
         }
 
+        public static boolean interactWalk(int x, int y, boolean run) {
+            return command(
+                    "InteractWalk",
+                    new Class<?>[]{int.class, int.class, boolean.class},
+                    x, y, run);
+        }
+
         public static boolean minimapWalk(
                 int x,
                 int y,
@@ -200,6 +207,18 @@ public final class InProcessBootstrap {
                     option, itemId, slot, iface, child);
         }
 
+        public static boolean itemExamine(int id) {
+            return command("ItemExamine", new Class<?>[]{int.class}, id);
+        }
+
+        public static boolean sceneryExamine(int id) {
+            return command("SceneryExamine", new Class<?>[]{int.class}, id);
+        }
+
+        public static boolean npcExamine(int id) {
+            return command("NpcExamine", new Class<?>[]{int.class}, id);
+        }
+
         public static boolean interfaceAction(
                 int opcode,
                 int option,
@@ -226,6 +245,71 @@ public final class InProcessBootstrap {
 
         public static boolean closeInterface() {
             return command("CloseIface", new Class<?>[0]);
+        }
+
+        public static boolean trackingFocus(boolean focused) {
+            return command(
+                    "TrackingFocus",
+                    new Class<?>[]{boolean.class},
+                    focused);
+        }
+
+        public static boolean trackingCamera(int x, int y) {
+            return command(
+                    "TrackingCameraPos",
+                    new Class<?>[]{int.class, int.class},
+                    x, y);
+        }
+
+        public static boolean trackingDisplay(
+                int windowMode, int width, int height, int displayMode) {
+            return command(
+                    "TrackingDisplayUpdate",
+                    new Class<?>[]{int.class, int.class, int.class, int.class},
+                    windowMode, width, height, displayMode);
+        }
+
+        public static boolean trackingMouseClick(
+                int x, int y, boolean rightClick, int delay) {
+            return command(
+                    "TrackingMouseClick",
+                    new Class<?>[]{int.class, int.class, boolean.class, int.class},
+                    x, y, rightClick, delay);
+        }
+
+        public static boolean addFriend(String username) {
+            return command("AddFriend", new Class<?>[]{String.class}, username);
+        }
+
+        public static boolean removeFriend(String username) {
+            return command("RemoveFriend", new Class<?>[]{String.class}, username);
+        }
+
+        public static boolean addIgnore(String username) {
+            return command("AddIgnore", new Class<?>[]{String.class}, username);
+        }
+
+        public static boolean removeIgnore(String username) {
+            return command("RemoveIgnore", new Class<?>[]{String.class}, username);
+        }
+
+        public static boolean joinClan(String clanName) {
+            return command("JoinClan", new Class<?>[]{String.class}, clanName);
+        }
+
+        public static boolean setClanRank(String username, int rank) {
+            return command(
+                    "SetClanRank",
+                    new Class<?>[]{String.class, int.class},
+                    username, rank);
+        }
+
+        public static boolean kickFromClan(String username) {
+            return command("KickFromClan", new Class<?>[]{String.class}, username);
+        }
+
+        public static boolean commandLine(String text) {
+            return command("Command", new Class<?>[]{String.class}, text);
         }
 
         public static boolean inputPrompt(String response) {
