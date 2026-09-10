@@ -133,7 +133,10 @@ public final class OpenALAudioChannel extends AudioChannel {
     @Override
     protected void close() {
         synchronized (OPENAL_LOCK) {
-            clearQueuedAudio(true);
+            // RT4 uses close() as a channel stop/reset, not as final process
+            // teardown. Keep the OpenAL source alive so later music/jingles or
+            // effects can resume without requiring a separate reopen path.
+            clearQueuedAudio(false);
         }
     }
 
