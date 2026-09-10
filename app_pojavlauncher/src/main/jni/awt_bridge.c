@@ -290,10 +290,11 @@ JNIEXPORT jintArray JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScr
     androidRgbArray = (*env)->NewIntArray(env, arrayLength);
     (*env)->SetIntArrayRegion(env, androidRgbArray, 0, arrayLength, rgbArray);
 
-    (*runtimeJNIEnvPtr_GRAPHICS)->ReleaseIntArrayElements(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, rgbArray, NULL);
-    // (*env)->DeleteLocalRef(env, androidRgbArray);
-    // free(rgbArray);
-    
+    (*runtimeJNIEnvPtr_GRAPHICS)->ReleaseIntArrayElements(
+        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, rgbArray, JNI_ABORT);
+    (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(
+        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
+
     return androidRgbArray;
 }
 
@@ -355,12 +356,16 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScreenFrameInto(
         runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
     jsize destinationLength = (*env)->GetArrayLength(env, androidRgbArray);
     if (sourceLength <= 0 || destinationLength < sourceLength) {
+        (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(
+            runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
         return JNI_FALSE;
     }
 
     jint* sourcePixels = (*runtimeJNIEnvPtr_GRAPHICS)->GetIntArrayElements(
         runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, NULL);
     if (sourcePixels == NULL) {
+        (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(
+            runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
         return JNI_FALSE;
     }
 
@@ -375,6 +380,8 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScreenFrameInto(
         jreRgbArray,
         sourcePixels,
         JNI_ABORT);
+    (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(
+        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
 
     if ((*env)->ExceptionCheck(env) == JNI_TRUE) {
         (*env)->ExceptionClear(env);
