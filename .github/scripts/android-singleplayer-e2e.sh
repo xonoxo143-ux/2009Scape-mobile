@@ -210,6 +210,56 @@ wait_for_activity() {
   return 1
 }
 
+wait_for_touch_marker() {
+  local marker="$1"
+  local timeout="${2:-12}"
+  local deadline=$((SECONDS + timeout))
+
+  while (( SECONDS < deadline )); do
+    copy_client_log
+    adb logcat -d > "${ARTIFACT_DIR}/logcat.txt" 2>&1 || true
+    cat "${ARTIFACT_DIR}/latestlog.txt" "${ARTIFACT_DIR}/logcat.txt" \
+      > "${ARTIFACT_DIR}/combined-log.txt" 2>/dev/null || true
+
+    if grep -F -q "$marker" "${ARTIFACT_DIR}/combined-log.txt" 2>/dev/null; then
+      echo "Touch milestone: $marker"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "Timed out waiting for touch milestone: $marker"
+  return 1
+}
+
+smoke_test_touch_controls() {
+  local timeout
+  timeout="$(phase_timeout 35)"
+  local deadline=$((SECONDS + timeout))
+
+  # The canvas is 765x503 letterboxed into a 1768x884 landscape viewport.
+  # These screen coordinates map safely into the central 3D scene.
+  local x=884
+  local y=350
+
+  echo "=== Touch: tap ==="
+  adb shell input tap "$x" "$y"
+  wait_for_touch_marker 'SINGLEPLAYER_TOUCH: TAP' "$((deadline - SECONDS))"
+
+  echo "=== Touch: long press ==="
+  adb shell input swipe "$x" "$y" "$x" "$y" 750
+  wait_for_touch_marker 'SINGLEPLAYER_TOUCH: LONG_PRESS' "$((deadline - SECONDS))"
+
+  # Close the resulting context menu before testing camera drag.
+  adb shell input keyevent KEYCODE_BACK
+  sleep 1
+
+  echo "=== Touch: world drag ==="
+  adb shell input swipe "$x" "$y" "$((x + 180))" "$y" 500
+  wait_for_touch_marker 'SINGLEPLAYER_TOUCH: DRAG_BEGIN:CAMERA' "$((deadline - SECONDS))"
+  wait_for_touch_marker 'SINGLEPLAYER_TOUCH: DRAG_END' "$((deadline - SECONDS))"
+}
+
 wait_for_combined_game() {
   local timeout="${1:-180}"
   local deadline=$((SECONDS + timeout))
@@ -311,6 +361,9 @@ wait_for_activity 'net.kdt.pojavlaunch.JavaGUILauncherActivity' "$(phase_timeout
 
 echo "=== Wait for combined Java 17 game milestones ==="
 wait_for_combined_game "$(phase_timeout 180)"
+
+echo "=== Verify native mobile controls ==="
+smoke_test_touch_controls
 capture_screen
 
 echo "Combined single-player Android E2E passed."
