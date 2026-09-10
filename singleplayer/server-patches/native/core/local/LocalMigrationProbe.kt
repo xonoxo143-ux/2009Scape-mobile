@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Commands are observed after decoding and presentations before encoding. The
  * optional byte route lets the retained outgoing encoders feed RT4 in-process
- * without making 2009Scape compile against the bootstrap implementation.
+ * without making 2009Scape compile against the RT4 migration implementation.
  */
 object LocalMigrationProbe {
     private val incomingCounts = ConcurrentHashMap<String, AtomicLong>()
@@ -88,7 +88,9 @@ object LocalMigrationProbe {
         if (presentationResolved) return
         presentationResolved = true
         try {
-            val bridge = Class.forName("singleplayer.LocalPresentationBridge")
+            // This class lives in the RT4 patch source set so the same compiled
+            // replacement that reads packets also owns the transitional stream.
+            val bridge = Class.forName("rt4.LocalPresentationBridge")
             presentationRequested = bridge.getMethod("isCutoverRequested")
             presentationOffer = bridge.getMethod(
                 "offerServerBytes",
