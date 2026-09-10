@@ -18,7 +18,7 @@ public final class AudioThread implements Runnable {
         try {
             while (!shouldStop) {
                 if (MobileLifecycleBridge.isAppPaused()) {
-                    ThreadUtils.sleep(50L);
+                    ThreadUtils.sleep(250L);
                     continue;
                 }
                 for (int i = 0; i < audioChannels.length; i++) {
