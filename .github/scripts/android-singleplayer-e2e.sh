@@ -77,8 +77,30 @@ collect_diagnostics() {
 }
 trap collect_diagnostics EXIT
 
+POST_INSTALL_DEADLINE=0
+
+remaining_post_install() {
+  local remaining=$((POST_INSTALL_DEADLINE - SECONDS))
+  if (( remaining <= 0 )); then
+    echo "Post-install E2E budget exhausted" >&2
+    return 1
+  fi
+  echo "$remaining"
+}
+
+phase_timeout() {
+  local cap="$1"
+  local remaining
+  remaining="$(remaining_post_install)" || return 1
+  if (( remaining < cap )); then
+    echo "$remaining"
+  else
+    echo "$cap"
+  fi
+}
+
 wait_for_play_enabled() {
-  local timeout="${1:-900}"
+  local timeout="${1:-120}"
   local deadline=$((SECONDS + timeout))
   while (( SECONDS < deadline )); do
     dump_ui
@@ -175,7 +197,7 @@ PY
 
 wait_for_activity() {
   local activity="${1}"
-  local timeout="${2:-300}"
+  local timeout="${2:-30}"
   local deadline=$((SECONDS + timeout))
   while (( SECONDS < deadline )); do
     if adb shell dumpsys activity activities | grep -q "${activity}"; then
@@ -189,7 +211,7 @@ wait_for_activity() {
 }
 
 wait_for_combined_game() {
-  local timeout="${1:-1200}"
+  local timeout="${1:-180}"
   local deadline=$((SECONDS + timeout))
   local saw_vm=0
   local saw_sqlite=0
@@ -266,11 +288,15 @@ adb install -r -t "${APK_PATH}"
 adb shell pm clear "${APP_ID}" || true
 adb logcat -c
 
+# Everything after installation gets one hard five-minute budget. A dead
+# loading/login state must fail quickly instead of occupying a runner for 15–20 minutes.
+POST_INSTALL_DEADLINE=$((SECONDS + 300))
+
 adb shell am start -W -n "${APP_ID}/net.kdt.pojavlaunch.TestStorageActivity"
 dismiss_fullscreen_cling
 
 echo "=== Wait for unified runtime preparation ==="
-wait_for_play_enabled 900
+wait_for_play_enabled "$(phase_timeout 120)"
 assert_launcher_controls_visible
 capture_screen
 
@@ -281,10 +307,10 @@ fi
 
 echo "=== Launch combined world + client ==="
 tap_play
-wait_for_activity 'net.kdt.pojavlaunch.JavaGUILauncherActivity' 300
+wait_for_activity 'net.kdt.pojavlaunch.JavaGUILauncherActivity' "$(phase_timeout 30)"
 
 echo "=== Wait for combined Java 17 game milestones ==="
-wait_for_combined_game 1200
+wait_for_combined_game "$(phase_timeout 180)"
 capture_screen
 
 echo "Combined single-player Android E2E passed."
