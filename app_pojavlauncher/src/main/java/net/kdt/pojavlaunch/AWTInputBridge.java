@@ -5,6 +5,16 @@ public class AWTInputBridge {
     public static final int EVENT_TYPE_CURSOR_POS = 1003;
     public static final int EVENT_TYPE_KEY = 1005;
     public static final int EVENT_TYPE_MOUSE_BUTTON = 1006;
+
+    // High-level single-player touch gestures. These bypass AWT event synthesis
+    // and are consumed by singleplayer.MobileGestureBridge inside the Java 17 VM.
+    public static final int GESTURE_TAP = 2000;
+    public static final int GESTURE_LONG_PRESS = 2001;
+    public static final int GESTURE_DRAG_BEGIN = 2002;
+    public static final int GESTURE_DRAG_MOVE = 2003;
+    public static final int GESTURE_DRAG_END = 2004;
+    public static final int GESTURE_PINCH = 2005;
+    public static final int GESTURE_CANCEL = 2006;
     
     public static void sendKey(char keychar, int keycode) {
         // TODO: Android -> AWT keycode mapping
@@ -32,6 +42,10 @@ public class AWTInputBridge {
     
     public static void sendMousePos(int x, int y) {
         nativeSendData(EVENT_TYPE_CURSOR_POS, x, y, 0, 0);
+    }
+
+    public static void sendMobileGesture(int type, int x, int y, int value1, int value2) {
+        nativeSendData(type, x, y, value1, value2);
     }
     
     static {
