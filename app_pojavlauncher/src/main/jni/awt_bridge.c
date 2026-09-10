@@ -17,6 +17,9 @@ jmethodID method_ReceiveInput;
 jclass class_MobileGestureBridge;
 jmethodID method_ReceiveMobileGesture;
 
+jclass class_MobileLifecycleBridge;
+jmethodID method_SetAppPaused;
+
 jclass class_MainActivity;
 jmethodID method_OpenLink;
 jmethodID method_OpenPath;
@@ -158,6 +161,93 @@ JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeSendData(JN
         method_ReceiveInput,
         type, i1, i2, i3, i4
     );
+}
+
+JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeSetMobilePaused(
+        JNIEnv* env, jclass clazz, jboolean paused) {
+    if (runtimeJNIEnvPtr_INPUT == NULL) {
+        if (runtimeJavaVMPtr == NULL) {
+            return;
+        }
+        (*runtimeJavaVMPtr)->AttachCurrentThread(
+            runtimeJavaVMPtr, &runtimeJNIEnvPtr_INPUT, NULL);
+    }
+
+    if (method_SetAppPaused == NULL) {
+        jclass localClass = (*runtimeJNIEnvPtr_INPUT)->FindClass(
+            runtimeJNIEnvPtr_INPUT, "singleplayer/MobileLifecycleBridge");
+        if (localClass == NULL) {
+            if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
+                (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+            }
+
+            jclass classLoaderClass = (*runtimeJNIEnvPtr_INPUT)->FindClass(
+                runtimeJNIEnvPtr_INPUT, "java/lang/ClassLoader");
+            if (classLoaderClass != NULL) {
+                jmethodID getSystemClassLoader = (*runtimeJNIEnvPtr_INPUT)->GetStaticMethodID(
+                    runtimeJNIEnvPtr_INPUT,
+                    classLoaderClass,
+                    "getSystemClassLoader",
+                    "()Ljava/lang/ClassLoader;");
+                jmethodID loadClass = (*runtimeJNIEnvPtr_INPUT)->GetMethodID(
+                    runtimeJNIEnvPtr_INPUT,
+                    classLoaderClass,
+                    "loadClass",
+                    "(Ljava/lang/String;)Ljava/lang/Class;");
+                jobject loader = (*runtimeJNIEnvPtr_INPUT)->CallStaticObjectMethod(
+                    runtimeJNIEnvPtr_INPUT,
+                    classLoaderClass,
+                    getSystemClassLoader);
+                jstring className = (*runtimeJNIEnvPtr_INPUT)->NewStringUTF(
+                    runtimeJNIEnvPtr_INPUT,
+                    "singleplayer.MobileLifecycleBridge");
+                localClass = (jclass) (*runtimeJNIEnvPtr_INPUT)->CallObjectMethod(
+                    runtimeJNIEnvPtr_INPUT,
+                    loader,
+                    loadClass,
+                    className);
+                (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(
+                    runtimeJNIEnvPtr_INPUT, className);
+                (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(
+                    runtimeJNIEnvPtr_INPUT, loader);
+                (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(
+                    runtimeJNIEnvPtr_INPUT, classLoaderClass);
+            }
+
+            if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
+                (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+                localClass = NULL;
+            }
+            if (localClass == NULL) {
+                return;
+            }
+        }
+
+        class_MobileLifecycleBridge = (*runtimeJNIEnvPtr_INPUT)->NewGlobalRef(
+            runtimeJNIEnvPtr_INPUT, localClass);
+        (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(
+            runtimeJNIEnvPtr_INPUT, localClass);
+        method_SetAppPaused = (*runtimeJNIEnvPtr_INPUT)->GetStaticMethodID(
+            runtimeJNIEnvPtr_INPUT,
+            class_MobileLifecycleBridge,
+            "setAppPaused",
+            "(Z)V");
+        if (method_SetAppPaused == NULL) {
+            if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
+                (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+            }
+            return;
+        }
+    }
+
+    (*runtimeJNIEnvPtr_INPUT)->CallStaticVoidMethod(
+        runtimeJNIEnvPtr_INPUT,
+        class_MobileLifecycleBridge,
+        method_SetAppPaused,
+        paused);
+    if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
+        (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+    }
 }
 
 // TODO: check for memory leaks
