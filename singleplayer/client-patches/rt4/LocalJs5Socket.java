@@ -144,7 +144,7 @@ public final class LocalJs5Socket extends Socket {
                     encryptionKey = frame[1] & 0xFF;
                     return;
                 case 7: // client is dropping this JS5 connection
-                    close();
+                    LocalJs5Socket.this.close();
                     return;
                 default:
                     throw new IOException("Unsupported local JS5 opcode " + opcode);
@@ -228,7 +228,7 @@ public final class LocalJs5Socket extends Socket {
 
         @Override
         public synchronized int read() {
-            if (available == 0) return finished ? -1 : -1;
+            if (available == 0) return -1;
             byte[] head = chunks.peekFirst();
             int value = head[headOffset++] & 0xFF;
             available--;
@@ -246,7 +246,7 @@ public final class LocalJs5Socket extends Socket {
                 throw new IndexOutOfBoundsException();
             }
             if (len == 0) return 0;
-            if (available == 0) return finished ? -1 : -1;
+            if (available == 0) return -1;
 
             int wanted = Math.min(len, available);
             int remaining = wanted;
