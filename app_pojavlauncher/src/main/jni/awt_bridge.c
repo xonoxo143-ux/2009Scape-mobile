@@ -297,6 +297,92 @@ JNIEXPORT jintArray JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScr
     return androidRgbArray;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScreenFrameInto(
+        JNIEnv* env, jclass clazz, jintArray androidRgbArray) {
+    if (androidRgbArray == NULL) {
+        return JNI_FALSE;
+    }
+
+    if (runtimeJNIEnvPtr_GRAPHICS == NULL) {
+        if (runtimeJavaVMPtr == NULL) {
+            return JNI_FALSE;
+        }
+        (*runtimeJavaVMPtr)->AttachCurrentThread(
+            runtimeJavaVMPtr, &runtimeJNIEnvPtr_GRAPHICS, NULL);
+    }
+
+    if (method_GetRGB == NULL) {
+        class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(
+            runtimeJNIEnvPtr_GRAPHICS, "net/java/openjdk/cacio/ctc/CTCScreen");
+        if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
+            (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
+            class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(
+                runtimeJNIEnvPtr_GRAPHICS,
+                "com/github/caciocavallosilano/cacio/ctc/CTCScreen");
+        }
+        if (class_CTCScreen == NULL) {
+            if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
+                (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
+            }
+            return JNI_FALSE;
+        }
+        method_GetRGB = (*runtimeJNIEnvPtr_GRAPHICS)->GetStaticMethodID(
+            runtimeJNIEnvPtr_GRAPHICS,
+            class_CTCScreen,
+            "getCurrentScreenRGB",
+            "()[I");
+        if (method_GetRGB == NULL) {
+            if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
+                (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
+            }
+            return JNI_FALSE;
+        }
+    }
+
+    jintArray jreRgbArray = (jintArray) (*runtimeJNIEnvPtr_GRAPHICS)->CallStaticObjectMethod(
+        runtimeJNIEnvPtr_GRAPHICS,
+        class_CTCScreen,
+        method_GetRGB);
+    if (jreRgbArray == NULL) {
+        if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
+            (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
+        }
+        return JNI_FALSE;
+    }
+
+    jsize sourceLength = (*runtimeJNIEnvPtr_GRAPHICS)->GetArrayLength(
+        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
+    jsize destinationLength = (*env)->GetArrayLength(env, androidRgbArray);
+    if (sourceLength <= 0 || destinationLength < sourceLength) {
+        return JNI_FALSE;
+    }
+
+    jint* sourcePixels = (*runtimeJNIEnvPtr_GRAPHICS)->GetIntArrayElements(
+        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, NULL);
+    if (sourcePixels == NULL) {
+        return JNI_FALSE;
+    }
+
+    (*env)->SetIntArrayRegion(
+        env,
+        androidRgbArray,
+        0,
+        sourceLength,
+        sourcePixels);
+    (*runtimeJNIEnvPtr_GRAPHICS)->ReleaseIntArrayElements(
+        runtimeJNIEnvPtr_GRAPHICS,
+        jreRgbArray,
+        sourcePixels,
+        JNI_ABORT);
+
+    if ((*env)->ExceptionCheck(env) == JNI_TRUE) {
+        (*env)->ExceptionClear(env);
+        return JNI_FALSE;
+    }
+    return JNI_TRUE;
+}
+
 JNIEXPORT void JNICALL Java_net_java_openjdk_cacio_ctc_CTCClipboard_nQuerySystemClipboard(JNIEnv *env, jclass clazz) {
     JNIEnv *dalvikEnv;char detachable = 0;
     if((*dalvikJavaVMPtr)->GetEnv(dalvikJavaVMPtr, (void **) &dalvikEnv, JNI_VERSION_1_6) == JNI_EDETACHED) {
