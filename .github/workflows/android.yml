@@ -122,7 +122,12 @@ jobs:
             Grafana.startTick()
 '''
           loop_replacement = '''        while (running) {
-            if (isSinglePlayerPaused()) {
+            val singlePlayerPaused = isSinglePlayerPaused()
+            if (singlePlayerPaused) {
+                if (!singlePlayerWasPaused) {
+                    singlePlayerWasPaused = true
+                    println("SINGLEPLAYER_WORLD: PAUSED")
+                }
                 Server.heartbeat()
                 val now = System.currentTimeMillis()
                 for (player in Repository.players.filter { !it.isArtificial }) {
@@ -130,6 +135,9 @@ jobs:
                 }
                 Thread.sleep(100L)
                 continue
+            } else if (singlePlayerWasPaused) {
+                singlePlayerWasPaused = false
+                println("SINGLEPLAYER_WORLD: RESUMED")
             }
 
             Grafana.startTick()
@@ -141,7 +149,9 @@ jobs:
           method_needle = '''    fun tickOffline()
     {
 '''
-          method_replacement = '''    private val singlePlayerPauseProbe by lazy {
+          method_replacement = '''    private var singlePlayerWasPaused = false
+
+    private val singlePlayerPauseProbe by lazy {
         try {
             Class.forName("singleplayer.MobileLifecycleBridge")
                 .getMethod("isAppPaused")
