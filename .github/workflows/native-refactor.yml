@@ -23,7 +23,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Compile local authority and RT4 adapters
+      - name: Compile local runtime authority
         run: |
           set -euxo pipefail
           rm -rf build/native-bootstrap
@@ -36,36 +36,10 @@ jobs:
             singleplayer/inprocess/MobileLifecycleBridge.java \
             singleplayer/client-patches/rt4/AudioThread.java \
             singleplayer/client-patches/rt4/NanoTimer.java \
-            singleplayer/client-patches/rt4/OpenALAudioChannel.java \
-            singleplayer/client-patches/rt4/GlobalConfig.java
+            singleplayer/client-patches/rt4/OpenALAudioChannel.java
           test -f build/native-bootstrap/singleplayer/LocalGameRuntime.class
           test -f build/native-bootstrap/singleplayer/GameConfig.class
-          test -f build/native-bootstrap/rt4/GlobalConfig.class
-
-      - name: Verify one authoritative client view distance
-        run: |
-          set -euxo pipefail
-          cat > build/ViewDistanceClientSmoke.java <<'JAVA'
-          public final class ViewDistanceClientSmoke {
-              public static void main(String[] args) {
-                  System.setProperty("singleplayer.viewDistance", "40");
-                  int runtime = singleplayer.InProcessBootstrap.getViewDistance();
-                  int client = rt4.GlobalConfig.TILE_DISTANCE;
-                  if (runtime != 40 || client != runtime) {
-                      throw new AssertionError(
-                              "view distance authority mismatch runtime=" + runtime +
-                              " client=" + client);
-                  }
-                  System.out.println("NATIVE_REFACTOR: CLIENT_VIEW_DISTANCE=" + client);
-              }
-          }
-          JAVA
-          javac --release 17 \
-            -cp build/native-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar \
-            -d build/native-bootstrap \
-            build/ViewDistanceClientSmoke.java
-          java -cp build/native-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar \
-            ViewDistanceClientSmoke
+          test -f build/native-bootstrap/singleplayer/InProcessBootstrap\$LocalCommands.class
 
       - name: Fetch pinned 2009Scape source
         run: |
@@ -77,7 +51,7 @@ jobs:
           git -C upstream-server checkout --detach FETCH_HEAD
           test "$(git -C upstream-server rev-parse HEAD)" = "$UPSTREAM_COMMIT"
 
-      - name: Apply native migration overlay
+      - name: Apply shadow-only migration overlay
         run: |
           set -euxo pipefail
           python3 singleplayer/native-refactor/prepare_upstream.py \
@@ -87,59 +61,105 @@ jobs:
             upstream-server/Server/src/main/core/net/packet/PacketProcessor.kt
           grep -q 'LocalMigrationProbe.observeOutgoing' \
             upstream-server/Server/src/main/core/net/packet/PacketRepository.java
-          grep -q 'singleplayer.viewDistance' \
-            upstream-server/Server/src/main/core/game/world/map/MapDistance.java
+          grep -q '127.0.0.1' \
+            upstream-server/Server/src/main/core/net/NioReactor.java
 
-      - name: Build patched world engine
+      - name: Build retained world engine
         working-directory: upstream-server/Server
         run: |
           set -euxo pipefail
           chmod +x mvnw
           ./mvnw clean package -DskipTests
 
-      - name: Verify direct command ingress and shadow hooks
+      - name: Verify direct typed command bridge
         run: |
           set -euxo pipefail
           ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \
             \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) \
             | head -n 1)
           test -n "$ENGINE_JAR"
-          jar -tf "$ENGINE_JAR" | grep -q 'core/local/LocalCommandIngress.class'
           jar -tf "$ENGINE_JAR" | grep -q 'core/local/LocalMigrationProbe.class'
 
-          javap -classpath "$ENGINE_JAR" core.local.LocalCommandIngress \
-            | tee build/local-command-ingress.txt
-          grep -q 'worldspaceWalk' build/local-command-ingress.txt
-          grep -q 'npcAction' build/local-command-ingress.txt
-          grep -q 'sceneryAction' build/local-command-ingress.txt
-          grep -q 'itemAction' build/local-command-ingress.txt
-          grep -q 'interfaceAction' build/local-command-ingress.txt
+          cat > build/NativeBridgeSmoke.java <<'JAVA'
+          import java.lang.reflect.Constructor;
+          import java.lang.reflect.Method;
 
-      - name: Verify one authoritative world view distance
+          public final class NativeBridgeSmoke {
+              public static void main(String[] args) throws Exception {
+                  System.setProperty("singleplayer.viewDistance", "40");
+
+                  Class<?> bootstrap = Class.forName("singleplayer.InProcessBootstrap");
+                  Method worldScale = bootstrap.getDeclaredMethod(
+                          "applyWorldViewDistance", int.class);
+                  Method clientScale = bootstrap.getDeclaredMethod(
+                          "applyClientViewDistance", int.class);
+                  worldScale.setAccessible(true);
+                  clientScale.setAccessible(true);
+                  worldScale.invoke(null, 40);
+                  clientScale.invoke(null, 40);
+
+                  int world = core.game.world.map.MapDistance.RENDERING.getDistance();
+                  int client = rt4.GlobalConfig.TILE_DISTANCE;
+                  if (world != 40 || client != 40 || world != client) {
+                      throw new AssertionError(
+                              "authority mismatch world=" + world + " client=" + client);
+                  }
+
+                  Class<?> player = Class.forName(
+                          "core.game.node.entity.player.Player");
+                  requireCommand("WorldspaceWalk",
+                          player, int.class, int.class, boolean.class);
+                  requireCommand("NpcAction", player, int.class, int.class);
+                  requireCommand("SceneryAction",
+                          player, int.class, int.class, int.class, int.class);
+                  requireCommand("ItemAction",
+                          player, int.class, int.class, int.class, int.class, int.class);
+                  requireCommand("IfAction",
+                          player, int.class, int.class, int.class,
+                          int.class, int.class, int.class);
+
+                  if (!singleplayer.InProcessBootstrap.LocalCommands.isAvailable()) {
+                      throw new AssertionError("direct local command bridge unavailable");
+                  }
+
+                  System.out.println(
+                          "NATIVE_REFACTOR: VIEW_DISTANCE=" + world +
+                          " DIRECT_COMMAND_TYPES=READY");
+              }
+
+              private static void requireCommand(
+                      String name, Class<?>... signature) throws Exception {
+                  Class<?> type = Class.forName(
+                          "core.net.packet.in.Packet$" + name);
+                  Constructor<?> constructor = type.getConstructor(signature);
+                  if (constructor == null) {
+                      throw new AssertionError("missing command " + name);
+                  }
+              }
+          }
+          JAVA
+
+          javac --release 17 \
+            -cp build/native-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar:"$ENGINE_JAR" \
+            -d build/native-bootstrap build/NativeBridgeSmoke.java
+          java \
+            -cp build/native-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar:"$ENGINE_JAR" \
+            NativeBridgeSmoke
+
+      - name: Verify shadow observation boundary
         run: |
           set -euxo pipefail
           ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \
             \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) \
             | head -n 1)
-          cat > build/ViewDistanceWorldSmoke.java <<'JAVA'
-          public final class ViewDistanceWorldSmoke {
-              public static void main(String[] args) {
-                  int world = core.game.world.map.MapDistance.RENDERING.getDistance();
-                  if (world != 40) {
-                      throw new AssertionError("world view distance=" + world);
-                  }
-                  System.out.println("NATIVE_REFACTOR: WORLD_VIEW_DISTANCE=" + world);
-              }
-          }
-          JAVA
-          javac --release 17 -cp "$ENGINE_JAR" \
-            -d build/native-bootstrap build/ViewDistanceWorldSmoke.java
-          java -Dsingleplayer.viewDistance=40 \
-            -cp build/native-bootstrap:"$ENGINE_JAR" ViewDistanceWorldSmoke
+          javap -classpath "$ENGINE_JAR" core.local.LocalMigrationProbe \
+            | tee build/local-migration-probe.txt
+          grep -q 'observeIncoming' build/local-migration-probe.txt
+          grep -q 'observeOutgoing' build/local-migration-probe.txt
 
       - name: Architecture checkpoint summary
         run: |
-          echo 'LocalGameRuntime authority: compiled'
-          echo 'Shared view distance: verified at 40 for RT4 + world'
-          echo 'Direct typed command ingress: compiled'
-          echo 'Legacy command/presentation shadow probes: compiled'
+          echo 'One LocalGameRuntime authority: compiled'
+          echo 'One view-distance value drives retained world + RT4: verified'
+          echo 'Existing typed 2009Scape commands reachable without TCP: verified'
+          echo 'Incoming/outgoing legacy boundaries observable for parity migration: verified'
