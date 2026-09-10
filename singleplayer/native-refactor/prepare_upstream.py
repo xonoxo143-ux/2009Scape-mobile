@@ -2,10 +2,10 @@
 """Apply the smallest possible single-player migration overlay.
 
 The retained 2009Scape source remains authoritative game/content code. This
-script currently adds only observability around the existing typed command and
-presentation boundaries plus the temporary loopback-only safety constraint.
-Direct local commands and shared world scale are driven by the bootstrap, so we
-do not fork those engine classes merely to remove networking later.
+script adds observability around the existing typed command/presentation
+boundaries, the temporary loopback-only safety constraint, and the narrow
+world->RT4 in-process byte-stream cutover used while the packet encoders and RT4
+decoders are still retained for parity.
 """
 from __future__ import annotations
 
@@ -72,6 +72,56 @@ def patch_presentation_shadow(server_root: Path) -> None:
     )
 
 
+def patch_local_presentation_transport(server_root: Path) -> None:
+    session = server_root / "src/main/core/net/IoSession.java"
+    replace_once(
+        session,
+        "import core.cache.crypto.ISAACPair;\n",
+        "import core.cache.crypto.ISAACPair;\nimport core.local.LocalMigrationProbe;\n",
+        "IoSession local presentation import",
+    )
+
+    old = """\tpublic void queue(ByteBuffer buffer) {
+\t\ttry {
+\t\t\twritingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
+\t\t} catch (Exception e){
+\t\t\te.printStackTrace();
+\t\t\twritingLock.unlock();
+\t\t}
+\t\twritingQueue.add(buffer);
+\t\twritingLock.unlock();
+\t\twrite();
+\t}
+"""
+    new = """\tpublic void queue(ByteBuffer buffer) {
+\t\tboolean locked = false;
+\t\ttry {
+\t\t\tlocked = writingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
+\t\t\tif (!locked) {
+\t\t\t\tthrow new IllegalStateException(\"Timed out acquiring session write lock\");
+\t\t\t}
+
+\t\t\t// During migration, switch the human player's already-encoded output to
+\t\t\t// the shared in-process stream only when no older socket bytes remain
+\t\t\t// queued. The current ByteBuffer position is not modified by the probe.
+\t\t\tif (LocalMigrationProbe.routeOutgoingBytes(this, buffer, writingQueue.isEmpty())) {
+\t\t\t\treturn;
+\t\t\t}
+\t\t\twritingQueue.add(buffer);
+\t\t} catch (Exception e) {
+\t\t\te.printStackTrace();
+\t\t\treturn;
+\t\t} finally {
+\t\t\tif (locked) {
+\t\t\t\twritingLock.unlock();
+\t\t\t}
+\t\t}
+\t\twrite();
+\t}
+"""
+    replace_once(session, old, new, "IoSession local presentation queue")
+
+
 def patch_loopback_only(server_root: Path) -> None:
     reactor = server_root / "src/main/core/net/NioReactor.java"
     replace_once(
@@ -96,8 +146,9 @@ def main() -> None:
     install_probe(repo_root, server_root)
     patch_command_shadow(server_root)
     patch_presentation_shadow(server_root)
+    patch_local_presentation_transport(server_root)
     patch_loopback_only(server_root)
-    print("native refactor shadow overlay prepared")
+    print("native refactor migration overlay prepared")
 
 
 if __name__ == "__main__":
