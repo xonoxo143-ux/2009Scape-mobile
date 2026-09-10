@@ -5,6 +5,7 @@ import plugin.annotations.PluginMeta;
 import plugin.api.API;
 import rt4.Component;
 import rt4.Cs1ScriptRunner;
+import rt4.GameShell;
 import rt4.HookRequest;
 import rt4.InterfaceList;
 import rt4.MonotonicClock;
@@ -57,6 +58,14 @@ public class plugin extends Plugin {
     private boolean announcedBlockedDrag;
     private boolean announcedDragEnd;
     private boolean announcedCancel;
+
+    @Override
+    public void Init() {
+        // Fixed-mode RT4 does not benefit enough from rendering at a 120 Hz
+        // phone refresh rate to justify the battery/thermal cost.
+        GameShell.setFpsTarget(60);
+        System.out.println("SINGLEPLAYER_MOBILE: FPS_CAP_60");
+    }
 
     @Override
     public void ComponentDraw(
