@@ -27,7 +27,8 @@ public class plugin extends Plugin {
         NONE,
         CAMERA,
         SCROLL,
-        MOUSE
+        MOUSE,
+        BLOCKED
     }
 
     private static final int CLIENT_WIDTH = 765;
@@ -290,11 +291,11 @@ public class plugin extends Plugin {
                 return;
             }
 
-            // Any other interactive/blocking interface owns the gesture. Preserve
-            // normal RuneScape drag semantics rather than rotating the camera
-            // through the interface.
-            dragMode = DragMode.MOUSE;
-            beginMouseDrag(x, y);
+            // A non-draggable control owns the gesture but gets no synthetic
+            // mouse-down. This prevents a swipe across a button from becoming an
+            // accidental click while still blocking camera movement behind UI.
+            dragMode = DragMode.BLOCKED;
+            moveMouse(x, y);
             return;
         }
 
@@ -302,8 +303,10 @@ public class plugin extends Plugin {
             dragMode = DragMode.CAMERA;
             moveMouse(x, y);
         } else {
-            dragMode = DragMode.MOUSE;
-            beginMouseDrag(x, y);
+            // Minimap, chat chrome, side-panel gaps, and any future uncatalogued
+            // UI are safer as no-op drags. Taps still work normally everywhere.
+            dragMode = DragMode.BLOCKED;
+            moveMouse(x, y);
         }
     }
 
@@ -343,6 +346,10 @@ public class plugin extends Plugin {
 
             case MOUSE:
                 continueMouseDrag(x, y);
+                break;
+
+            case BLOCKED:
+                moveMouse(x, y);
                 break;
 
             default:
