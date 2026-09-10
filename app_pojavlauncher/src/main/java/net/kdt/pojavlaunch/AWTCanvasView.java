@@ -15,7 +15,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     public static final int AWT_CANVAS_WIDTH = 765;
     public static final int AWT_CANVAS_HEIGHT = 503;
     private static final double NANOS = 1000000000.0;
-    private boolean mIsDestroyed = false;
+    private volatile boolean mIsDestroyed = false;
+    private volatile boolean mRenderingPaused = false;
+    private final Object mRenderPauseLock = new Object();
     private final LinkedList<Long> mTimes = new LinkedList<Long>(){{add(System.nanoTime());}};
 
     public AWTCanvasView(Context ctx) {
@@ -72,6 +74,21 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
         try {
             while (!mIsDestroyed && surface.isValid()) {
+                if (mRenderingPaused) {
+                    synchronized (mRenderPauseLock) {
+                        while (mRenderingPaused && !mIsDestroyed) {
+                            try {
+                                mRenderPauseLock.wait(250L);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                mIsDestroyed = true;
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 frameStartNanos = System.nanoTime();
                 canvas = surface.lockCanvas(null);
                 canvas.drawRGB(0, 0, 0);
@@ -103,6 +120,15 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         }
         rgbArrayBitmap.recycle();
         surface.release();
+    }
+
+    public void setRenderingPaused(boolean paused) {
+        mRenderingPaused = paused;
+        if (!paused) {
+            synchronized (mRenderPauseLock) {
+                mRenderPauseLock.notifyAll();
+            }
+        }
     }
 
     /** Make the view fit the proper aspect ratio of the surface */
