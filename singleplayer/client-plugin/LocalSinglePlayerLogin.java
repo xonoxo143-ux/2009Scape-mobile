@@ -18,7 +18,7 @@ import java.io.FileWriter;
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
         description = "Automatically enters the prepared local single-player profile.",
-        version = 1.3
+        version = 1.4
 )
 public class plugin extends Plugin {
     private long lastAttemptMs = 0L;
@@ -26,8 +26,24 @@ public class plugin extends Plugin {
     private boolean loggedInAnnounced = false;
 
     @Override
-    public void ComponentDraw(int componentIndex, Component component, int screenX, int screenY) {
-        if (API.IsLoggedIn()) {
+    public void Update() {
+        driveSinglePlayerLogin();
+    }
+
+    @Override
+    public void ComponentDraw(
+            int componentIndex,
+            Component component,
+            int screenX,
+            int screenY) {
+        // ComponentDraw is a fast path when the login UI is rendering. Update()
+        // is the authoritative path so single-player login does not depend on a
+        // particular interface component existing or being visible.
+        driveSinglePlayerLogin();
+    }
+
+    private void driveSinglePlayerLogin() {
+        if (API.IsLoggedIn() || client.gameState == 30) {
             if (!loggedInAnnounced) {
                 System.out.println("SINGLEPLAYER_E2E: LOGGED_IN");
                 writeStage("Ready");
@@ -36,28 +52,24 @@ public class plugin extends Plugin {
             }
             return;
         }
-        if (component == null || component.text == null) {
+
+        if (client.gameState != 10) {
             return;
         }
-        if (client.gameState != 10 || !component.text.equals(JagString.of("Please Log In"))) {
-            return;
-        }
+
         if (!loginScreenAnnounced) {
             System.out.println("SINGLEPLAYER_E2E: LOGIN_SCREEN");
             writeStage("Entering world...");
             loginScreenAnnounced = true;
         }
 
-        // Mirror the stock login script's idle-state checks before invoking the
-        // underlying login routine. This avoids colliding with world-list/account
-        // creation activity, and the cooldown permits recovery from a transient
-        // first attempt instead of permanently sticking on the login screen.
         if (LoginManager.anInt4937 != 0
                 || LoginManager.step != 0
                 || CreateManager.step != 0
                 || WorldList.step != 0) {
             return;
         }
+
         long now = System.currentTimeMillis();
         if (now - lastAttemptMs < 3000L) {
             return;
@@ -69,7 +81,11 @@ public class plugin extends Plugin {
         API.SetVarcStr(32, username);
         API.SetVarcStr(33, password);
         lastAttemptMs = now;
-        LoginManager.method3896(JagString.of(username), JagString.of(password), 0);
+        System.out.println("SINGLEPLAYER_E2E: LOGIN_ATTEMPT");
+        LoginManager.method3896(
+                JagString.of(username),
+                JagString.of(password),
+                0);
     }
 
     private void writeStage(String value) {
