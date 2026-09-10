@@ -266,11 +266,17 @@ jobs:
           set -euxo pipefail
           rm -rf build/singleplayer-bootstrap
           mkdir -p build/singleplayer-bootstrap
-          javac --release 17             -d build/singleplayer-bootstrap             singleplayer/inprocess/InProcessBootstrap.java
+          javac --release 17 \
+            -d build/singleplayer-bootstrap \
+            singleplayer/inprocess/InProcessBootstrap.java \
+            singleplayer/inprocess/MobileGestureBridge.java
           rm -f app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
-          jar --create             --file app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar             -C build/singleplayer-bootstrap singleplayer
+          jar --create \
+            --file app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar \
+            -C build/singleplayer-bootstrap singleplayer
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'singleplayer/InProcessBootstrap.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileGestureBridge.class'
 
       - name: Package production ARM64 Java 17 runtime
         run: |
@@ -322,17 +328,41 @@ jobs:
           ! grep -q 'libc.so.6' out/sqlite-arm64-needed.txt
           ! grep -q 'libc.so.6' out/sqlite-x86_64-needed.txt
 
-      - name: Build single-player auto-login plugin
+      - name: Build single-player client plugins
         run: |
           set -euxo pipefail
           rm -rf build/singleplayer-plugin
-          mkdir -p build/singleplayer-plugin
-          cp singleplayer/client-plugin/LocalSinglePlayerLogin.java build/singleplayer-plugin/plugin.java
-          javac --release 8             -cp app_pojavlauncher/src/main/assets/rt4.jar             -d build/singleplayer-plugin             build/singleplayer-plugin/plugin.java
-          rm -f build/singleplayer-plugin/plugin.java
-          rm -f app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
-          (cd build/singleplayer-plugin && zip -qr "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip" LocalSinglePlayerLogin)
+          mkdir -p build/singleplayer-plugin/login build/singleplayer-plugin/touch
+
+          cp singleplayer/client-plugin/LocalSinglePlayerLogin.java \
+            build/singleplayer-plugin/login/plugin.java
+          javac --release 8 \
+            -cp app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/singleplayer-plugin/login \
+            build/singleplayer-plugin/login/plugin.java
+          rm -f build/singleplayer-plugin/login/plugin.java
+
+          cp singleplayer/client-plugin/MobileTouchControls.java \
+            build/singleplayer-plugin/touch/plugin.java
+          javac --release 8 \
+            -cp "app_pojavlauncher/src/main/assets/rt4.jar:app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar" \
+            -d build/singleplayer-plugin/touch \
+            build/singleplayer-plugin/touch/plugin.java
+          rm -f build/singleplayer-plugin/touch/plugin.java
+
+          rm -f \
+            app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip \
+            app_pojavlauncher/src/main/assets/plugins/MobileTouchControls.zip
+
+          (cd build/singleplayer-plugin/login && zip -qr \
+            "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip" \
+            LocalSinglePlayerLogin)
+          (cd build/singleplayer-plugin/touch && zip -qr \
+            "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/MobileTouchControls.zip" \
+            MobileTouchControls)
+
           unzip -l app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip
+          unzip -l app_pojavlauncher/src/main/assets/plugins/MobileTouchControls.zip
 
       - name: Verify single-process architecture in source
         run: |
@@ -342,6 +372,11 @@ jobs:
           grep -q 'singleplayer.InProcessBootstrap' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           grep -q 'org.sqlite.lib.path' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           grep -q 'org.sqlite.lib.name=libsqlitejdbc.so' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          grep -q 'new TouchInputController' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          ! grep -q 'R.id.mouseMode' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          ! grep -q 'R.id.camera' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          ! grep -q 'R.id.mb2' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          ! grep -q 'R.id.keyboard' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           ! grep -q 'AsyncAssetManager.unpackRuntime' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/PojavApplication.java
 
       - name: Remove unused legacy Java 8 runtime assets
@@ -377,6 +412,7 @@ jobs:
           grep -q 'assets/singleplayer/runtime-jre17-version.txt' out/apk-contents.txt
           grep -q 'assets/singleplayer-bootstrap.jar' out/apk-contents.txt
           grep -q 'assets/plugins/LocalSinglePlayerLogin.zip' out/apk-contents.txt
+          grep -q 'assets/plugins/MobileTouchControls.zip' out/apk-contents.txt
           grep -q 'lib/arm64-v8a/libsqlitejdbc.so' out/apk-contents.txt
           grep -q 'lib/x86_64/libsqlitejdbc.so' out/apk-contents.txt
           ! grep -q 'assets/components/jre/' out/apk-contents.txt
@@ -384,10 +420,15 @@ jobs:
           unzip -p out/2009scape-mobile.apk assets/singleplayer-bootstrap.jar > out/singleplayer-bootstrap.jar
           unzip -t out/singleplayer-bootstrap.jar
           unzip -l out/singleplayer-bootstrap.jar | grep -q 'singleplayer/InProcessBootstrap.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileGestureBridge.class'
 
           unzip -p out/2009scape-mobile.apk assets/plugins/LocalSinglePlayerLogin.zip > out/LocalSinglePlayerLogin.zip
           unzip -t out/LocalSinglePlayerLogin.zip
           unzip -l out/LocalSinglePlayerLogin.zip | grep -q 'LocalSinglePlayerLogin/plugin.class'
+
+          unzip -p out/2009scape-mobile.apk assets/plugins/MobileTouchControls.zip > out/MobileTouchControls.zip
+          unzip -t out/MobileTouchControls.zip
+          unzip -l out/MobileTouchControls.zip | grep -q 'MobileTouchControls/plugin.class'
 
           unzip -p out/2009scape-mobile.apk assets/singleplayer/world-data.zip > out/world-data.zip
           unzip -t out/world-data.zip
