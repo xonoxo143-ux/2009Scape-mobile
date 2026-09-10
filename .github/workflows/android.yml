@@ -113,6 +113,59 @@ jobs:
               1)
           nio.write_text(nio_source)
 
+          # Freeze the single-player world while Android is backgrounded. Keep
+          # the local session heartbeat fresh so a long phone/app switch cannot
+          # make the server immediately disconnect the player on resume.
+          worker = root / 'src/main/core/worker/MajorUpdateWorker.kt'
+          worker_source = worker.read_text()
+          loop_needle = '''        while (running) {
+            Grafana.startTick()
+'''
+          loop_replacement = '''        while (running) {
+            if (isSinglePlayerPaused()) {
+                Server.heartbeat()
+                val now = System.currentTimeMillis()
+                for (player in Repository.players.filter { !it.isArtificial }) {
+                    player.session.lastPing = now
+                }
+                Thread.sleep(100L)
+                continue
+            }
+
+            Grafana.startTick()
+'''
+          if loop_needle not in worker_source:
+              raise SystemExit('Could not locate major update worker loop')
+          worker_source = worker_source.replace(loop_needle, loop_replacement, 1)
+
+          method_needle = '''    fun tickOffline()
+    {
+'''
+          method_replacement = '''    private val singlePlayerPauseProbe by lazy {
+        try {
+            Class.forName("singleplayer.MobileLifecycleBridge")
+                .getMethod("isAppPaused")
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun isSinglePlayerPaused(): Boolean {
+        return try {
+            singlePlayerPauseProbe?.invoke(null) == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    fun tickOffline()
+    {
+'''
+          if method_needle not in worker_source:
+              raise SystemExit('Could not locate major worker helper insertion point')
+          worker_source = worker_source.replace(method_needle, method_replacement, 1)
+          worker.write_text(worker_source)
+
           conf = (root / 'worldprops/default.conf').read_text()
           replacements = {
               'name = "2009Scape"': 'name = "2009Scape Single Player"',
@@ -144,8 +197,11 @@ jobs:
           version = [
               'upstream=' + Path('upstream-server-commit.txt').read_text().strip(),
               'network=' + digest(nio),
+              'pause-worker=' + digest(worker),
               'config=' + digest(generated_conf),
               'bootstrap=' + digest(Path('singleplayer/inprocess/InProcessBootstrap.java')),
+              'lifecycle=' + digest(Path('singleplayer/inprocess/MobileLifecycleBridge.java')),
+              'audio-patch=' + digest(Path('singleplayer/client-patches/rt4/OpenALAudioChannel.java')),
               'sqlite-jdbc=3.53.4.0',
           ]
           Path('singleplayer-world-version.txt').write_text('\n'.join(version) + '\n')
@@ -267,16 +323,26 @@ jobs:
           rm -rf build/singleplayer-bootstrap
           mkdir -p build/singleplayer-bootstrap
           javac --release 17 \
+            -cp app_pojavlauncher/src/main/assets/rt4.jar \
             -d build/singleplayer-bootstrap \
             singleplayer/inprocess/InProcessBootstrap.java \
-            singleplayer/inprocess/MobileGestureBridge.java
+            singleplayer/inprocess/MobileGestureBridge.java \
+            singleplayer/inprocess/MobileLifecycleBridge.java \
+            singleplayer/client-patches/rt4/AudioThread.java \
+            singleplayer/client-patches/rt4/NanoTimer.java \
+            singleplayer/client-patches/rt4/OpenALAudioChannel.java
           rm -f app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
           jar --create \
             --file app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar \
-            -C build/singleplayer-bootstrap singleplayer
+            -C build/singleplayer-bootstrap singleplayer \
+            -C build/singleplayer-bootstrap rt4
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'singleplayer/InProcessBootstrap.class'
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileGestureBridge.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileLifecycleBridge.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/AudioThread.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/NanoTimer.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/OpenALAudioChannel.class'
 
       - name: Package production ARM64 Java 17 runtime
         run: |
@@ -373,6 +439,8 @@ jobs:
           grep -q 'org.sqlite.lib.path' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           grep -q 'org.sqlite.lib.name=libsqlitejdbc.so' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           grep -q 'new TouchInputController' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          grep -q 'setMobileAppPaused(true)' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
+          grep -q 'setMobileAppPaused(false)' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           ! grep -q 'R.id.mouseMode' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           ! grep -q 'R.id.camera' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
           ! grep -q 'R.id.mb2' app_pojavlauncher/src/main/java/net/kdt/pojavlaunch/JavaGUILauncherActivity.java
@@ -421,6 +489,10 @@ jobs:
           unzip -t out/singleplayer-bootstrap.jar
           unzip -l out/singleplayer-bootstrap.jar | grep -q 'singleplayer/InProcessBootstrap.class'
           unzip -l out/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileGestureBridge.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'singleplayer/MobileLifecycleBridge.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/AudioThread.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/NanoTimer.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/OpenALAudioChannel.class'
 
           unzip -p out/2009scape-mobile.apk assets/plugins/LocalSinglePlayerLogin.zip > out/LocalSinglePlayerLogin.zip
           unzip -t out/LocalSinglePlayerLogin.zip
