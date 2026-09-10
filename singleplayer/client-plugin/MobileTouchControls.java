@@ -52,6 +52,9 @@ public class plugin extends Plugin {
     private boolean announcedTap;
     private boolean announcedLongPress;
     private boolean announcedCameraDrag;
+    private boolean announcedScrollDrag;
+    private boolean announcedMouseDrag;
+    private boolean announcedBlockedDrag;
     private boolean announcedDragEnd;
     private boolean announcedCancel;
 
@@ -84,7 +87,7 @@ public class plugin extends Plugin {
         Component child = component;
         int childScreenX = origin[0];
         int childScreenY = origin[1];
-        recordComponent(child, childScreenX, childScreenY);
+        recordComponent(child, childScreenX, childScreenY, false);
 
         for (int depth = 0; depth < 16 && child.overlayer != -1; depth++) {
             Component parent = InterfaceList.getComponent(child.overlayer);
@@ -97,7 +100,7 @@ public class plugin extends Plugin {
             int parentScreenY =
                     childScreenY - child.y + parent.scrollY;
 
-            recordComponent(parent, parentScreenX, parentScreenY);
+            recordComponent(parent, parentScreenX, parentScreenY, true);
 
             child = parent;
             childScreenX = parentScreenX;
@@ -148,7 +151,11 @@ public class plugin extends Plugin {
         }
     }
 
-    private void recordComponent(Component component, int screenX, int screenY) {
+    private void recordComponent(
+            Component component,
+            int screenX,
+            int screenY,
+            boolean reconstructedAncestor) {
         if (component == null || component.hidden) {
             return;
         }
@@ -182,19 +189,29 @@ public class plugin extends Plugin {
         boolean scrollable =
                 component.scrollMaxV > component.height && component.height > 0;
 
-        boolean blocking =
-                inventory
-                        || genericDraggable
-                        || scrollable
-                        || component.aBoolean25
-                        || InterfaceList.getServerActiveProperties(component).events != 0
-                        || component.noClickThrough
-                        || component.buttonType != 0
-                        || component.clientCode != 0
-                        || component.ops != null
-                        || component.onClickRepeat != null
-                        || component.onHold != null
-                        || component.onOptionClick != null;
+        boolean blocking;
+        if (reconstructedAncestor) {
+            // Container ancestry is useful for finding the real owner of scrollY,
+            // but generic layout parents often span most or all of the game
+            // canvas. Treating those as blockers suppresses legitimate world
+            // camera drags. Only ancestor containers with concrete touch
+            // semantics participate in routing.
+            blocking = scrollable || component.noClickThrough;
+        } else {
+            blocking =
+                    inventory
+                            || genericDraggable
+                            || scrollable
+                            || component.noClickThrough
+                            || component.buttonType != 0
+                            || component.clientCode != 0
+                            || component.ops != null
+                            || component.onClickRepeat != null
+                            || component.onHold != null
+                            || component.onOptionClick != null
+                            || component.aBoolean25
+                            || InterfaceList.getServerActiveProperties(component).events != 0;
+        }
 
         if (!blocking) {
             return;
@@ -235,9 +252,7 @@ public class plugin extends Plugin {
 
             case MobileGestureBridge.DRAG_BEGIN:
                 beginDrag(event.x, event.y);
-                if (dragMode == DragMode.CAMERA) {
-                    announceOnce("DRAG_BEGIN:CAMERA");
-                }
+                announceDragModeOnce(dragMode);
                 break;
 
             case MobileGestureBridge.DRAG_MOVE:
@@ -555,6 +570,30 @@ public class plugin extends Plugin {
         }
     }
 
+    private void announceDragModeOnce(DragMode mode) {
+        switch (mode) {
+            case CAMERA:
+                if (announcedCameraDrag) return;
+                announcedCameraDrag = true;
+                break;
+            case SCROLL:
+                if (announcedScrollDrag) return;
+                announcedScrollDrag = true;
+                break;
+            case MOUSE:
+                if (announcedMouseDrag) return;
+                announcedMouseDrag = true;
+                break;
+            case BLOCKED:
+                if (announcedBlockedDrag) return;
+                announcedBlockedDrag = true;
+                break;
+            default:
+                return;
+        }
+        System.out.println("SINGLEPLAYER_TOUCH: DRAG_BEGIN:" + mode.name());
+    }
+
     private void announceOnce(String event) {
         if ("TAP".equals(event)) {
             if (announcedTap) return;
@@ -562,9 +601,6 @@ public class plugin extends Plugin {
         } else if ("LONG_PRESS".equals(event)) {
             if (announcedLongPress) return;
             announcedLongPress = true;
-        } else if ("DRAG_BEGIN:CAMERA".equals(event)) {
-            if (announcedCameraDrag) return;
-            announcedCameraDrag = true;
         } else if ("DRAG_END".equals(event)) {
             if (announcedDragEnd) return;
             announcedDragEnd = true;
@@ -583,6 +619,9 @@ public class plugin extends Plugin {
         announcedTap = false;
         announcedLongPress = false;
         announcedCameraDrag = false;
+        announcedScrollDrag = false;
+        announcedMouseDrag = false;
+        announcedBlockedDrag = false;
         announcedDragEnd = false;
         announcedCancel = false;
     }
