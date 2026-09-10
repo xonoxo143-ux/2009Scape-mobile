@@ -14,6 +14,9 @@ jmethodID method_GetRGB;
 jclass class_CTCAndroidInput;
 jmethodID method_ReceiveInput;
 
+jclass class_MobileGestureBridge;
+jmethodID method_ReceiveMobileGesture;
+
 jclass class_MainActivity;
 jmethodID method_OpenLink;
 jmethodID method_OpenPath;
@@ -57,6 +60,44 @@ JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeSendData(JN
         } else {
             (*runtimeJavaVMPtr)->AttachCurrentThread(runtimeJavaVMPtr, &runtimeJNIEnvPtr_INPUT, NULL);
         }
+    }
+
+    if (type >= 2000 && type <= 2006) {
+        if (method_ReceiveMobileGesture == NULL) {
+            jclass localClass = (*runtimeJNIEnvPtr_INPUT)->FindClass(
+                runtimeJNIEnvPtr_INPUT, "singleplayer/MobileGestureBridge");
+            if (localClass == NULL) {
+                if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
+                    (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+                }
+                return;
+            }
+            class_MobileGestureBridge = (*runtimeJNIEnvPtr_INPUT)->NewGlobalRef(
+                runtimeJNIEnvPtr_INPUT, localClass);
+            (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(runtimeJNIEnvPtr_INPUT, localClass);
+            method_ReceiveMobileGesture = (*runtimeJNIEnvPtr_INPUT)->GetStaticMethodID(
+                runtimeJNIEnvPtr_INPUT,
+                class_MobileGestureBridge,
+                "receive",
+                "(IIIII)V");
+            if (method_ReceiveMobileGesture == NULL) {
+                if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
+                    (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+                }
+                return;
+            }
+        }
+
+        (*runtimeJNIEnvPtr_INPUT)->CallStaticVoidMethod(
+            runtimeJNIEnvPtr_INPUT,
+            class_MobileGestureBridge,
+            method_ReceiveMobileGesture,
+            type, i1, i2, i3, i4
+        );
+        if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
+            (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+        }
+        return;
     }
 
     if (method_ReceiveInput == NULL) {
