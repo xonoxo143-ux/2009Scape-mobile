@@ -20,9 +20,12 @@ import java.util.Arrays;
  *    the existing 2009Scape Decoders530 decoder in memory. That preserves the
  *    proven decoder and game logic while removing the kernel/TCP hop.
  *
- * Returning false always means "leave the original wire packet untouched" so
- * unsupported or not-yet-ready operations retain the legacy fallback during
- * the transition.
+ * A length-valid packet that the retained server itself classifies as
+ * UnhandledOp is consumed here as a no-op. That exactly preserves its gameplay
+ * semantics while avoiding a loopback trip whose only effect was a warning log.
+ * Returning false means the original wire packet must remain available for the
+ * compatibility socket (for example, login/session traffic before a local
+ * player exists, malformed data, or a decoder failure).
  */
 public final class LocalClientCommands {
     private static volatile Method getPlayerByName;
@@ -77,9 +80,21 @@ public final class LocalClientCommands {
                     null,
                     ByteBuffer.wrap(payload));
             Object decoded = decodePacket.invoke(null, player, opcode, ioBuffer);
-            if (decoded == null || unhandledClass.isInstance(decoded)) {
+            if (decoded == null) {
                 return false;
             }
+
+            // The retained socket path also gives these packets no gameplay
+            // effect: GameReadEvent merely logs the UnhandledOp. Once the local
+            // player exists, swallowing the validated packet is equivalent and
+            // avoids keeping TCP alive solely for a warning message.
+            if (unhandledClass.isInstance(decoded)) {
+                System.out.println(
+                        "SINGLEPLAYER_LOCAL_PACKET: IGNORED_UNHANDLED opcode=" + opcode
+                                + " payloadBytes=" + payload.length);
+                return true;
+            }
+
             if (decodingErrorClass.isInstance(decoded)) {
                 System.err.println(
                         "SINGLEPLAYER_LOCAL_PACKET: decoder rejected opcode=" + opcode
