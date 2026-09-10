@@ -4,7 +4,8 @@ on:
   push:
     branches:
       - singleplayer-native-refactor
-  workflow_dispatch:
+    paths:
+      - '.github/ci-trigger'
 
 concurrency:
   group: native-refactor-${{ github.ref }}
