@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Apply the smallest possible single-player migration overlay.
+"""Prepare the retained 2009Scape engine for the Android single-player runtime.
 
-The retained 2009Scape source remains authoritative game/content code. Human
-login and gameplay are in-process. The loopback NIO listener is retained only
-while RT4 still obtains JS5/cache data through the historical service; JS5 is a
-separate migration boundary and will be removed independently.
+The upstream world remains authoritative for game/content behavior. This overlay
+only removes transport/multiplayer plumbing, applies Android lifecycle/runtime
+compatibility, and writes the one packaged single-player configuration.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -28,6 +28,37 @@ def install_probe(repo_root: Path, server_root: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
     print("overlay: local/LocalMigrationProbe.kt")
+
+
+def patch_sqlite_dependency(server_root: Path) -> None:
+    pom = server_root / "pom.xml"
+    source = pom.read_text()
+    old = (
+        "    <dependency>\n"
+        "      <groupId>org.xerial</groupId>\n"
+        "      <artifactId>sqlite-jdbc</artifactId>\n"
+        "      <version>3.36.0.3</version>\n"
+        "      <scope>compile</scope>\n"
+        "    </dependency>"
+    )
+    new = (
+        "    <dependency>\n"
+        "      <groupId>org.xerial</groupId>\n"
+        "      <artifactId>sqlite-jdbc</artifactId>\n"
+        "      <version>3.53.4.0</version>\n"
+        "      <scope>compile</scope>\n"
+        "    </dependency>\n"
+        "    <dependency>\n"
+        "      <groupId>org.slf4j</groupId>\n"
+        "      <artifactId>slf4j-api</artifactId>\n"
+        "      <version>1.7.36</version>\n"
+        "      <scope>compile</scope>\n"
+        "    </dependency>"
+    )
+    if old not in source:
+        raise SystemExit("sqlite-jdbc dependency anchor not found")
+    pom.write_text(source.replace(old, new, 1))
+    print("overlay: Android sqlite-jdbc")
 
 
 def patch_command_shadow(server_root: Path) -> None:
@@ -102,8 +133,8 @@ def patch_local_session_transport(server_root: Path) -> None:
 \t\t\tlocked = writingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
 \t\t\tif (!locked) throw new IllegalStateException(\"Timed out acquiring session write lock\");
 
-\t\t\t// The retained encoder still creates the exact RT4 packet bytes. For the
-\t\t\t// human local session, ownership moves directly to RT4's in-memory stream.
+\t\t\t// The retained encoder still creates the exact RT4 bytes. For the human
+\t\t\t// local session, ownership moves directly into RT4's in-memory stream.
 \t\t\tif (LocalMigrationProbe.routeOutgoingBytes(this, buffer, writingQueue.isEmpty())) {
 \t\t\t\treturn;
 \t\t\t}
@@ -238,6 +269,65 @@ def patch_local_session_transport(server_root: Path) -> None:
     replace_once(session, marker, local_api, "IoSession local transport API")
 
 
+def patch_mobile_pause(server_root: Path) -> None:
+    worker = server_root / "src/main/core/worker/MajorUpdateWorker.kt"
+    source = worker.read_text()
+    loop_old = (
+        "        while (running) {\n"
+        "            Grafana.startTick()\n"
+    )
+    loop_new = (
+        "        while (running) {\n"
+        "            val singlePlayerPaused = isSinglePlayerPaused()\n"
+        "            if (singlePlayerPaused) {\n"
+        "                if (!singlePlayerWasPaused) {\n"
+        "                    singlePlayerWasPaused = true\n"
+        "                    println(\"SINGLEPLAYER_WORLD: PAUSED\")\n"
+        "                }\n"
+        "                Server.heartbeat()\n"
+        "                val now = System.currentTimeMillis()\n"
+        "                for (player in Repository.players.filter { !it.isArtificial }) {\n"
+        "                    player.session.lastPing = now\n"
+        "                }\n"
+        "                Thread.sleep(500L)\n"
+        "                continue\n"
+        "            } else if (singlePlayerWasPaused) {\n"
+        "                singlePlayerWasPaused = false\n"
+        "                println(\"SINGLEPLAYER_WORLD: RESUMED\")\n"
+        "            }\n\n"
+        "            Grafana.startTick()\n"
+    )
+    if loop_old not in source:
+        raise SystemExit("MajorUpdateWorker loop anchor not found")
+    source = source.replace(loop_old, loop_new, 1)
+
+    method_old = "    fun tickOffline()\n    {\n"
+    method_new = (
+        "    private var singlePlayerWasPaused = false\n\n"
+        "    private val singlePlayerPauseProbe by lazy {\n"
+        "        try {\n"
+        "            Class.forName(\"singleplayer.MobileLifecycleBridge\")\n"
+        "                .getMethod(\"isAppPaused\")\n"
+        "        } catch (_: Throwable) {\n"
+        "            null\n"
+        "        }\n"
+        "    }\n\n"
+        "    private fun isSinglePlayerPaused(): Boolean {\n"
+        "        return try {\n"
+        "            singlePlayerPauseProbe?.invoke(null) == true\n"
+        "        } catch (_: Throwable) {\n"
+        "            false\n"
+        "        }\n"
+        "    }\n\n"
+        "    fun tickOffline()\n"
+        "    {\n"
+    )
+    if method_old not in source:
+        raise SystemExit("MajorUpdateWorker helper anchor not found")
+    worker.write_text(source.replace(method_old, method_new, 1))
+    print("overlay: Android lifecycle pause")
+
+
 def patch_singleplayer_console(server_root: Path) -> None:
     server = server_root / "src/main/core/Server.kt"
     old_console = """        val scanner = Scanner(System.`in`)
@@ -276,9 +366,24 @@ def patch_singleplayer_console(server_root: Path) -> None:
     replace_once(server, old_console, new_console, "Server single-player console")
 
 
+def patch_js5_only_listener(server_root: Path) -> None:
+    handshake = server_root / "src/main/core/net/event/HSReadEvent.java"
+    replace_once(
+        handshake,
+        "\t\tint opcode = buffer.get() & 0xFF;\n\t\tswitch (opcode) {\n",
+        "\t\tint opcode = buffer.get() & 0xFF;\n"
+        "\t\t// Human login/session creation is in-process. The temporary listener\n"
+        "\t\t// exists only for RT4 JS5 cache compatibility until JS5 is localized.\n"
+        "\t\tif (Boolean.getBoolean(\"singleplayer\") && opcode != 15) {\n"
+        "\t\t\tsession.disconnect();\n"
+        "\t\t\treturn;\n"
+        "\t\t}\n"
+        "\t\tswitch (opcode) {\n",
+        "HSReadEvent JS5-only gate",
+    )
+
+
 def patch_loopback_only(server_root: Path) -> None:
-    # Until JS5 is migrated, the retained listener must still exist. Restrict it
-    # to loopback so it is a cache compatibility service, not a multiplayer port.
     reactor = server_root / "src/main/core/net/NioReactor.java"
     replace_once(
         reactor,
@@ -286,6 +391,40 @@ def patch_loopback_only(server_root: Path) -> None:
         "channel.bind(new InetSocketAddress(\"127.0.0.1\", port));",
         "NioReactor loopback bind",
     )
+
+
+def write_singleplayer_config(repo_root: Path, server_root: Path) -> Path:
+    source = repo_root / "singleplayer/default.conf"
+    if not source.is_file():
+        raise SystemExit(f"Missing single-player config: {source}")
+    generated = repo_root / "singleplayer-generated.conf"
+    shutil.copy2(source, generated)
+    # Also make local.conf available to source-level/manual world launches.
+    shutil.copy2(source, server_root / "worldprops/local.conf")
+    print("overlay: singleplayer-generated.conf")
+    return generated
+
+
+def write_version_manifest(repo_root: Path, server_root: Path, config: Path) -> None:
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    upstream_file = repo_root / "upstream-server-commit.txt"
+    upstream = upstream_file.read_text().strip() if upstream_file.is_file() else "source-check"
+    entries = [
+        "upstream=" + upstream,
+        "io-session=" + digest(server_root / "src/main/core/net/IoSession.java"),
+        "handshake=" + digest(server_root / "src/main/core/net/event/HSReadEvent.java"),
+        "network=" + digest(server_root / "src/main/core/net/NioReactor.java"),
+        "pause-worker=" + digest(server_root / "src/main/core/worker/MajorUpdateWorker.kt"),
+        "local-probe=" + digest(server_root / "src/main/core/local/LocalMigrationProbe.kt"),
+        "config=" + digest(config),
+        "bootstrap=" + digest(repo_root / "singleplayer/inprocess/InProcessBootstrap.java"),
+        "lifecycle=" + digest(repo_root / "singleplayer/inprocess/MobileLifecycleBridge.java"),
+        "audio-patch=" + digest(repo_root / "singleplayer/client-patches/rt4/OpenALAudioChannel.java"),
+        "sqlite-jdbc=3.53.4.0",
+    ]
+    (repo_root / "singleplayer-world-version.txt").write_text("\n".join(entries) + "\n")
 
 
 def main() -> None:
@@ -299,13 +438,18 @@ def main() -> None:
     if not (server_root / "src/main/core").is_dir():
         raise SystemExit(f"Not a 2009Scape Server checkout: {server_root}")
 
+    patch_sqlite_dependency(server_root)
     install_probe(repo_root, server_root)
     patch_command_shadow(server_root)
     patch_presentation_shadow(server_root)
     patch_local_session_transport(server_root)
+    patch_mobile_pause(server_root)
     patch_singleplayer_console(server_root)
+    patch_js5_only_listener(server_root)
     patch_loopback_only(server_root)
-    print("native refactor migration overlay prepared")
+    config = write_singleplayer_config(repo_root, server_root)
+    write_version_manifest(repo_root, server_root, config)
+    print("single-player Android world overlay prepared")
 
 
 if __name__ == "__main__":
