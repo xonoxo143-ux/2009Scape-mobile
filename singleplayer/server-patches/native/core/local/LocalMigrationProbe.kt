@@ -4,13 +4,14 @@ import core.auth.AuthResponse
 import core.cache.crypto.ISAACCipher
 import core.cache.crypto.ISAACPair
 import core.game.bots.AIPlayer
+import core.game.node.entity.player.Player
 import core.game.node.entity.player.info.ClientInfo
 import core.game.node.entity.player.info.PlayerDetails
+import core.game.node.entity.player.info.login.LoginParser
 import core.game.world.GameWorld
 import core.game.world.repository.Repository
 import core.net.IoSession
 import core.net.packet.Context
-import core.net.packet.`in`.Login
 import core.net.packet.`in`.Packet
 import core.net.producer.LoginEventProducer
 import java.lang.reflect.Method
@@ -20,11 +21,13 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Migration instrumentation and narrow local-transport adapter.
+ * Migration instrumentation and the local human-player boundary.
  *
- * Commands are observed after decoding and presentations before encoding. The
- * optional byte route lets the retained outgoing encoders feed RT4 in-process
- * without making 2009Scape compile against the RT4 migration implementation.
+ * The retained 2009Scape world remains authoritative for account/profile
+ * storage, Player construction, LoginParser initialization, incoming typed
+ * commands and outgoing packet encoding. Remote-server ceremony is intentionally
+ * excluded from the local path: no IP policing, daily-account limits, master
+ * server presence, socket login packet, or network session is involved.
  */
 object LocalMigrationProbe {
     private val incomingCounts = ConcurrentHashMap<String, AtomicLong>()
@@ -50,9 +53,12 @@ object LocalMigrationProbe {
     }
 
     /**
-     * Create the human player's normal 2009Scape session without parsing a TCP
-     * login packet. The existing authenticator, PlayerDetails, Login.proceedWith
-     * and LoginParser initialization are deliberately retained.
+     * Create the one human player directly in the retained world model.
+     *
+     * DevelopmentAuthenticator is deliberately retained because it is the
+     * existing local account/profile store. LoginParser is deliberately retained
+     * because it owns save parsing, spawn restoration, login hooks, player.init,
+     * varp restoration and the normal initial world presentation packets.
      */
     @JvmStatic
     @Synchronized
@@ -78,33 +84,43 @@ object LocalMigrationProbe {
         session.associatedUsername = username
         session.clientInfo = ClientInfo(displayMode, windowMode, screenWidth, screenHeight)
 
+        // Preserve the stock revision-530 cipher relationship so the retained
+        // outgoing encoder and RT4 decoder can continue to speak exactly the same
+        // internal protocol while the transport itself is in memory.
         val inputSeed = seed.copyOf()
         val outputSeed = IntArray(seed.size) { index -> seed[index] + 50 }
         session.isaacPair = ISAACPair(ISAACCipher(inputSeed), ISAACCipher(outputSeed))
-
-        // The TCP handshake normally performs this state transition. Keep the
-        // existing LoginWriteEvent/GameEventProducer path, but establish its
-        // producer directly because there is no handshake packet anymore.
         session.producer = LoginEventProducer()
-
-        // There is no transport to detach for a fresh local session, but this
-        // puts IoSession into its explicit local mode before LoginParser begins
-        // emitting the normal success response and initial world packets.
         session.promoteToLocalTransport()
 
         val details = PlayerDetails(username)
         details.accountInfo = accountInfo
         details.communication.parse(accountInfo)
+        details.session = session
 
-        Login.proceedWith(session, details, 16)
-        println("SINGLEPLAYER_LOCAL_LOGIN: SESSION_CREATED username=$username")
-        return true
+        val player = Player(details)
+        Repository.addPlayer(player)
+        session.lastPing = System.currentTimeMillis()
+
+        return try {
+            // false = normal first entry, not the old network reconnect mode.
+            LoginParser(details).initialize(player, false)
+            println("SINGLEPLAYER_LOCAL_LOGIN: SESSION_CREATED username=$username")
+            true
+        } catch (failure: Throwable) {
+            Repository.removePlayer(player)
+            session.disconnect()
+            System.err.println(
+                "SINGLEPLAYER_LOCAL_LOGIN: initialization failed: " +
+                    "${failure.javaClass.simpleName}: ${failure.message}"
+            )
+            false
+        }
     }
 
     /**
-     * Logical local logout. This deliberately uses the retained IoSession
-     * disconnect path so Player.clear(), save hooks and repository cleanup stay
-     * authoritative instead of being recreated in the Android/client layer.
+     * Logical local logout. Retain IoSession.disconnect() so Player.clear(), save
+     * hooks and repository cleanup remain authoritative 2009Scape behavior.
      */
     @JvmStatic
     @Synchronized
@@ -124,12 +140,7 @@ object LocalMigrationProbe {
         }
     }
 
-    /**
-     * Move an already-encoded world -> RT4 byte sequence into the shared
-     * in-process stream. A successful route also promotes any legacy-established
-     * human session away from its NIO channel; fresh local sessions are already
-     * promoted.
-     */
+    /** Route retained outgoing world bytes directly into RT4's local stream. */
     @JvmStatic
     fun routeOutgoingBytes(session: IoSession, buffer: ByteBuffer, canActivate: Boolean): Boolean {
         if (!java.lang.Boolean.getBoolean("singleplayer")) return false
@@ -151,9 +162,7 @@ object LocalMigrationProbe {
         buffer.duplicate().get(copy)
         return try {
             val routed = offer.invoke(null, copy, canActivate) == true
-            if (routed) {
-                session.promoteToLocalTransport()
-            }
+            if (routed) session.promoteToLocalTransport()
             routed
         } catch (failure: Throwable) {
             System.err.println(
