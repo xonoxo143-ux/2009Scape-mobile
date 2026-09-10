@@ -47,6 +47,10 @@ public class AWTInputBridge {
     public static void sendMobileGesture(int type, int x, int y, int value1, int value2) {
         nativeSendData(type, x, y, value1, value2);
     }
+
+    public static void setMobileAppPaused(boolean paused) {
+        nativeSetMobilePaused(paused);
+    }
     
     static {
         System.loadLibrary("pojavexec_awt");
@@ -55,4 +59,5 @@ public class AWTInputBridge {
     public static native void nativeSendData(int type, int i1, int i2, int i3, int i4);
     public static native void nativeClipboardReceived(String data, String mimeTypeSub);
     public static native void nativeMoveWindow(int xoff, int yoff);
+    private static native void nativeSetMobilePaused(boolean paused);
 }
