@@ -30,6 +30,7 @@ public final class OpenALAudioChannel extends AudioChannel {
 
     private int bufferSize;
     private int source;
+    private boolean announcedFirstWrite;
 
     @Override
     public void init(Component component) {
@@ -110,6 +111,14 @@ public final class OpenALAudioChannel extends AudioChannel {
             if (AL10.alGetSourcei(source, AL10.AL_SOURCE_STATE) != AL10.AL_PLAYING) {
                 AL10.alSourcePlay(source);
                 checkError("alSourcePlay");
+            }
+
+            if (!announcedFirstWrite) {
+                announcedFirstWrite = true;
+                System.out.println(
+                        channelSampleRate == 2048
+                                ? "SINGLEPLAYER_AUDIO: EFFECTS_PCM_ACTIVE"
+                                : "SINGLEPLAYER_AUDIO: MUSIC_PCM_ACTIVE");
             }
         }
     }
