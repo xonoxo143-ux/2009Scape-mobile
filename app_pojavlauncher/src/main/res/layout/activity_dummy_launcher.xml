@@ -10,10 +10,10 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center_horizontal"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingTop="10dp"
-        android:paddingBottom="10dp">
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp"
+        android:paddingTop="18dp"
+        android:paddingBottom="12dp">
 
         <TextView
             android:layout_width="wrap_content"
@@ -21,107 +21,85 @@
             android:text="2009Scape"
             android:textColor="#E2C887"
             android:textStyle="bold"
-            android:textSize="24sp" />
+            android:textSize="30sp" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="1dp"
+            android:layout_marginTop="2dp"
             android:text="Single Player"
             android:textColor="#B8A078"
-            android:textSize="14sp" />
+            android:textSize="16sp" />
 
         <TextView
             android:id="@+id/serverStatus"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="7dp"
-            android:text="Game: preparing"
+            android:layout_marginTop="12dp"
+            android:text="Preparing local game..."
             android:textColor="#D8D0B0"
-            android:textSize="12sp" />
+            android:textSize="13sp" />
 
         <TextView
             android:id="@+id/updateStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="3dp"
+            android:layout_marginTop="4dp"
             android:gravity="center"
-            android:minHeight="18dp"
-            android:maxLines="3"
+            android:minHeight="20dp"
+            android:maxLines="2"
             android:text=""
             android:textColor="#B8A078"
             android:textSize="11sp" />
 
         <Button
             android:id="@+id/playSinglePlayer"
-            android:layout_width="300dp"
-            android:layout_height="56dp"
-            android:layout_marginTop="8dp"
+            android:layout_width="320dp"
+            android:layout_height="60dp"
+            android:layout_marginTop="12dp"
             android:text="PLAY"
             android:textAllCaps="true"
-            android:textSize="20sp"
+            android:textSize="22sp"
             android:textStyle="bold" />
 
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="7dp"
-            android:orientation="horizontal">
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal"
+            android:gravity="center">
 
             <Button
-                android:id="@+id/worldSettings"
-                android:layout_width="160dp"
-                android:layout_height="42dp"
-                android:layout_marginEnd="6dp"
-                android:text="World Settings"
-                android:textAllCaps="false" />
-
-            <Button
-                android:id="@+id/playerSettings"
-                android:layout_width="160dp"
-                android:layout_height="42dp"
-                android:layout_marginStart="6dp"
-                android:text="Player Settings"
-                android:textAllCaps="false" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="5dp"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/serverFiles"
-                android:layout_width="160dp"
-                android:layout_height="42dp"
-                android:layout_marginEnd="6dp"
-                android:text="World Files"
+                android:id="@+id/settings"
+                android:layout_width="165dp"
+                android:layout_height="46dp"
+                android:layout_marginEnd="5dp"
+                android:text="Settings"
                 android:textAllCaps="false" />
 
             <Button
                 android:id="@+id/updateFromGitHub"
-                android:layout_width="160dp"
-                android:layout_height="42dp"
-                android:layout_marginStart="6dp"
-                android:text="Update Game"
+                android:layout_width="185dp"
+                android:layout_height="46dp"
+                android:layout_marginStart="5dp"
+                android:layout_marginEnd="5dp"
+                android:text="Update from GitHub"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/serverFiles"
+                android:layout_width="165dp"
+                android:layout_height="46dp"
+                android:layout_marginStart="5dp"
+                android:text="World Files"
                 android:textAllCaps="false" />
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/settings"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:padding="6dp"
-            android:text="Advanced launcher settings"
-            android:textColor="#B8A078"
-            android:textSize="11sp" />
 
         <com.kdt.mcgui.ProgressLayout
             android:id="@+id/progress_layout"
             android:layout_width="match_parent"
-            android:layout_height="36dp" />
+            android:layout_height="34dp"
+            android:layout_marginTop="4dp" />
 
     </LinearLayout>
 </ScrollView>
