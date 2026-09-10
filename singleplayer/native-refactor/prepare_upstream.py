@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Apply native single-player migration patches to a pinned 2009Scape checkout.
+"""Apply the smallest possible single-player migration overlay.
 
-The upstream game/content tree stays pristine in git. This script makes a small,
-auditable overlay at build time so we can compare every migration step against the
-known-good multiplayer implementation before deleting it.
+The retained 2009Scape source remains authoritative game/content code. This
+script currently adds only observability around the existing typed command and
+presentation boundaries plus the temporary loopback-only safety constraint.
+Direct local commands and shared world scale are driven by the bootstrap, so we
+do not fork those engine classes merely to remove networking later.
 """
 from __future__ import annotations
 
@@ -19,19 +21,17 @@ def replace_once(path: Path, old: str, new: str, label: str) -> None:
     path.write_text(text.replace(old, new, 1))
 
 
-def copy_overlay(repo_root: Path, server_root: Path) -> None:
-    overlay = repo_root / "singleplayer/server-patches/native/core"
-    target = server_root / "src/main/core"
-    if not overlay.is_dir():
-        raise SystemExit(f"Missing native server overlay: {overlay}")
-    for source in overlay.rglob("*"):
-        if source.is_dir():
-            continue
-        relative = source.relative_to(overlay)
-        destination = target / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        print(f"overlay: {relative}")
+def install_probe(repo_root: Path, server_root: Path) -> None:
+    source = (
+        repo_root
+        / "singleplayer/server-patches/native/core/local/LocalMigrationProbe.kt"
+    )
+    destination = server_root / "src/main/core/local/LocalMigrationProbe.kt"
+    if not source.is_file():
+        raise SystemExit(f"Missing migration probe: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    print("overlay: local/LocalMigrationProbe.kt")
 
 
 def patch_command_shadow(server_root: Path) -> None:
@@ -72,16 +72,6 @@ def patch_presentation_shadow(server_root: Path) -> None:
     )
 
 
-def patch_world_scale(server_root: Path) -> None:
-    distance = server_root / "src/main/core/game/world/map/MapDistance.java"
-    replace_once(
-        distance,
-        "\tRENDERING(15),",
-        "\tRENDERING(Integer.getInteger(\"singleplayer.viewDistance\", 28)),",
-        "MapDistance authority",
-    )
-
-
 def patch_loopback_only(server_root: Path) -> None:
     reactor = server_root / "src/main/core/net/NioReactor.java"
     replace_once(
@@ -103,12 +93,11 @@ def main() -> None:
     if not (server_root / "src/main/core").is_dir():
         raise SystemExit(f"Not a 2009Scape Server checkout: {server_root}")
 
-    copy_overlay(repo_root, server_root)
+    install_probe(repo_root, server_root)
     patch_command_shadow(server_root)
     patch_presentation_shadow(server_root)
-    patch_world_scale(server_root)
     patch_loopback_only(server_root)
-    print("native refactor overlay prepared")
+    print("native refactor shadow overlay prepared")
 
 
 if __name__ == "__main__":
