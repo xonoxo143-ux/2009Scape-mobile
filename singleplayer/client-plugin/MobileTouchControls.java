@@ -12,7 +12,10 @@ import rt4.Mouse;
 import singleplayer.MobileGestureBridge;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
@@ -32,6 +35,8 @@ public class plugin extends Plugin {
 
     private List<HitRegion> collectingRegions = new ArrayList<HitRegion>(256);
     private List<HitRegion> stableRegions = new ArrayList<HitRegion>(256);
+    private final Set<Component> collectingSeen =
+            Collections.newSetFromMap(new IdentityHashMap<Component, Boolean>());
 
     private DragMode dragMode = DragMode.NONE;
     private Component scrollComponent;
@@ -60,6 +65,7 @@ public class plugin extends Plugin {
         stableRegions = collectingRegions;
         collectingRegions = oldStable;
         collectingRegions.clear();
+        collectingSeen.clear();
 
         drainGestures();
     }
@@ -71,6 +77,38 @@ public class plugin extends Plugin {
             int screenX,
             int screenY) {
         if (component == null || component.hidden) {
+            return;
+        }
+
+        // Record the rendered component and then reconstruct its container
+        // ancestors. RT4 does not emit ComponentDraw for type-0 containers, yet
+        // those are exactly the components that own most scrollY state.
+        Component child = component;
+        int childScreenX = screenX;
+        int childScreenY = screenY;
+        recordComponent(child, childScreenX, childScreenY);
+
+        for (int depth = 0; depth < 16 && child.overlayer != -1; depth++) {
+            Component parent = InterfaceList.getComponent(child.overlayer);
+            if (parent == null) {
+                break;
+            }
+
+            int parentScreenX =
+                    childScreenX - child.x + parent.scrollX;
+            int parentScreenY =
+                    childScreenY - child.y + parent.scrollY;
+
+            recordComponent(parent, parentScreenX, parentScreenY);
+
+            child = parent;
+            childScreenX = parentScreenX;
+            childScreenY = parentScreenY;
+        }
+    }
+
+    private void recordComponent(Component component, int screenX, int screenY) {
+        if (component == null || component.hidden || collectingSeen.contains(component)) {
             return;
         }
 
@@ -99,13 +137,13 @@ public class plugin extends Plugin {
                 component.onDrag != null
                         || component.onDragStart != null
                         || component.onDragRelease != null;
-        boolean draggable = inventory || genericDraggable;
 
         boolean scrollable =
                 component.scrollMaxV > component.height && component.height > 0;
 
         boolean blocking =
-                draggable
+                inventory
+                        || genericDraggable
                         || scrollable
                         || component.noClickThrough
                         || component.buttonType != 0
@@ -119,6 +157,7 @@ public class plugin extends Plugin {
             return;
         }
 
+        collectingSeen.add(component);
         collectingRegions.add(new HitRegion(
                 component,
                 screenX,
