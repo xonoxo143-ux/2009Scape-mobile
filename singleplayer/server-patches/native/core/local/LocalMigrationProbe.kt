@@ -53,9 +53,6 @@ object LocalMigrationProbe {
      * Create the human player's normal 2009Scape session without parsing a TCP
      * login packet. The existing authenticator, PlayerDetails, Login.proceedWith
      * and LoginParser initialization are deliberately retained.
-     *
-     * The provided ISAAC seed is installed exactly as the legacy login decoder
-     * would install it, even though this RT4 line currently has ISAAC disabled.
      */
     @JvmStatic
     @Synchronized
@@ -105,12 +102,33 @@ object LocalMigrationProbe {
     }
 
     /**
-     * Try to move an already-encoded world -> RT4 byte sequence into the shared
-     * in-process stream. false means the legacy socket path remains responsible
-     * for the buffer; true means ownership has moved to the local bridge.
-     *
-     * A successful route also promotes a legacy-established human session away
-     * from its NIO channel. Fresh socketless sessions are already promoted.
+     * Logical local logout. This deliberately uses the retained IoSession
+     * disconnect path so Player.clear(), save hooks and repository cleanup stay
+     * authoritative instead of being recreated in the Android/client layer.
+     */
+    @JvmStatic
+    @Synchronized
+    fun endLocalSession(username: String): Boolean {
+        if (!java.lang.Boolean.getBoolean("singleplayer")) return false
+        if (username.isBlank()) return true
+        val player = Repository.getPlayerByName(username) ?: return true
+        return try {
+            player.session.disconnect()
+            println("SINGLEPLAYER_LOCAL_LOGIN: SESSION_CLOSED username=$username")
+            true
+        } catch (failure: Throwable) {
+            System.err.println(
+                "SINGLEPLAYER_LOCAL_LOGIN: session close failed: ${failure.javaClass.simpleName}: ${failure.message}"
+            )
+            false
+        }
+    }
+
+    /**
+     * Move an already-encoded world -> RT4 byte sequence into the shared
+     * in-process stream. A successful route also promotes any legacy-established
+     * human session away from its NIO channel; fresh local sessions are already
+     * promoted.
      */
     @JvmStatic
     fun routeOutgoingBytes(session: IoSession, buffer: ByteBuffer, canActivate: Boolean): Boolean {
