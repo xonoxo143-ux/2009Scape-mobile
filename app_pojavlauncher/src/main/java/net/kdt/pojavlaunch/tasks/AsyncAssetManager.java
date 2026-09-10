@@ -159,10 +159,11 @@ public class AsyncAssetManager {
                 File installedPluginDirectory = new File(pluginsDirectory, pluginDirectoryName);
                 File disabledPluginDirectory = new File(disabledPluginsDirectory, pluginDirectoryName);
 
-                // The local single-player login plugin is part of the APK contract rather than
-                // an optional user plugin. Refresh it on APK upgrades so a later login fix is
-                // actually deployed instead of being hidden by an older extracted copy.
-                if ("LocalSinglePlayerLogin.zip".equals(plugin)) {
+                // Built-in single-player plugins are part of the APK contract rather than
+                // optional user plugins. Refresh them on APK upgrades so login/control fixes
+                // cannot be hidden by an older extracted copy.
+                if ("LocalSinglePlayerLogin.zip".equals(plugin)
+                        || "MobileTouchControls.zip".equals(plugin)) {
                     if (installedPluginDirectory.exists()) {
                         FileUtils.deleteDirectory(installedPluginDirectory);
                     }
