@@ -18,7 +18,6 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     private volatile boolean mIsDestroyed = false;
     private volatile boolean mRenderingPaused = false;
     private final Object mRenderPauseLock = new Object();
-    private final LinkedList<Long> mTimes = new LinkedList<Long>(){{add(System.nanoTime());}};
 
     public AWTCanvasView(Context ctx) {
         this(ctx, null);
@@ -67,7 +66,7 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         long sleepTime;
         long sleepMillis;
         int sleepNanos;
-        int[] rgbArray;
+        final int[] rgbArray = new int[AWT_CANVAS_WIDTH * AWT_CANVAS_HEIGHT];
         // define the frame rate limit
         final long frameTimeNanos = (long)(NANOS / 60); // Targeting 60 FPS
         long frameDuration;
@@ -91,13 +90,18 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
                 frameStartNanos = System.nanoTime();
                 canvas = surface.lockCanvas(null);
-                canvas.drawRGB(0, 0, 0);
-                rgbArray = JREUtils.renderAWTScreenFrame();
-                if (rgbArray != null) {
-                    canvas.save();
-                    rgbArrayBitmap.setPixels(rgbArray, 0, AWT_CANVAS_WIDTH, 0, 0, AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+                if (JREUtils.renderAWTScreenFrameInto(rgbArray)) {
+                    rgbArrayBitmap.setPixels(
+                            rgbArray,
+                            0,
+                            AWT_CANVAS_WIDTH,
+                            0,
+                            0,
+                            AWT_CANVAS_WIDTH,
+                            AWT_CANVAS_HEIGHT);
                     canvas.drawBitmap(rgbArrayBitmap, 0, 0, paint);
-                    canvas.restore();
+                } else {
+                    canvas.drawRGB(0, 0, 0);
                 }
                 surface.unlockCanvasAndPost(canvas);
 
