@@ -302,7 +302,7 @@ wait_for_combined_game() {
         echo "Login succeeded without expected combined-runtime milestones"
         return 1
       fi
-      adb shell run-as "${APP_ID}" test -f files/singleplayer-game-ready.flag || {
+      adb shell run-as "${APP_ID}" test -f singleplayer-game-ready.flag || {
         echo "Game-ready marker was not created"
         return 1
       }
