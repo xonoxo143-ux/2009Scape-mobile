@@ -2,6 +2,9 @@ package singleplayer;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -9,22 +12,28 @@ import java.sql.Statement;
 
 /**
  * Starts the 2009Scape world engine and RT4 client inside the same OpenJDK VM.
- * The existing loopback game protocol remains as an internal compatibility
- * boundary, but there is no second Android process or second JVM.
+ * The stock loopback game protocol remains an internal compatibility boundary,
+ * but there is no second Android process or second JVM.
  */
 public final class InProcessBootstrap {
+    private static final String STAGE_FILE = "singleplayer-game-stage.txt";
+
     private InProcessBootstrap() {}
 
     public static void main(String[] args) throws Throwable {
         System.setProperty("singleplayer", "true");
+        setStage("Starting single-player...");
         System.out.println("SINGLEPLAYER_E2E: COMBINED_JVM_START");
 
+        setStage("Preparing local data...");
         verifySQLite();
         System.out.println("SINGLEPLAYER_E2E: SQLITE_READY");
 
+        setStage("Loading world...");
         invokeMain("core.Server", new String[]{"worldprops/local.conf"});
         System.out.println("SINGLEPLAYER_E2E: WORLD_READY");
 
+        setStage("Starting game...");
         invokeMain("rt4.client", new String[]{"1", "live", "english", "game0"});
     }
 
@@ -40,6 +49,19 @@ public final class InProcessBootstrap {
                     throw new IllegalStateException("SQLite JNI probe returned the wrong result");
                 }
             }
+        }
+    }
+
+    private static void setStage(String value) {
+        String home = System.getProperty("clientHomeOverride", "").trim();
+        if (home.length() == 0) return;
+        try {
+            Files.writeString(
+                    Path.of(home, STAGE_FILE),
+                    value + System.lineSeparator(),
+                    StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+            // Stage text is UX-only and must never prevent the game from starting.
         }
     }
 
