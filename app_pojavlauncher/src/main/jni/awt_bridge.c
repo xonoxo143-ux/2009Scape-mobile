@@ -70,7 +70,49 @@ JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeSendData(JN
                 if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
                     (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
                 }
-                return;
+
+                // Threads attached from Android do not necessarily inherit the
+                // embedded JVM application's class loader. Resolve the bridge
+                // explicitly through the runtime system class loader.
+                jclass classLoaderClass = (*runtimeJNIEnvPtr_INPUT)->FindClass(
+                    runtimeJNIEnvPtr_INPUT, "java/lang/ClassLoader");
+                if (classLoaderClass != NULL) {
+                    jmethodID getSystemClassLoader = (*runtimeJNIEnvPtr_INPUT)->GetStaticMethodID(
+                        runtimeJNIEnvPtr_INPUT,
+                        classLoaderClass,
+                        "getSystemClassLoader",
+                        "()Ljava/lang/ClassLoader;");
+                    jmethodID loadClass = (*runtimeJNIEnvPtr_INPUT)->GetMethodID(
+                        runtimeJNIEnvPtr_INPUT,
+                        classLoaderClass,
+                        "loadClass",
+                        "(Ljava/lang/String;)Ljava/lang/Class;");
+                    jobject loader = (*runtimeJNIEnvPtr_INPUT)->CallStaticObjectMethod(
+                        runtimeJNIEnvPtr_INPUT,
+                        classLoaderClass,
+                        getSystemClassLoader);
+                    jstring className = (*runtimeJNIEnvPtr_INPUT)->NewStringUTF(
+                        runtimeJNIEnvPtr_INPUT,
+                        "singleplayer.MobileGestureBridge");
+                    localClass = (jclass) (*runtimeJNIEnvPtr_INPUT)->CallObjectMethod(
+                        runtimeJNIEnvPtr_INPUT,
+                        loader,
+                        loadClass,
+                        className);
+                    (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(
+                        runtimeJNIEnvPtr_INPUT, className);
+                    (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(
+                        runtimeJNIEnvPtr_INPUT, loader);
+                    (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(
+                        runtimeJNIEnvPtr_INPUT, classLoaderClass);
+                }
+                if ((*runtimeJNIEnvPtr_INPUT)->ExceptionCheck(runtimeJNIEnvPtr_INPUT) == JNI_TRUE) {
+                    (*runtimeJNIEnvPtr_INPUT)->ExceptionClear(runtimeJNIEnvPtr_INPUT);
+                    localClass = NULL;
+                }
+                if (localClass == NULL) {
+                    return;
+                }
             }
             class_MobileGestureBridge = (*runtimeJNIEnvPtr_INPUT)->NewGlobalRef(
                 runtimeJNIEnvPtr_INPUT, localClass);
