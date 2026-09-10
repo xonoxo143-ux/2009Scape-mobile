@@ -40,7 +40,20 @@ public final class ClientProt {
     public static final int CLOSE_MODAL = 184;
     public static final int NO_TIMEOUT = 93;
 
+    /**
+     * PathFinder has to report false for a successfully direct-routed minimap
+     * walk so the historical MiniMenu caller does not append the 14-byte minimap
+     * trailer to Protocol.outboundBuffer after no packet prefix was written.
+     */
+    private static boolean directMinimapWalkPending;
+
     private ClientProt() {}
+
+    public static boolean consumeDirectMinimapWalk() {
+        boolean direct = directMinimapWalkPending;
+        directMinimapWalkPending = false;
+        return direct;
+    }
 
     private static int interfaceOpcode(int option) {
         switch (option) {
@@ -116,20 +129,50 @@ public final class ClientProt {
 
     @OriginalMember(owner = "client!pi", name = "c", descriptor = "(III)V")
     public static void method3502(@OriginalArg(1) int arg0, @OriginalArg(2) int arg1) {
-        if (arg1 == 0 && arg0 > 0 && Boolean.getBoolean("singleplayer")) {
+        directMinimapWalkPending = false;
+
+        if (arg0 > 0 && Boolean.getBoolean("singleplayer")) {
             int destinationX = Camera.originX + PathFinder.queueX[0];
             int destinationZ = Camera.originZ + PathFinder.queueZ[0];
             boolean run = Keyboard.pressedKeys[Keyboard.KEY_CTRL];
-            if (singleplayer.InProcessBootstrap.LocalCommands.worldspaceWalk(
-                    destinationX, destinationZ, run)) {
+            boolean direct = false;
+            String directLabel = null;
+
+            if (arg1 == 0) {
+                direct = singleplayer.InProcessBootstrap.LocalCommands.worldspaceWalk(
+                        destinationX, destinationZ, run);
+                directLabel = "WORLDSPACE_WALK";
+            } else if (arg1 == 1) {
+                direct = singleplayer.InProcessBootstrap.LocalCommands.minimapWalk(
+                        destinationX,
+                        destinationZ,
+                        InterfaceList.anInt5,
+                        MiniMenu.anInt2878,
+                        (int) Camera.yawTarget,
+                        run);
+                directLabel = "MINIMAP_WALK";
+            } else if (arg1 == 2) {
+                direct = singleplayer.InProcessBootstrap.LocalCommands.interactWalk(
+                        destinationX, destinationZ, run);
+                directLabel = "INTERACT_WALK";
+            }
+
+            if (direct) {
                 LoginManager.mapFlagZ = PathFinder.queueZ[0];
                 LoginManager.mapFlagX = PathFinder.queueX[0];
+                if (arg1 == 1) {
+                    directMinimapWalkPending = true;
+                }
                 System.out.println(
-                        "SINGLEPLAYER_LOCAL_COMMAND: WORLDSPACE_WALK_DIRECT "
+                        "SINGLEPLAYER_LOCAL_COMMAND: " + directLabel + "_DIRECT "
                                 + destinationX + "," + destinationZ + " run=" + run);
                 return;
             }
-            System.err.println("SINGLEPLAYER_LOCAL_COMMAND: WORLDSPACE_WALK_FALLBACK");
+
+            if (directLabel != null) {
+                System.err.println(
+                        "SINGLEPLAYER_LOCAL_COMMAND: " + directLabel + "_FALLBACK");
+            }
         }
 
         @Pc(13) int local13 = arg0;
