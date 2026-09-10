@@ -9,6 +9,8 @@ import android.annotation.SuppressLint;
 import android.content.ClipboardManager;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.GestureDetector;
 import android.view.KeyEvent;
@@ -18,6 +20,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
@@ -35,7 +38,9 @@ import net.kdt.pojavlaunch.utils.MathUtils;
 
 import org.lwjgl.glfw.CallbackBridge;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -60,11 +65,27 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
     private boolean mSkipDetectMod;
     private static boolean mIsVirtualMouseEnabled;
 
+    private View mSinglePlayerLoadingOverlay;
+    private TextView mSinglePlayerLoadingStatus;
+    private Handler mSinglePlayerLoadingHandler;
+    private Runnable mSinglePlayerLoadingPoll;
+    private File mSinglePlayerStageFile;
+    private File mSinglePlayerReadyFile;
+
     @SuppressLint("ClickableViewAccessibility")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_java_gui_launcher);
+
+        mSinglePlayerLoadingOverlay = findViewById(R.id.singleplayerLoadingOverlay);
+        mSinglePlayerLoadingStatus = findViewById(R.id.singleplayerLoadingStatus);
+        mSinglePlayerLoadingHandler = new Handler(Looper.getMainLooper());
+        mSinglePlayerStageFile = new File(Tools.DIR_DATA, "singleplayer-game-stage.txt");
+        mSinglePlayerReadyFile = new File(Tools.DIR_DATA, "singleplayer-game-ready.flag");
+        if (mSinglePlayerReadyFile.exists()) mSinglePlayerReadyFile.delete();
+        if (mSinglePlayerStageFile.exists()) mSinglePlayerStageFile.delete();
+        startSinglePlayerLoadingPoll();
 
         try {
             File latestLogFile = new File(Tools.DIR_GAME_HOME, "latestlog.txt");
@@ -209,8 +230,9 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
                 return;
             }
 
-            // No skip detection
-            openLogOutput(null);
+            // No visible launcher/login logger: the custom loading overlay stays on
+            // top until the local character is actually in the world.
+            mLoggerView.setVisibility(View.GONE);
             new Thread(() -> {
                 try {
                     final int exit = launchJavaRuntime(runtime, "");
@@ -230,6 +252,50 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
         } catch (Throwable th) {
             Tools.showError(this, th, true);
         }
+    }
+
+    private void startSinglePlayerLoadingPoll() {
+        mSinglePlayerLoadingOverlay.setVisibility(View.VISIBLE);
+        mSinglePlayerLoadingStatus.setText("Starting single-player...");
+
+        mSinglePlayerLoadingPoll = new Runnable() {
+            @Override
+            public void run() {
+                if (isFinishing() || isDestroyed()) return;
+
+                String stage = readSinglePlayerStage();
+                if (stage.length() > 0) {
+                    mSinglePlayerLoadingStatus.setText(stage);
+                }
+
+                if (mSinglePlayerReadyFile.isFile()) {
+                    mSinglePlayerLoadingOverlay.setVisibility(View.GONE);
+                    Logger.appendToLog("SINGLEPLAYER_UI: GAME_VISIBLE");
+                    return;
+                }
+
+                mSinglePlayerLoadingHandler.postDelayed(this, 250L);
+            }
+        };
+        mSinglePlayerLoadingHandler.post(mSinglePlayerLoadingPoll);
+    }
+
+    private String readSinglePlayerStage() {
+        if (!mSinglePlayerStageFile.isFile()) return "";
+        try (BufferedReader reader = new BufferedReader(new FileReader(mSinglePlayerStageFile))) {
+            String line = reader.readLine();
+            return line == null ? "" : line.trim();
+        } catch (IOException ignored) {
+            return "";
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (mSinglePlayerLoadingHandler != null && mSinglePlayerLoadingPoll != null) {
+            mSinglePlayerLoadingHandler.removeCallbacks(mSinglePlayerLoadingPoll);
+        }
+        super.onDestroy();
     }
 
     private void panCamera(float dx, float dy) throws InterruptedException {
