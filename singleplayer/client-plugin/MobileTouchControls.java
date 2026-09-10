@@ -35,6 +35,9 @@ public class plugin extends Plugin {
     private DragMode dragMode = DragMode.NONE;
     private Component scrollComponent;
     private boolean mouseHeld;
+    private boolean pendingMouseRelease;
+    private int pendingReleaseX;
+    private int pendingReleaseY;
     private boolean announcedTap;
     private boolean announcedLongPress;
     private boolean announcedCameraDrag;
@@ -43,6 +46,11 @@ public class plugin extends Plugin {
 
     @Override
     public void Draw(long timeDelta) {
+        // A normal mouse drag release is deliberately delayed until the next
+        // rendered frame. That guarantees Mouse.loop() observes at least one
+        // held-button client loop even when Android delivers a very quick drag.
+        flushPendingMouseRelease();
+
         // ComponentDraw callbacks collected between two Draw callbacks represent
         // the previous rendered frame. Swap buffers so routing uses a stable,
         // complete hit map while the next frame is being collected.
@@ -84,11 +92,12 @@ public class plugin extends Plugin {
             return;
         }
 
-        boolean draggable =
-                component.type == 2
-                        || component.onDrag != null
+        boolean inventory = component.type == 2;
+        boolean genericDraggable =
+                component.onDrag != null
                         || component.onDragStart != null
                         || component.onDragRelease != null;
+        boolean draggable = inventory || genericDraggable;
 
         boolean scrollable =
                 component.scrollMaxV > component.height && component.height > 0;
@@ -114,7 +123,8 @@ public class plugin extends Plugin {
                 screenY,
                 width,
                 height,
-                draggable,
+                inventory,
+                genericDraggable,
                 scrollable));
     }
 
@@ -175,7 +185,7 @@ public class plugin extends Plugin {
 
         HitRegion hit = chooseHitRegion(x, y);
         if (hit != null) {
-            if (hit.draggable) {
+            if (hit.hasDraggableTargetAt(x, y)) {
                 dragMode = DragMode.MOUSE;
                 beginMouseDrag(x, y);
                 return;
@@ -244,8 +254,8 @@ public class plugin extends Plugin {
     }
 
     private void cancelDrag(int x, int y) {
-        if (mouseHeld) {
-            endMouseDrag(x, y);
+        if (mouseHeld || pendingMouseRelease) {
+            cancelMouseDragImmediately(x, y);
         }
         dragMode = DragMode.NONE;
         scrollComponent = null;
@@ -272,7 +282,7 @@ public class plugin extends Plugin {
             if (!region.contains(x, y)) {
                 continue;
             }
-            if (region.draggable) {
+            if (region.hasDraggableTargetAt(x, y)) {
                 return region;
             }
             if (scrollCandidate == null && region.scrollable) {
@@ -356,19 +366,47 @@ public class plugin extends Plugin {
     }
 
     private void endMouseDrag(int x, int y) {
-        Mouse instance = Mouse.instance;
-        if (instance == null) {
-            mouseHeld = false;
+        if (!mouseHeld) {
+            return;
+        }
+        pendingMouseRelease = true;
+        pendingReleaseX = x;
+        pendingReleaseY = y;
+        mouseHeld = false;
+    }
+
+    private void flushPendingMouseRelease() {
+        if (!pendingMouseRelease) {
             return;
         }
 
-        synchronized (instance) {
-            Mouse.idleLoops = 0;
-            Mouse.eventMouseX = clamp(x, 0, CLIENT_WIDTH - 1);
-            Mouse.eventMouseY = clamp(y, 0, CLIENT_HEIGHT - 1);
-            Mouse.eventAction = 0;
-            mouseHeld = false;
+        Mouse instance = Mouse.instance;
+        if (instance != null) {
+            synchronized (instance) {
+                Mouse.idleLoops = 0;
+                Mouse.eventMouseX = clamp(pendingReleaseX, 0, CLIENT_WIDTH - 1);
+                Mouse.eventMouseY = clamp(pendingReleaseY, 0, CLIENT_HEIGHT - 1);
+                Mouse.eventAction = 0;
+            }
         }
+        pendingMouseRelease = false;
+    }
+
+    private void cancelMouseDragImmediately(int x, int y) {
+        Mouse instance = Mouse.instance;
+        if (instance != null) {
+            synchronized (instance) {
+                Mouse.idleLoops = 0;
+                Mouse.eventMouseX = clamp(x, 0, CLIENT_WIDTH - 1);
+                Mouse.eventMouseY = clamp(y, 0, CLIENT_HEIGHT - 1);
+                Mouse.eventAction = 0;
+                // If Mouse.loop() has not consumed the press yet, suppress the
+                // one-shot button as well so CANCEL cannot turn into a click.
+                Mouse.eventButton = 0;
+            }
+        }
+        mouseHeld = false;
+        pendingMouseRelease = false;
     }
 
     private void endHeldMouseIfNecessary(int x, int y) {
@@ -433,7 +471,8 @@ public class plugin extends Plugin {
         final int y;
         final int width;
         final int height;
-        final boolean draggable;
+        final boolean inventory;
+        final boolean genericDraggable;
         final boolean scrollable;
 
         HitRegion(
@@ -442,19 +481,55 @@ public class plugin extends Plugin {
                 int y,
                 int width,
                 int height,
-                boolean draggable,
+                boolean inventory,
+                boolean genericDraggable,
                 boolean scrollable) {
             this.component = component;
             this.x = x;
             this.y = y;
             this.width = width;
             this.height = height;
-            this.draggable = draggable;
+            this.inventory = inventory;
+            this.genericDraggable = genericDraggable;
             this.scrollable = scrollable;
         }
 
         boolean contains(int px, int py) {
             return px >= x && py >= y && px < x + width && py < y + height;
+        }
+
+        boolean hasDraggableTargetAt(int px, int py) {
+            if (genericDraggable) {
+                return true;
+            }
+            if (!inventory || component.objTypes == null
+                    || component.baseWidth <= 0 || component.baseHeight <= 0) {
+                return false;
+            }
+
+            int cellWidth = 32 + component.invMarginX;
+            int cellHeight = 32 + component.invMarginY;
+            if (cellWidth <= 0 || cellHeight <= 0) {
+                return false;
+            }
+
+            int localX = px - x;
+            int localY = py - y;
+            if (localX < 0 || localY < 0) {
+                return false;
+            }
+
+            int column = localX / cellWidth;
+            int row = localY / cellHeight;
+            if (column < 0 || column >= component.baseWidth
+                    || row < 0 || row >= component.baseHeight) {
+                return false;
+            }
+
+            int slot = row * component.baseWidth + column;
+            return slot >= 0
+                    && slot < component.objTypes.length
+                    && component.objTypes[slot] > 0;
         }
     }
 }
