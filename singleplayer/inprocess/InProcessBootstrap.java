@@ -10,11 +10,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-/**
- * Starts the 2009Scape world engine and RT4 client inside the same OpenJDK VM.
- * The stock loopback game protocol remains an internal compatibility boundary,
- * but there is no second Android process or second JVM.
- */
+/** Starts the legacy game subsystems under one local game authority. */
 public final class InProcessBootstrap {
     private static final String STAGE_FILE = "singleplayer-game-stage.txt";
 
@@ -22,19 +18,31 @@ public final class InProcessBootstrap {
 
     public static void main(String[] args) throws Throwable {
         System.setProperty("singleplayer", "true");
-        setStage("Starting single-player...");
-        System.out.println("SINGLEPLAYER_E2E: COMBINED_JVM_START");
+        LocalGameRuntime runtime = LocalGameRuntime.get();
+        runtime.beginStart();
 
-        setStage("Preparing local data...");
-        verifySQLite();
-        System.out.println("SINGLEPLAYER_E2E: SQLITE_READY");
+        try {
+            setStage("Starting single-player...");
+            System.out.println("SINGLEPLAYER_E2E: COMBINED_JVM_START");
 
-        setStage("Loading world...");
-        invokeMain("core.Server", new String[]{"worldprops/local.conf"});
-        System.out.println("SINGLEPLAYER_E2E: WORLD_READY");
+            setStage("Preparing local data...");
+            verifySQLite();
+            System.out.println("SINGLEPLAYER_E2E: SQLITE_READY");
 
-        setStage("Starting game...");
-        invokeMain("rt4.client", new String[]{"1", "live", "english", "game0"});
+            setStage("Loading world...");
+            invokeMain("core.Server", new String[]{"worldprops/local.conf"});
+            runtime.markWorldReady();
+            System.out.println("SINGLEPLAYER_E2E: WORLD_READY");
+
+            // RT4 still enters through its legacy main/login path during this
+            // migration stage. LocalGameRuntime remains the authority around it;
+            // login/session/network assumptions are removed in later checkpoints.
+            setStage("Starting game...");
+            invokeMain("rt4.client", new String[]{"1", "live", "english", "game0"});
+        } catch (Throwable failure) {
+            runtime.fail(failure);
+            throw failure;
+        }
     }
 
     private static void verifySQLite() throws Exception {
@@ -46,7 +54,8 @@ public final class InProcessBootstrap {
             try (ResultSet result = statement.executeQuery(
                     "SELECT value FROM android_sqlite_probe LIMIT 1")) {
                 if (!result.next() || result.getInt(1) != 2009) {
-                    throw new IllegalStateException("SQLite JNI probe returned the wrong result");
+                    throw new IllegalStateException(
+                            "SQLite JNI probe returned the wrong result");
                 }
             }
         }
