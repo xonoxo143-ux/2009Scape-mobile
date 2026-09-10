@@ -14,6 +14,9 @@ import android.view.ViewConfiguration;
  * camera drag/pinch can never accidentally become a click on release.
  */
 public final class TouchInputController implements View.OnTouchListener {
+    public interface TapObserver {
+        void onTap(int clientX, int clientY);
+    }
     private enum State {
         IDLE,
         PRESS_PENDING,
@@ -28,6 +31,7 @@ public final class TouchInputController implements View.OnTouchListener {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final int touchSlopSquared;
     private final long longPressTimeoutMs;
+    private final TapObserver tapObserver;
 
     private State state = State.IDLE;
     private int activePointerId = INVALID_POINTER;
@@ -53,8 +57,9 @@ public final class TouchInputController implements View.OnTouchListener {
         }
     };
 
-    public TouchInputController(AWTCanvasView canvas) {
+    public TouchInputController(AWTCanvasView canvas, TapObserver tapObserver) {
         this.canvas = canvas;
+        this.tapObserver = tapObserver;
         ViewConfiguration configuration = ViewConfiguration.get(canvas.getContext());
         int touchSlop = configuration.getScaledTouchSlop();
         touchSlopSquared = touchSlop * touchSlop;
@@ -229,12 +234,17 @@ public final class TouchInputController implements View.OnTouchListener {
         cancelLongPress();
 
         if (state == State.PRESS_PENDING) {
+            int clientX = toClientX(x);
+            int clientY = toClientY(y);
             send(
                     AWTInputBridge.GESTURE_TAP,
-                    toClientX(x),
-                    toClientY(y),
+                    clientX,
+                    clientY,
                     0,
                     0);
+            if (tapObserver != null) {
+                tapObserver.onTap(clientX, clientY);
+            }
         } else if (state == State.DRAG) {
             send(
                     AWTInputBridge.GESTURE_DRAG_END,
