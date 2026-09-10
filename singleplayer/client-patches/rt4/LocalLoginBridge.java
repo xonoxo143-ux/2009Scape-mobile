@@ -8,10 +8,7 @@ import java.security.SecureRandom;
  *
  * The world still runs its existing authenticator, Login.proceedWith(),
  * LoginParser and outgoing login/game encoders. This class only replaces the
- * transport handshake: it asks the already-running world to create the local
- * session, then consumes the exact success metadata and first rebuild packet
- * from LocalPresentationBridge using the same RT4 state transitions as the
- * retained LoginManager.
+ * transport handshake and consumes the retained success/rebuild stream locally.
  */
 public final class LocalLoginBridge {
     private static final int IDLE = 0;
@@ -24,7 +21,9 @@ public final class LocalLoginBridge {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private static int state = IDLE;
+    private static String activeUsername;
     private static Method beginLocalLogin;
+    private static Method endLocalSession;
 
     private LocalLoginBridge() {}
 
@@ -38,11 +37,15 @@ public final class LocalLoginBridge {
         if (state == COMPLETE) {
             return true;
         }
+        if (state == FAILED) {
+            return false;
+        }
         if (username == null || username.trim().isEmpty()) {
             fail(3, "empty profile name");
             return false;
         }
 
+        String normalized = username.trim();
         try {
             if (Protocol.socket != null) {
                 Protocol.socket.close();
@@ -67,7 +70,7 @@ public final class LocalLoginBridge {
             Protocol.inboundBuffer.offset = 0;
             Protocol.inboundBuffer.setKey(inboundSeed);
 
-            Player.usernameInput = JagString.of(username.trim());
+            Player.usernameInput = JagString.of(normalized);
             Player.password = JagString.of("local");
             Player.name37 = Player.usernameInput.encode37();
             Preferences.sentToServer = true;
@@ -81,19 +84,22 @@ public final class LocalLoginBridge {
             Method method = resolveBeginLocalLogin();
             Object accepted = method.invoke(
                     null,
-                    username.trim(),
+                    normalized,
                     Preferences.antiAliasingMode,
                     DisplayMode.getWindowMode(),
                     GameShell.canvasWidth,
                     GameShell.canvasHeight,
                     seed);
             if (!Boolean.TRUE.equals(accepted)) {
-                fail(-4, "world rejected local session creation");
+                // Repository teardown after a previous logout is intentionally
+                // asynchronous in 2009Scape. Stay idle and let the plugin retry.
+                LocalPresentationBridge.reset();
                 return false;
             }
 
+            activeUsername = normalized;
             state = WAIT_RESPONSE;
-            System.out.println("SINGLEPLAYER_LOCAL_LOGIN: REQUESTED username=" + username.trim());
+            System.out.println("SINGLEPLAYER_LOCAL_LOGIN: REQUESTED username=" + normalized);
             return true;
         } catch (Throwable failure) {
             fail(-4, failure.getClass().getSimpleName() + ": " + failure.getMessage());
@@ -165,10 +171,6 @@ public final class LocalLoginBridge {
 
                 LoginManager.reply = 2;
                 LoginManager.step = 0;
-
-                // From this point onward the retained Protocol decoder should see
-                // exactly the same BufferedSocket API it always used, but backed
-                // solely by LocalPresentationBridge rather than java.net.Socket.
                 Protocol.socket = BufferedSocket.createLocal(GameShell.signLink);
 
                 client.method4221();
@@ -194,6 +196,7 @@ public final class LocalLoginBridge {
     }
 
     public static synchronized void reset() {
+        closeWorldSession();
         state = IDLE;
         LoginManager.step = 0;
         if (Protocol.socket != null) {
@@ -206,7 +209,6 @@ public final class LocalLoginBridge {
     private static Method resolveBeginLocalLogin() throws Exception {
         Method method = beginLocalLogin;
         if (method != null) return method;
-
         Class<?> probe = Class.forName("core.local.LocalMigrationProbe");
         method = probe.getMethod(
                 "beginLocalLogin",
@@ -220,7 +222,29 @@ public final class LocalLoginBridge {
         return method;
     }
 
+    private static Method resolveEndLocalSession() throws Exception {
+        Method method = endLocalSession;
+        if (method != null) return method;
+        Class<?> probe = Class.forName("core.local.LocalMigrationProbe");
+        method = probe.getMethod("endLocalSession", String.class);
+        endLocalSession = method;
+        return method;
+    }
+
+    private static void closeWorldSession() {
+        String username = activeUsername;
+        activeUsername = null;
+        if (username == null || username.isEmpty()) return;
+        try {
+            resolveEndLocalSession().invoke(null, username);
+        } catch (Throwable failure) {
+            System.err.println(
+                    "SINGLEPLAYER_LOCAL_LOGIN: world-session close failed: " + failure);
+        }
+    }
+
     private static void fail(int reply, String reason) {
+        closeWorldSession();
         state = FAILED;
         LoginManager.reply = reply;
         LoginManager.step = 0;
