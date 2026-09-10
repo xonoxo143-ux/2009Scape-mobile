@@ -1,0 +1,295 @@
+name: Fast Android Phone Build
+
+on:
+  push:
+    branches:
+      - singleplayer-native-refactor
+    paths:
+      - '.github/fast-build-trigger'
+  workflow_dispatch:
+
+concurrency:
+  group: android-fast-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_COMMIT: 9f634148bab11fad821943864cb71d7c6af98da4
+  JRE_TAG: jre17-ec28559
+  JRE_FILE: jre17-arm64-20210825-release.tar.xz
+  JRE_SHA256: c64583ac2e0ec8857e43456fa9adcf482c6a8e454a7133173bf15692d2478b8d
+  SQLITE_VERSION: 3.53.4.0
+  SQLITE_ANDROID_SHA256: 4125c0c02ef226896dae098f7b38ee66b7b376df243dd340ff09e2d5a3e3ee1b
+
+jobs:
+  phone-apk:
+    name: Cached ARM64 phone APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 8 for launcher support
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 7.6.1
+          cache-cleanup: on-success
+
+      - name: Build launcher support JARs
+        run: |
+          set -euxo pipefail
+          ./scripts/languagelist_updater.sh
+          mkdir -p out build/ci-cache build/download-cache
+          gradle :jre_lwjgl3glfw:build --no-daemon
+
+      - name: Set up JDK 17 for single-player build
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Restore prepared world bundle
+        id: world-cache
+        uses: actions/cache@v4
+        with:
+          path: build/ci-cache/world
+          key: >-
+            singleplayer-world-v3-${{ env.UPSTREAM_COMMIT }}-${{
+            hashFiles('singleplayer/native-refactor/prepare_upstream.py',
+            'singleplayer/server-patches/**', 'singleplayer/default.conf') }}
+
+      - name: Restore pristine pinned 2009Scape tree
+        if: steps.world-cache.outputs.cache-hit != 'true'
+        id: upstream-cache
+        uses: actions/cache@v4
+        with:
+          path: build/ci-cache/upstream-pristine
+          key: singleplayer-upstream-v2-${{ env.UPSTREAM_COMMIT }}
+
+      - name: Fetch pinned 2009Scape tree on cache miss
+        if: steps.world-cache.outputs.cache-hit != 'true' && steps.upstream-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          rm -rf build/ci-cache/upstream-pristine
+          git init build/ci-cache/upstream-pristine
+          git -C build/ci-cache/upstream-pristine remote add origin https://gitlab.com/2009scape/2009scape.git
+          git -C build/ci-cache/upstream-pristine fetch --depth 1 origin "$UPSTREAM_COMMIT"
+          git -C build/ci-cache/upstream-pristine checkout --detach FETCH_HEAD
+          git -C build/ci-cache/upstream-pristine lfs pull
+          test "$(git -C build/ci-cache/upstream-pristine rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+          CACHE=build/ci-cache/upstream-pristine/Server/data/cache/main_file_cache.dat2
+          test -f "$CACHE"
+          test "$(stat -c%s "$CACHE")" -gt 50000000
+          ! grep -a -q 'git-lfs.github.com/spec/v1' "$CACHE"
+
+      - name: Restore Maven repository
+        if: steps.world-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: singleplayer-maven-v2-${{ runner.os }}-${{ env.UPSTREAM_COMMIT }}
+          restore-keys: |
+            singleplayer-maven-v2-${{ runner.os }}-
+
+      - name: Prepare and build world bundle on cache miss
+        if: steps.world-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          rm -rf upstream-server build/ci-cache/world
+          cp -a build/ci-cache/upstream-pristine upstream-server
+
+          python3 singleplayer/native-refactor/prepare_upstream.py \
+            upstream-server/Server \
+            --repo-root "$GITHUB_WORKSPACE"
+
+          pushd upstream-server/Server >/dev/null
+          chmod +x mvnw
+          ./mvnw package -DskipTests
+          popd >/dev/null
+
+          ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \
+            \( -name '*-jar-with-dependencies.jar' -o -name '*-with-dependencies.jar' \) \
+            | head -n 1)
+          test -n "$ENGINE_JAR"
+
+          mkdir -p build/ci-cache/world
+          cp "$ENGINE_JAR" build/ci-cache/world/engine.jar
+          cp singleplayer-generated.conf build/ci-cache/world/world-default.conf
+          cp singleplayer-world-version.txt build/ci-cache/world/world-version.txt
+          (cd upstream-server/Server && zip -qr "$GITHUB_WORKSPACE/build/ci-cache/world/world-data.zip" data)
+
+          python3 - <<'PY'
+          import struct, zipfile
+          jar = 'build/ci-cache/world/engine.jar'
+          highest = 0
+          with zipfile.ZipFile(jar) as z:
+              for name in z.namelist():
+                  if not name.endswith('.class'):
+                      continue
+                  data = z.read(name)
+                  if data[:4] != b'\xca\xfe\xba\xbe':
+                      continue
+                  major = struct.unpack('>H', data[6:8])[0]
+                  highest = max(highest, major)
+                  if major > 61:
+                      raise SystemExit(f'{name} uses classfile {major}, newer than Java 17')
+          print('Highest world-engine classfile version:', highest)
+          PY
+
+      - name: Install prepared world bundle
+        run: |
+          set -euxo pipefail
+          ASSET_DIR=app_pojavlauncher/src/main/assets/singleplayer
+          mkdir -p "$ASSET_DIR"
+          for file in engine.jar world-data.zip world-default.conf world-version.txt; do
+            test -s "build/ci-cache/world/$file"
+            cp "build/ci-cache/world/$file" "$ASSET_DIR/$file"
+          done
+
+      - name: Generate pinned RT4 source overrides
+        run: |
+          set -euxo pipefail
+          rm -rf build/generated-rt4
+          python3 singleplayer/native-refactor/prepare_rt4.py build/generated-rt4
+          test -f build/generated-rt4/rt4/SignLink.java
+
+      - name: Build combined JVM bootstrap
+        run: |
+          set -euxo pipefail
+          rm -rf build/singleplayer-bootstrap
+          mkdir -p build/singleplayer-bootstrap
+          mapfile -t RT4_PATCHES < <(find singleplayer/client-patches/rt4 -maxdepth 1 -type f -name '*.java' | sort)
+          test "${#RT4_PATCHES[@]}" -ge 7
+          javac --release 17 \
+            -cp app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/singleplayer-bootstrap \
+            singleplayer/inprocess/InProcessBootstrap.java \
+            singleplayer/inprocess/MobileGestureBridge.java \
+            singleplayer/inprocess/MobileLifecycleBridge.java \
+            "${RT4_PATCHES[@]}" \
+            build/generated-rt4/rt4/SignLink.java
+          rm -f app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
+          jar --create \
+            --file app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar \
+            -C build/singleplayer-bootstrap singleplayer \
+            -C build/singleplayer-bootstrap rt4
+
+      - name: Restore ARM64 Java 17 runtime download
+        id: jre-cache
+        uses: actions/cache@v4
+        with:
+          path: build/download-cache/${{ env.JRE_FILE }}
+          key: jre17-arm64-${{ env.JRE_SHA256 }}
+
+      - name: Download ARM64 Java 17 runtime on cache miss
+        if: steps.jre-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          mkdir -p build/download-cache
+          URL="https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/${JRE_TAG}/${JRE_FILE}"
+          curl --fail --location --retry 5 --retry-delay 2 "$URL" -o "build/download-cache/$JRE_FILE"
+          echo "$JRE_SHA256  build/download-cache/$JRE_FILE" | sha256sum -c -
+
+      - name: Package ARM64 Java 17 runtime
+        run: |
+          set -euxo pipefail
+          ASSET_DIR=app_pojavlauncher/src/main/assets/singleplayer
+          echo "$JRE_SHA256  build/download-cache/$JRE_FILE" | sha256sum -c -
+          cp "build/download-cache/$JRE_FILE" "$ASSET_DIR/runtime-jre17.tar.xz"
+          printf '%s/%s\n' "$JRE_TAG" "$JRE_FILE" > "$ASSET_DIR/runtime-jre17-version.txt"
+
+      - name: Restore Android SQLite JNI bundle
+        id: sqlite-cache
+        uses: actions/cache@v4
+        with:
+          path: build/download-cache/sqlite-jdbc-${{ env.SQLITE_VERSION }}-natives-android.jar
+          key: sqlite-android-${{ env.SQLITE_ANDROID_SHA256 }}
+
+      - name: Download Android SQLite JNI bundle on cache miss
+        if: steps.sqlite-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          mkdir -p build/download-cache
+          FILE="sqlite-jdbc-${SQLITE_VERSION}-natives-android.jar"
+          URL="https://github.com/xerial/sqlite-jdbc/releases/download/${SQLITE_VERSION}/${FILE}"
+          curl --fail --location --retry 5 --retry-delay 2 "$URL" -o "build/download-cache/$FILE"
+          echo "$SQLITE_ANDROID_SHA256  build/download-cache/$FILE" | sha256sum -c -
+
+      - name: Package Android SQLite JNI
+        run: |
+          set -euxo pipefail
+          FILE="build/download-cache/sqlite-jdbc-${SQLITE_VERSION}-natives-android.jar"
+          echo "$SQLITE_ANDROID_SHA256  $FILE" | sha256sum -c -
+          mkdir -p app_pojavlauncher/src/main/jniLibs/arm64-v8a app_pojavlauncher/src/main/jniLibs/x86_64
+          unzip -p "$FILE" org/sqlite/native/Linux-Android/aarch64/libsqlitejdbc.so \
+            > app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so
+          unzip -p "$FILE" org/sqlite/native/Linux-Android/x86_64/libsqlitejdbc.so \
+            > app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
+          test -s app_pojavlauncher/src/main/jniLibs/arm64-v8a/libsqlitejdbc.so
+          test -s app_pojavlauncher/src/main/jniLibs/x86_64/libsqlitejdbc.so
+
+      - name: Build single-player client plugins
+        run: |
+          set -euxo pipefail
+          rm -rf build/singleplayer-plugin
+          mkdir -p build/singleplayer-plugin/login build/singleplayer-plugin/touch
+
+          cp singleplayer/client-plugin/LocalSinglePlayerLogin.java build/singleplayer-plugin/login/plugin.java
+          javac --release 8 \
+            -cp app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/singleplayer-plugin/login \
+            build/singleplayer-plugin/login/plugin.java
+          rm -f build/singleplayer-plugin/login/plugin.java
+
+          cp singleplayer/client-plugin/MobileTouchControls.java build/singleplayer-plugin/touch/plugin.java
+          javac --release 8 \
+            -cp "app_pojavlauncher/src/main/assets/rt4.jar:app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar" \
+            -d build/singleplayer-plugin/touch \
+            build/singleplayer-plugin/touch/plugin.java
+          rm -f build/singleplayer-plugin/touch/plugin.java
+
+          rm -f app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip \
+            app_pojavlauncher/src/main/assets/plugins/MobileTouchControls.zip
+          (cd build/singleplayer-plugin/login && zip -qr \
+            "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip" \
+            LocalSinglePlayerLogin)
+          (cd build/singleplayer-plugin/touch && zip -qr \
+            "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/MobileTouchControls.zip" \
+            MobileTouchControls)
+
+      - name: Remove unused legacy Java 8 runtime assets
+        run: rm -rf app_pojavlauncher/src/main/assets/components/jre
+
+      - name: Assemble production phone APK
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          gradle :app_pojavlauncher:assembleDebug --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+          cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
+          sha256sum out/2009scape-mobile.apk > out/2009scape-mobile.apk.sha256
+
+      - name: Verify production payload exists
+        run: |
+          set -euxo pipefail
+          unzip -l out/2009scape-mobile.apk > out/apk-contents.txt
+          grep -q 'assets/singleplayer/engine.jar' out/apk-contents.txt
+          grep -q 'assets/singleplayer/world-data.zip' out/apk-contents.txt
+          grep -q 'assets/singleplayer/runtime-jre17.tar.xz' out/apk-contents.txt
+          grep -q 'assets/singleplayer-bootstrap.jar' out/apk-contents.txt
+          grep -q 'lib/arm64-v8a/libsqlitejdbc.so' out/apk-contents.txt
+
+      - name: Upload phone APK immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2009scape-mobile-fast
+          path: |
+            out/2009scape-mobile.apk
+            out/2009scape-mobile.apk.sha256
+          if-no-files-found: error
