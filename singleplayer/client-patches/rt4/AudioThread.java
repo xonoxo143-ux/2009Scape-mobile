@@ -96,6 +96,15 @@ class ClientProt {
         }
     }
 
+    private static int playerOptionIndex(int clientOption) {
+        switch (clientOption) {
+            case 1: return 0;
+            case 4: return 3;
+            case 7: return 6;
+            default: return -1;
+        }
+    }
+
     @OriginalMember(owner = "client!vg", name = "a", descriptor = "(Lclient!na;IIBI)V")
     public static void method4512(@OriginalArg(0) JagString arg0, @OriginalArg(1) int arg1, @OriginalArg(2) int arg2, @OriginalArg(4) int arg3) {
         @Pc(8) Component local8 = InterfaceList.method1418(arg3, arg1);
@@ -126,7 +135,8 @@ class ClientProt {
         if (Boolean.getBoolean("singleplayer")) {
             int iface = arg3 >>> 16;
             int child = arg3 & 0xFFFF;
-            int slot = arg1 & 0xFFFF;
+            // Match IoBuffer.getShort(): p2(-1) decodes as -1, not 65535.
+            int slot = arg1;
             if (singleplayer.InProcessBootstrap.LocalCommands.interfaceAction(
                     opcode, arg2 - 1, iface, child, slot, -1)) {
                 System.out.println(
@@ -224,6 +234,17 @@ class ClientProt {
             if (local28 != null && local28.username != null && local28.username.equalsIgnoreCase(local7)) {
                 local13 = true;
                 PathFinder.findPath(PlayerList.self.movementQueueZ[0], 0, 1, false, 0, local28.movementQueueX[0], 1, 0, 2, local28.movementQueueZ[0], PlayerList.self.movementQueueX[0]);
+
+                int optionIndex = playerOptionIndex(arg0);
+                if (optionIndex >= 0 && Boolean.getBoolean("singleplayer")
+                        && singleplayer.InProcessBootstrap.LocalCommands.playerAction(
+                                optionIndex, PlayerList.ids[local15])) {
+                    System.out.println(
+                            "SINGLEPLAYER_LOCAL_COMMAND: PLAYER_ACTION_DIRECT option="
+                                    + optionIndex + " index=" + PlayerList.ids[local15]);
+                    break;
+                }
+
                 if (arg0 == 1) {
                     Protocol.outboundBuffer.p1isaac(68);
                     Protocol.outboundBuffer.ip2add(PlayerList.ids[local15]);
