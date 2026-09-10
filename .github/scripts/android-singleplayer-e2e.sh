@@ -210,7 +210,7 @@ wait_for_activity() {
   return 1
 }
 
-wait_for_touch_marker() {
+wait_for_runtime_marker() {
   local marker="$1"
   local timeout="${2:-12}"
   local deadline=$((SECONDS + timeout))
@@ -222,13 +222,13 @@ wait_for_touch_marker() {
       > "${ARTIFACT_DIR}/combined-log.txt" 2>/dev/null || true
 
     if grep -F -q "$marker" "${ARTIFACT_DIR}/combined-log.txt" 2>/dev/null; then
-      echo "Touch milestone: $marker"
+      echo "Runtime milestone: $marker"
       return 0
     fi
     sleep 1
   done
 
-  echo "Timed out waiting for touch milestone: $marker"
+  echo "Timed out waiting for runtime milestone: $marker"
   return 1
 }
 
@@ -244,20 +244,58 @@ smoke_test_touch_controls() {
 
   echo "=== Touch: tap ==="
   adb shell input tap "$x" "$y"
-  wait_for_touch_marker 'SINGLEPLAYER_TOUCH: TAP' "$((deadline - SECONDS))"
+  wait_for_runtime_marker 'SINGLEPLAYER_TOUCH: TAP' "$((deadline - SECONDS))"
 
   echo "=== Touch: long press ==="
   adb shell input swipe "$x" "$y" "$x" "$y" 750
-  wait_for_touch_marker 'SINGLEPLAYER_TOUCH: LONG_PRESS' "$((deadline - SECONDS))"
+  wait_for_runtime_marker 'SINGLEPLAYER_TOUCH: LONG_PRESS' "$((deadline - SECONDS))"
 
-  # Close the resulting context menu before testing camera drag.
+  # Close the resulting context menu, then close the stock desktop
+  # mouse-setup overlay that appears on a brand-new account. It sits over the
+  # scene and should correctly block camera input while present.
   adb shell input keyevent KEYCODE_BACK
+  sleep 1
+  adb shell input tap 1500 20
   sleep 1
 
   echo "=== Touch: world drag ==="
   adb shell input swipe "$x" "$y" "$((x + 180))" "$y" 500
-  wait_for_touch_marker 'SINGLEPLAYER_TOUCH: DRAG_BEGIN:CAMERA' "$((deadline - SECONDS))"
-  wait_for_touch_marker 'SINGLEPLAYER_TOUCH: DRAG_END' "$((deadline - SECONDS))"
+  wait_for_runtime_marker 'SINGLEPLAYER_TOUCH: DRAG_BEGIN:CAMERA' "$((deadline - SECONDS))"
+  wait_for_runtime_marker 'SINGLEPLAYER_TOUCH: DRAG_END' "$((deadline - SECONDS))"
+}
+
+smoke_test_mobile_audio() {
+  echo "=== Verify mobile audio backend ==="
+  wait_for_runtime_marker 'SINGLEPLAYER_AUDIO: OPENAL_SHARED_CONTEXT_READY' "$(phase_timeout 12)"
+  wait_for_runtime_marker 'SINGLEPLAYER_AUDIO: MUSIC_PCM_ACTIVE' "$(phase_timeout 12)"
+  wait_for_runtime_marker 'SINGLEPLAYER_AUDIO: EFFECTS_PCM_ACTIVE' "$(phase_timeout 12)"
+  wait_for_runtime_marker 'SINGLEPLAYER_MOBILE: FPS_CAP_60' "$(phase_timeout 12)"
+}
+
+smoke_test_background_pause() {
+  echo "=== Verify Android background pause/resume ==="
+
+  local task_line
+  local task_id
+  task_line="$(adb shell dumpsys activity activities | grep -m1 "mResumedActivity:.*${APP_ID}" || true)"
+  task_id="$(printf '%s\n' "$task_line" | sed -nE 's/.* t([0-9]+)\}.*/\1/p')"
+  if [[ -z "$task_id" ]]; then
+    echo "Could not determine running game task id from: $task_line"
+    return 1
+  fi
+
+  adb shell input keyevent KEYCODE_HOME
+  wait_for_runtime_marker 'SINGLEPLAYER_LIFECYCLE: PAUSED' "$(phase_timeout 12)"
+  wait_for_runtime_marker 'SINGLEPLAYER_WORLD: PAUSED' "$(phase_timeout 12)"
+
+  # Give the paused state enough time to catch accidental client/world catch-up
+  # behavior, then bring the exact existing task forward (do not create a new
+  # JavaGUILauncherActivity or a second embedded JVM).
+  sleep 2
+  adb shell am task move-to-front "$task_id"
+  wait_for_activity 'net.kdt.pojavlaunch.JavaGUILauncherActivity' "$(phase_timeout 12)"
+  wait_for_runtime_marker 'SINGLEPLAYER_LIFECYCLE: RESUMED' "$(phase_timeout 12)"
+  wait_for_runtime_marker 'SINGLEPLAYER_WORLD: RESUMED' "$(phase_timeout 12)"
 }
 
 wait_for_combined_game() {
@@ -362,8 +400,12 @@ wait_for_activity 'net.kdt.pojavlaunch.JavaGUILauncherActivity' "$(phase_timeout
 echo "=== Wait for combined Java 17 game milestones ==="
 wait_for_combined_game "$(phase_timeout 180)"
 
+smoke_test_mobile_audio
+
 echo "=== Verify native mobile controls ==="
 smoke_test_touch_controls
+
+smoke_test_background_pause
 capture_screen
 
 echo "Combined single-player Android E2E passed."
