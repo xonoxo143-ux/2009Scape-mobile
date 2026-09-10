@@ -643,6 +643,14 @@ public class plugin extends Plugin {
                 return false;
             }
 
+            // The actual item slot is 32x32. Keep invMarginX/Y as genuine
+            // whitespace so a bank/grid can still be scrolled from between items.
+            int withinCellX = localX % cellWidth;
+            int withinCellY = localY % cellHeight;
+            if (withinCellX >= 32 || withinCellY >= 32) {
+                return false;
+            }
+
             int slot = row * component.baseWidth + column;
             return slot >= 0
                     && slot < component.objTypes.length
