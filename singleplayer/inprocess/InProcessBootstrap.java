@@ -9,6 +9,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.Arrays;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Starts the legacy game subsystems under one local game authority. */
@@ -20,6 +22,189 @@ public final class InProcessBootstrap {
     /** Temporary adapter for legacy code until it reads LocalGameRuntime directly. */
     public static int getViewDistance() {
         return LocalGameRuntime.get().config().viewDistance();
+    }
+
+    /** Called by the transitional login adapter once RT4 has entered the world. */
+    public static void markClientReady() {
+        LocalGameRuntime.get().markClientReady();
+    }
+
+    /**
+     * Client-facing direct command API. The world implementation is deliberately
+     * located in 2009Scape and reuses its existing typed Packet command classes.
+     * Reflection here keeps the bootstrap independent of the engine JAR at
+     * compile time; resolved Method objects are cached after first use.
+     */
+    public static final class LocalCommands {
+        private static final ConcurrentHashMap<String, Method> METHODS =
+                new ConcurrentHashMap<>();
+
+        private LocalCommands() {}
+
+        public static boolean ping() {
+            return invoke("ping", new Class<?>[]{String.class}, playerName());
+        }
+
+        public static boolean worldspaceWalk(int x, int y, boolean run) {
+            return invoke(
+                    "worldspaceWalk",
+                    new Class<?>[]{String.class, int.class, int.class, boolean.class},
+                    playerName(), x, y, run);
+        }
+
+        public static boolean minimapWalk(
+                int x,
+                int y,
+                int clickedX,
+                int clickedY,
+                int rotation,
+                boolean run) {
+            return invoke(
+                    "minimapWalk",
+                    new Class<?>[]{
+                        String.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        boolean.class
+                    },
+                    playerName(), x, y, clickedX, clickedY, rotation, run);
+        }
+
+        public static boolean npcAction(int option, int npcIndex) {
+            return invoke(
+                    "npcAction",
+                    new Class<?>[]{String.class, int.class, int.class},
+                    playerName(), option, npcIndex);
+        }
+
+        public static boolean playerAction(int option, int otherIndex) {
+            return invoke(
+                    "playerAction",
+                    new Class<?>[]{String.class, int.class, int.class},
+                    playerName(), option, otherIndex);
+        }
+
+        public static boolean sceneryAction(
+                int option, int sceneryId, int x, int y) {
+            return invoke(
+                    "sceneryAction",
+                    new Class<?>[]{
+                        String.class, int.class, int.class, int.class, int.class
+                    },
+                    playerName(), option, sceneryId, x, y);
+        }
+
+        public static boolean groundItemAction(
+                int option, int itemId, int x, int y) {
+            return invoke(
+                    "groundItemAction",
+                    new Class<?>[]{
+                        String.class, int.class, int.class, int.class, int.class
+                    },
+                    playerName(), option, itemId, x, y);
+        }
+
+        public static boolean itemAction(
+                int option,
+                int itemId,
+                int slot,
+                int iface,
+                int child) {
+            return invoke(
+                    "itemAction",
+                    new Class<?>[]{
+                        String.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class
+                    },
+                    playerName(), option, itemId, slot, iface, child);
+        }
+
+        public static boolean interfaceAction(
+                int opcode,
+                int option,
+                int iface,
+                int child,
+                int slot,
+                int itemId) {
+            return invoke(
+                    "interfaceAction",
+                    new Class<?>[]{
+                        String.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class
+                    },
+                    playerName(), opcode, option, iface, child, slot, itemId);
+        }
+
+        public static boolean continueOption(
+                int iface, int child, int slot, int opcode) {
+            return invoke(
+                    "continueOption",
+                    new Class<?>[]{
+                        String.class, int.class, int.class, int.class, int.class
+                    },
+                    playerName(), iface, child, slot, opcode);
+        }
+
+        public static boolean closeInterface() {
+            return invoke(
+                    "closeInterface",
+                    new Class<?>[]{String.class},
+                    playerName());
+        }
+
+        public static boolean inputPrompt(String response) {
+            return invoke(
+                    "inputPromptString",
+                    new Class<?>[]{String.class, String.class},
+                    playerName(), response);
+        }
+
+        public static boolean inputPrompt(int response) {
+            return invoke(
+                    "inputPromptInt",
+                    new Class<?>[]{String.class, int.class},
+                    playerName(), response);
+        }
+
+        private static String playerName() {
+            return System.getProperty("singlePlayerName", "Player");
+        }
+
+        private static boolean invoke(
+                String methodName, Class<?>[] parameterTypes, Object... args) {
+            try {
+                String key = methodName + Arrays.toString(parameterTypes);
+                Method method = METHODS.get(key);
+                if (method == null) {
+                    Class<?> ingress = Class.forName("core.local.LocalCommandIngress");
+                    method = ingress.getMethod(methodName, parameterTypes);
+                    Method existing = METHODS.putIfAbsent(key, method);
+                    if (existing != null) method = existing;
+                }
+                Object result = method.invoke(null, args);
+                return Boolean.TRUE.equals(result);
+            } catch (ClassNotFoundException e) {
+                // Expected until the native world overlay is packaged into the
+                // production engine. Keep the legacy protocol alive meanwhile.
+                return false;
+            } catch (Throwable failure) {
+                System.err.println(
+                        "SINGLEPLAYER_LOCAL_COMMAND: " + methodName + " failed: " + failure);
+                return false;
+            }
+        }
     }
 
     public static void main(String[] args) throws Throwable {
@@ -176,6 +361,18 @@ final class LocalGameRuntime {
                     "World became ready from unexpected state " + state.get());
         }
         log("WORLD_READY");
+    }
+
+    synchronized void markClientReady() {
+        State current = state.get();
+        if (current != State.WORLD_READY
+                && current != State.RUNNING
+                && current != State.PAUSED) {
+            throw new IllegalStateException(
+                    "Client became ready from unexpected state " + current);
+        }
+        state.set(appPaused ? State.PAUSED : State.RUNNING);
+        log("CLIENT_READY");
     }
 
     synchronized void setAppPaused(boolean paused) {
