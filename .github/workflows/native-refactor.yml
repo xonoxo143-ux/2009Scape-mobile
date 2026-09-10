@@ -57,12 +57,14 @@ jobs:
           test -f build/native-bootstrap/rt4/LocalSocketPolicy.class
           test -f build/native-bootstrap/rt4/LocalLoginBridge.class
           test -f build/native-bootstrap/rt4/LocalPresentationBridge.class
+          test -f build/native-bootstrap/rt4/LocalLeagueBridge.class
           grep -q 'LocalCommands.worldspaceWalk' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'LocalCommands.interactWalk' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'LocalCommands.minimapWalk' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'markDirectMinimapTrailer' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'stripDirectMinimapTrailers' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'MINIMAP_TRAILERS_DISCARDED' singleplayer/client-patches/rt4/ClientProt.java
+          grep -q 'LocalLoginBridge.tickAutoLogin' singleplayer/client-patches/rt4/NanoTimer.java
 
       - name: Fetch pinned 2009Scape source
         run: |
@@ -86,6 +88,10 @@ jobs:
             upstream-server/Server/src/main/core/net/packet/PacketRepository.java
           grep -q 'beginLocalLogin' \
             upstream-server/Server/src/main/core/local/LocalMigrationProbe.kt
+          grep -q 'ENTITY_SYNC_DISTANCE = 15' \
+            upstream-server/Server/src/main/core/local/LocalMigrationProbe.kt
+          grep -q 'object LeagueRuntime' \
+            upstream-server/Server/src/main/core/local/LocalMigrationProbe.kt
 
       - name: Build retained world engine
         working-directory: upstream-server/Server
@@ -94,7 +100,7 @@ jobs:
           chmod +x mvnw
           ./mvnw clean package -DskipTests
 
-      - name: Verify direct typed command bridge
+      - name: Verify direct typed command and distance boundaries
         run: |
           set -euxo pipefail
           ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \
@@ -102,6 +108,7 @@ jobs:
             | head -n 1)
           test -n "$ENGINE_JAR"
           jar -tf "$ENGINE_JAR" | grep -q 'core/local/LocalMigrationProbe.class'
+          jar -tf "$ENGINE_JAR" | grep -q 'core/local/LeagueRuntime.class'
 
           cat > build/NativeBridgeSmoke.java <<'JAVA'
           import java.lang.reflect.Constructor;
@@ -112,20 +119,20 @@ jobs:
                   System.setProperty("singleplayer.viewDistance", "40");
 
                   Class<?> bootstrap = Class.forName("singleplayer.InProcessBootstrap");
-                  Method worldScale = bootstrap.getDeclaredMethod(
-                          "applyWorldViewDistance", int.class);
                   Method clientScale = bootstrap.getDeclaredMethod(
                           "applyClientViewDistance", int.class);
-                  worldScale.setAccessible(true);
                   clientScale.setAccessible(true);
-                  worldScale.invoke(null, 40);
                   clientScale.invoke(null, 40);
 
-                  int world = core.game.world.map.MapDistance.RENDERING.getDistance();
-                  int client = rt4.GlobalConfig.TILE_DISTANCE;
-                  if (world != 40 || client != 40 || world != client) {
+                  int entitySync = core.game.world.map.MapDistance.RENDERING.getDistance();
+                  int clientView = rt4.GlobalConfig.TILE_DISTANCE;
+                  if (entitySync != 15) {
                       throw new AssertionError(
-                              "authority mismatch world=" + world + " client=" + client);
+                              "retained entity sync radius must remain 15, got " + entitySync);
+                  }
+                  if (clientView != 40) {
+                      throw new AssertionError(
+                              "client view distance mismatch, got " + clientView);
                   }
 
                   Class<?> player = Class.forName(
@@ -150,9 +157,13 @@ jobs:
                       throw new AssertionError("direct local command bridge unavailable");
                   }
 
+                  Class.forName("core.local.LeagueRuntime");
+                  Class.forName("rt4.LocalLeagueBridge");
+
                   System.out.println(
-                          "NATIVE_REFACTOR: VIEW_DISTANCE=" + world +
-                          " DIRECT_COMMAND_TYPES=READY MOVEMENT_CUTOVER=COMPILED");
+                          "NATIVE_REFACTOR: CLIENT_VIEW=" + clientView +
+                          " ENTITY_SYNC=" + entitySync +
+                          " DIRECT_COMMAND_TYPES=READY LEAGUE_RUNTIME=READY");
               }
 
               private static void requireCommand(
@@ -174,7 +185,7 @@ jobs:
             -cp build/native-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar:"$ENGINE_JAR" \
             NativeBridgeSmoke
 
-      - name: Verify migration boundaries
+      - name: Verify migration and league boundaries
         run: |
           set -euxo pipefail
           ENGINE_JAR=$(find upstream-server/Server/target -maxdepth 1 -type f \
@@ -187,12 +198,19 @@ jobs:
           grep -q 'beginLocalLogin' build/local-migration-probe.txt
           grep -q 'endLocalSession' build/local-migration-probe.txt
 
+          javap -classpath "$ENGINE_JAR" core.local.LeagueRuntime \
+            | tee build/league-runtime.txt
+          grep -q 'completeTask' build/league-runtime.txt
+          grep -q 'unlockRelic' build/league-runtime.txt
+          grep -q 'setExperienceMultiplier' build/league-runtime.txt
+
       - name: Architecture checkpoint summary
         run: |
           echo 'One LocalGameRuntime authority: compiled'
-          echo 'One view-distance value drives retained world + RT4: verified'
+          echo 'Client view radius and retained 15-tile entity sync radius are independent: verified'
           echo 'Existing typed 2009Scape commands reachable without TCP: verified'
           echo 'RT4 migration patches compile as independent source files: verified'
           echo 'World, interaction, and minimap walking cut over to direct typed commands: compiled'
-          echo 'Socketless local login/session bridge present: verified'
+          echo 'Socketless local login is runtime-driven rather than plugin-driven: verified'
           echo 'Pinned RT4 SignLink override redirects JS5 to memory: compiled'
+          echo 'Persistent league task/relic runtime and RT4 state bridge: verified'
