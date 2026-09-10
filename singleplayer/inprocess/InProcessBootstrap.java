@@ -17,6 +17,11 @@ public final class InProcessBootstrap {
 
     private InProcessBootstrap() {}
 
+    /** Temporary adapter for legacy code until it reads LocalGameRuntime directly. */
+    public static int getViewDistance() {
+        return LocalGameRuntime.get().config().viewDistance();
+    }
+
     public static void main(String[] args) throws Throwable {
         System.setProperty("singleplayer", "true");
         LocalGameRuntime runtime = LocalGameRuntime.get();
