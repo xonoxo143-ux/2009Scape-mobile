@@ -1,9 +1,13 @@
 package core.local
 
+import core.api.Event as EventType
 import core.auth.AuthResponse
 import core.cache.crypto.ISAACCipher
 import core.cache.crypto.ISAACPair
 import core.game.bots.AIPlayer
+import core.game.event.Event as GameEvent
+import core.game.event.EventHook
+import core.game.node.entity.Entity
 import core.game.node.entity.player.Player
 import core.game.node.entity.player.info.ClientInfo
 import core.game.node.entity.player.info.PlayerDetails
@@ -81,9 +85,8 @@ object LocalMigrationProbe {
         if (!java.lang.Boolean.getBoolean("singleplayer")) return false
         if (username.isBlank() || seed.size != 4) return false
 
-        // InProcessBootstrap historically coupled this value to the client's
-        // visual distance. Correct it before any human entity can enter the
-        // repository so retained five-bit relative entity coordinates stay safe.
+        // Keep entity synchronization protocol-safe regardless of the client
+        // terrain/view radius selected by the Android runtime.
         enforceEntitySyncDistance()
 
         if (Repository.getPlayerByName(username) != null) return false
@@ -119,6 +122,7 @@ object LocalMigrationProbe {
         return try {
             // false = normal first entry, not the old network reconnect mode.
             LoginParser(details).initialize(player, false)
+            LeagueRuntime.attach(player)
             println("SINGLEPLAYER_LOCAL_LOGIN: SESSION_CREATED username=$username")
             true
         } catch (failure: Throwable) {
@@ -132,12 +136,7 @@ object LocalMigrationProbe {
         }
     }
 
-    /**
-     * Restore the server-side entity synchronization radius independently of the
-     * client terrain/view distance. MapDistance stores the value in a private
-     * final field, so use the same narrow reflective technique already used by
-     * the migration bootstrap and verify the result immediately.
-     */
+    /** Restore the protocol-safe entity synchronization radius. */
     private fun enforceEntitySyncDistance() {
         val rendering = MapDistance.RENDERING
         if (rendering.distance == ENTITY_SYNC_DISTANCE) return
@@ -166,6 +165,7 @@ object LocalMigrationProbe {
         if (username.isBlank()) return true
         val player = Repository.getPlayerByName(username) ?: return true
         return try {
+            LeagueRuntime.detach(player)
             player.session.disconnect()
             println("SINGLEPLAYER_LOCAL_LOGIN: SESSION_CLOSED username=$username")
             true
@@ -251,4 +251,167 @@ object LocalMigrationProbe {
             println("SINGLEPLAYER_MIGRATION: $direction $key")
         }
     }
+}
+
+/**
+ * Stable single-player gameplay extension seam.
+ *
+ * This deliberately sits on top of 2009Scape's existing per-entity event bus
+ * instead of forking skills, quests, NPC scripts, or combat code. Future league
+ * implementations install one RuleSet and receive the semantic gameplay events
+ * the retained game already produces.
+ */
+object LeagueRuntime {
+    private const val ATTACHED = "league:runtime-attached"
+    private const val POINTS = "league:points"
+    private const val TASKS = "league:tasks"
+    private const val RELICS = "league:relics"
+    private const val SEP = ","
+
+    @Volatile private var rules: RuleSet = RuleSet.VANILLA
+    private val forwarders = ConcurrentHashMap<String, EventHook<GameEvent>>()
+
+    interface RuleSet {
+        fun onAttach(player: Player) {}
+        fun onDetach(player: Player) {}
+        fun onEvent(player: Player, event: GameEvent) {}
+
+        companion object {
+            @JvmField
+            val VANILLA: RuleSet = object : RuleSet {}
+        }
+    }
+
+    /** Install one ruleset for the single local human world. */
+    @JvmStatic
+    fun install(ruleSet: RuleSet?) {
+        rules = ruleSet ?: RuleSet.VANILLA
+        Repository.players
+            .filter { !it.isArtificial }
+            .forEach { rules.onAttach(it) }
+    }
+
+    @JvmStatic
+    fun attach(player: Player) {
+        if (player.isArtificial || player.getAttribute(ATTACHED, false)) return
+
+        val forwarder = object : EventHook<GameEvent> {
+            override fun process(entity: Entity, event: GameEvent) {
+                if (entity is Player && !entity.isArtificial) {
+                    rules.onEvent(entity, event)
+                }
+            }
+        }
+
+        // Retained semantic events useful for league tasks and relic effects.
+        player.hook(EventType.ResourceProduced, forwarder)
+        player.hook(EventType.NPCKilled, forwarder)
+        player.hook(EventType.BoneBuried, forwarder)
+        player.hook(EventType.Teleported, forwarder)
+        player.hook(EventType.FireLit, forwarder)
+        player.hook(EventType.LightSourceLit, forwarder)
+        player.hook(EventType.Interacted, forwarder)
+        player.hook(EventType.ButtonClicked, forwarder)
+        player.hook(EventType.DialogueOpened, forwarder)
+        player.hook(EventType.DialogueOptionSelected, forwarder)
+        player.hook(EventType.DialogueClosed, forwarder)
+        player.hook(EventType.UsedWith, forwarder)
+        player.hook(EventType.SelfDeath, forwarder)
+        player.hook(EventType.Tick, forwarder)
+        player.hook(EventType.PickedUp, forwarder)
+        player.hook(EventType.InterfaceOpened, forwarder)
+        player.hook(EventType.InterfaceClosed, forwarder)
+        player.hook(EventType.SpellCast, forwarder)
+        player.hook(EventType.SpellbookChanged, forwarder)
+        player.hook(EventType.ItemAlchemized, forwarder)
+        player.hook(EventType.ItemEquipped, forwarder)
+        player.hook(EventType.ItemUnequipped, forwarder)
+        player.hook(EventType.ItemPurchased, forwarder)
+        player.hook(EventType.ItemSold, forwarder)
+        player.hook(EventType.JobAssigned, forwarder)
+        player.hook(EventType.FairyRingDialed, forwarder)
+        player.hook(EventType.VarbitUpdated, forwarder)
+        player.hook(EventType.DynamicSkillLevelChanged, forwarder)
+        player.hook(EventType.SummoningPointsRecharged, forwarder)
+        player.hook(EventType.PrayerPointsRecharged, forwarder)
+        player.hook(EventType.XpGained, forwarder)
+        player.hook(EventType.PrayerActivated, forwarder)
+        player.hook(EventType.PrayerDeactivated, forwarder)
+
+        forwarders[player.username.lowercase()] = forwarder
+        player.setAttribute(ATTACHED, true)
+        rules.onAttach(player)
+        println("SINGLEPLAYER_LEAGUE: EVENT_HOOKS_ATTACHED username=${player.username}")
+    }
+
+    @JvmStatic
+    fun detach(player: Player) {
+        val forwarder = forwarders.remove(player.username.lowercase())
+        if (forwarder != null) player.unhook(forwarder)
+        player.removeAttribute(ATTACHED)
+        rules.onDetach(player)
+    }
+
+    /** Skills.experienceMultiplier is already persisted by PlayerSaver. */
+    @JvmStatic
+    fun setExperienceMultiplier(player: Player, multiplier: Double) {
+        player.skills.experienceMultiplier = multiplier.coerceIn(0.0, 60.0)
+    }
+
+    @JvmStatic
+    fun points(player: Player): Int = player.getAttribute(POINTS, 0)
+
+    @JvmStatic
+    fun addPoints(player: Player, amount: Int): Int {
+        if (amount == 0) return points(player)
+        val updated = (points(player) + amount).coerceAtLeast(0)
+        player.setAttribute("/save:$POINTS", updated)
+        return updated
+    }
+
+    @JvmStatic
+    fun hasCompletedTask(player: Player, id: String): Boolean =
+        decodeIds(player.getAttribute(TASKS, "")).contains(id)
+
+    /** Event-driven task completion is idempotent by task ID. */
+    @JvmStatic
+    fun completeTask(player: Player, id: String, rewardPoints: Int): Boolean {
+        if (id.isBlank()) return false
+        val tasks = decodeIds(player.getAttribute(TASKS, "")).toMutableSet()
+        if (!tasks.add(id)) return false
+        player.setAttribute("/save:$TASKS", encodeIds(tasks))
+        if (rewardPoints != 0) addPoints(player, rewardPoints)
+        println(
+            "SINGLEPLAYER_LEAGUE: TASK_COMPLETE id=$id points=$rewardPoints total=${points(player)}"
+        )
+        return true
+    }
+
+    @JvmStatic
+    fun hasRelic(player: Player, id: String): Boolean =
+        decodeIds(player.getAttribute(RELICS, "")).contains(id)
+
+    @JvmStatic
+    fun unlockRelic(player: Player, id: String): Boolean {
+        if (id.isBlank()) return false
+        val relics = decodeIds(player.getAttribute(RELICS, "")).toMutableSet()
+        if (!relics.add(id)) return false
+        player.setAttribute("/save:$RELICS", encodeIds(relics))
+        println("SINGLEPLAYER_LEAGUE: RELIC_UNLOCK id=$id")
+        return true
+    }
+
+    @JvmStatic
+    fun completedTasks(player: Player): Set<String> =
+        decodeIds(player.getAttribute(TASKS, ""))
+
+    @JvmStatic
+    fun unlockedRelics(player: Player): Set<String> =
+        decodeIds(player.getAttribute(RELICS, ""))
+
+    private fun decodeIds(encoded: String): Set<String> =
+        if (encoded.isBlank()) emptySet()
+        else encoded.split(SEP).map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+
+    private fun encodeIds(ids: Set<String>): String = ids.toSortedSet().joinToString(SEP)
 }
