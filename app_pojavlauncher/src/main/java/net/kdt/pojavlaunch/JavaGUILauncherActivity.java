@@ -34,7 +34,8 @@ import java.util.List;
 public class JavaGUILauncherActivity extends BaseActivity {
 
     private static final int CHAT_KEYBOARD_MAX_X = 520;
-    private static final int CHAT_KEYBOARD_MIN_Y = 430;
+    private static final int CHAT_KEYBOARD_MIN_Y = 448;
+    private static final int CHAT_KEYBOARD_MAX_Y = 478;
     private static final long EXIT_BACK_WINDOW_MS = 1500L;
 
     private AWTCanvasView mTextureView;
@@ -130,6 +131,7 @@ public class JavaGUILauncherActivity extends BaseActivity {
         // reintroducing a permanent keyboard control.
         if (clientX <= CHAT_KEYBOARD_MAX_X
                 && clientY >= CHAT_KEYBOARD_MIN_Y
+                && clientY <= CHAT_KEYBOARD_MAX_Y
                 && !TouchCharInput.softKeyboardIsActive) {
             mTouchCharInput.switchKeyboardState();
         }
