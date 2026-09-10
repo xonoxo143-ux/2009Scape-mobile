@@ -27,10 +27,8 @@ jobs:
       - name: Compile local runtime authority and RT4 patch source set
         run: |
           set -euxo pipefail
-          rm -rf build/native-bootstrap build/generated-rt4
-          mkdir -p build/native-bootstrap build/generated-rt4/rt4
-          python3 singleplayer/native-refactor/prepare_rt4_movement.py \
-            build/generated-rt4/rt4/PathFinder.java
+          rm -rf build/native-bootstrap
+          mkdir -p build/native-bootstrap
           mapfile -t RT4_PATCHES < <(find singleplayer/client-patches/rt4 -maxdepth 1 -type f -name '*.java' | sort)
           test "${#RT4_PATCHES[@]}" -ge 7
           printf 'RT4 patch source: %s\n' "${RT4_PATCHES[@]}"
@@ -40,17 +38,15 @@ jobs:
             singleplayer/inprocess/InProcessBootstrap.java \
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
-            "${RT4_PATCHES[@]}" \
-            build/generated-rt4/rt4/PathFinder.java
+            "${RT4_PATCHES[@]}"
           test -f build/native-bootstrap/singleplayer/LocalGameRuntime.class
           test -f build/native-bootstrap/singleplayer/GameConfig.class
           test -f build/native-bootstrap/singleplayer/InProcessBootstrap\$LocalCommands.class
           test -f build/native-bootstrap/rt4/ClientProt.class
-          test -f build/native-bootstrap/rt4/PathFinder.class
           grep -q 'WORLDSPACE_WALK_DIRECT' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'INTERACT_WALK_DIRECT' singleplayer/client-patches/rt4/ClientProt.java
           grep -q 'MINIMAP_WALK_DIRECT' singleplayer/client-patches/rt4/ClientProt.java
-          grep -q 'consumeDirectMinimapWalk' build/generated-rt4/rt4/PathFinder.java
+          grep -q 'MINIMAP_TRAILERS_DISCARDED' singleplayer/client-patches/rt4/ClientProt.java
 
       - name: Fetch pinned 2009Scape source
         run: |
