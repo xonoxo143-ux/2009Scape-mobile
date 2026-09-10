@@ -3,9 +3,8 @@
 
 The retained 2009Scape source remains authoritative game/content code. This
 script adds observability around the existing typed command/presentation
-boundaries, the temporary loopback-only safety constraint, and the narrow
-world->RT4 in-process transport used while the packet encoders and RT4 decoders
-are still retained for parity.
+boundaries and converts the human player to a local in-process session while
+retaining the proven game logic, encoders and RT4 decoders during migration.
 """
 from __future__ import annotations
 
@@ -182,7 +181,8 @@ def patch_local_presentation_transport(server_root: Path) -> None:
 \t\t\t}
 \t\t\treturn;
 \t\t}
-\n\t\tif (key == null || !key.isValid()) {
+
+\t\tif (key == null || !key.isValid()) {
 \t\t\tdisconnect();
 \t\t\treturn;
 \t\t}
@@ -288,6 +288,111 @@ def patch_local_disconnect_semantics(server_root: Path) -> None:
     )
 
 
+def patch_local_server_runtime(server_root: Path) -> None:
+    server = server_root / "src/main/core/Server.kt"
+    old_network = """        log(this::class.java, Log.INFO, "Starting networking...")
+        try {
+            reactor = NioReactor.configure(43594 + GameWorld.settings?.worldId!!)
+            reactor!!.start()
+            if (ServerConstants.WEBSOCKET_ENABLED) {
+                val websocketPort = if (ServerConstants.WEBSOCKET_PORT > 0) {
+                    ServerConstants.WEBSOCKET_PORT
+                } else {
+                    53594 + GameWorld.settings?.worldId!!
+                }
+                webSocketServer = GameWebSocketServer(websocketPort, 1)
+                WebSocketTls.configure(webSocketServer!!)
+                webSocketServer!!.start()
+            }
+        } catch (e: BindException) {
+            log(this::class.java, Log.ERR, "Port " + (43594 + GameWorld.settings?.worldId!!) + " is already in use!")
+            throw e
+        }
+        //WorldCommunicator.connect()
+"""
+    new_network = """        if (java.lang.Boolean.getBoolean("singleplayer")) {
+            // The human player is created through LocalMigrationProbe and both
+            // gameplay directions remain in-process. Do not open a multiplayer
+            // game listener that nothing in the Android build needs anymore.
+            reactor = null
+            webSocketServer = null
+            log(this::class.java, Log.INFO, "Single-player local transport active; network listeners disabled.")
+        } else {
+            log(this::class.java, Log.INFO, "Starting networking...")
+            try {
+                reactor = NioReactor.configure(43594 + GameWorld.settings?.worldId!!)
+                reactor!!.start()
+                if (ServerConstants.WEBSOCKET_ENABLED) {
+                    val websocketPort = if (ServerConstants.WEBSOCKET_PORT > 0) {
+                        ServerConstants.WEBSOCKET_PORT
+                    } else {
+                        53594 + GameWorld.settings?.worldId!!
+                    }
+                    webSocketServer = GameWebSocketServer(websocketPort, 1)
+                    WebSocketTls.configure(webSocketServer!!)
+                    webSocketServer!!.start()
+                }
+            } catch (e: BindException) {
+                log(this::class.java, Log.ERR, "Port " + (43594 + GameWorld.settings?.worldId!!) + " is already in use!")
+                throw e
+            }
+        }
+        //WorldCommunicator.connect()
+"""
+    replace_once(server, old_network, new_network, "Server single-player networking")
+
+    old_console = """        val scanner = Scanner(System.`in`)
+
+        running = true
+        GlobalScope.launch {
+            while(scanner.hasNextLine()){
+                val command = scanner.nextLine()
+                when(command){
+                    "stop" -> exitProcess(0)
+
+                    "update" -> SystemManager.flag(SystemState.UPDATING)
+                    "help","commands" -> printCommands()
+                    "restartworker" -> SystemManager.flag(SystemState.ACTIVE)
+
+                }
+            }
+        }
+"""
+    new_console = """        running = true
+        if (!java.lang.Boolean.getBoolean("singleplayer")) {
+            val scanner = Scanner(System.`in`)
+            GlobalScope.launch {
+                while(scanner.hasNextLine()){
+                    val command = scanner.nextLine()
+                    when(command){
+                        "stop" -> exitProcess(0)
+
+                        "update" -> SystemManager.flag(SystemState.UPDATING)
+                        "help","commands" -> printCommands()
+                        "restartworker" -> SystemManager.flag(SystemState.ACTIVE)
+
+                    }
+                }
+            }
+        }
+"""
+    replace_once(server, old_console, new_console, "Server single-player console")
+
+    termination = server_root / "src/main/core/game/system/SystemTermination.java"
+    replace_once(
+        termination,
+        "\t\t\tServer.getReactor().terminate();\n",
+        "\t\t\tif (Server.getReactor() != null) Server.getReactor().terminate();\n",
+        "SystemTermination optional reactor",
+    )
+    replace_once(
+        termination,
+        "\t\tServer.getReactor().terminate();\n",
+        "\t\tif (Server.getReactor() != null) Server.getReactor().terminate();\n",
+        "SystemTermination save optional reactor",
+    )
+
+
 def patch_loopback_only(server_root: Path) -> None:
     reactor = server_root / "src/main/core/net/NioReactor.java"
     replace_once(
@@ -314,6 +419,7 @@ def main() -> None:
     patch_presentation_shadow(server_root)
     patch_local_presentation_transport(server_root)
     patch_local_disconnect_semantics(server_root)
+    patch_local_server_runtime(server_root)
     patch_loopback_only(server_root)
     print("native refactor migration overlay prepared")
 
