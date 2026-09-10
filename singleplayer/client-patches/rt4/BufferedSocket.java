@@ -16,6 +16,8 @@ import java.net.Socket;
 @OriginalClass("client!ma")
 public final class BufferedSocket implements Runnable {
 
+    private static final long LOCAL_PRESENTATION_QUIET_NANOS = 150_000_000L;
+
     @OriginalMember(owner = "client!ma", name = "h", descriptor = "[B")
     private byte[] buffer;
 
@@ -47,6 +49,11 @@ public final class BufferedSocket implements Runnable {
     private OutputStream out;
 
     private static volatile Method singlePlayerFlushBoundary;
+
+    private boolean localPresentationRequested;
+    private boolean localPresentationReading;
+    private long localPresentationQuietSince;
+    private long localPresentationBytesRead;
 
     @OriginalMember(owner = "client!ma", name = "<init>", descriptor = "(Ljava/net/Socket;Lsignlink!ll;)V")
     public BufferedSocket(@OriginalArg(0) Socket socket, @OriginalArg(1) SignLink signLink) throws IOException {
@@ -124,11 +131,83 @@ public final class BufferedSocket implements Runnable {
         }
     }
 
+    /**
+     * Keep login/bootstrap on the physical loopback socket. Once RT4 is fully in
+     * game, request the world->client local stream only at a clean RT4 packet
+     * boundary and after the physical receive buffer is empty. After the world
+     * accepts that request, require a short additional quiet period before
+     * consuming newer local bytes so already-written loopback bytes cannot be
+     * overtaken in practice.
+     */
+    private boolean useLocalPresentationStream() throws IOException {
+        if (!Boolean.getBoolean("singleplayer") || client.gameState != 30) {
+            return false;
+        }
+
+        int legacyAvailable = this.in.available();
+
+        if (!this.localPresentationRequested) {
+            if (Protocol.opcode == -1 && legacyAvailable == 0) {
+                LocalPresentationBridge.requestServerToClientCutover();
+                this.localPresentationRequested = true;
+            }
+            return false;
+        }
+
+        if (!LocalPresentationBridge.isServerToClientEnabled()) {
+            return false;
+        }
+
+        if (this.localPresentationReading) {
+            if (legacyAvailable > 0) {
+                if (this.localPresentationBytesRead == 0L) {
+                    // A final pre-cutover localhost write arrived during the
+                    // quiet window. Drain it first and establish a fresh gap.
+                    this.localPresentationReading = false;
+                    this.localPresentationQuietSince = 0L;
+                    return false;
+                }
+                throw new IOException(
+                        "Legacy server bytes arrived after local presentation cutover");
+            }
+            return true;
+        }
+
+        if (Protocol.opcode != -1 || legacyAvailable > 0) {
+            this.localPresentationQuietSince = 0L;
+            return false;
+        }
+
+        long now = System.nanoTime();
+        if (this.localPresentationQuietSince == 0L) {
+            this.localPresentationQuietSince = now;
+            return false;
+        }
+        if (now - this.localPresentationQuietSince < LOCAL_PRESENTATION_QUIET_NANOS) {
+            return false;
+        }
+
+        this.localPresentationReading = true;
+        System.out.println("SINGLEPLAYER_LOCAL_PRESENTATION: RT4_READER_ACTIVE");
+        return true;
+    }
+
     @OriginalMember(owner = "client!ma", name = "a", descriptor = "(III[B)V")
     public final void read(@OriginalArg(0) int off, @OriginalArg(1) int len, @OriginalArg(3) byte[] b) throws IOException {
         if (this.closed) {
             return;
         }
+
+        if (this.localPresentationReading) {
+            int copied = LocalPresentationBridge.readServerBytes(b, off, len);
+            if (copied != len) {
+                throw new EOFException(
+                        "Local presentation underflow: " + copied + " of " + len);
+            }
+            this.localPresentationBytesRead += copied;
+            return;
+        }
+
         while (len > 0) {
             @Pc(23) int n = this.in.read(b, off, len);
             if (n <= 0) {
@@ -141,7 +220,18 @@ public final class BufferedSocket implements Runnable {
 
     @OriginalMember(owner = "client!ma", name = "a", descriptor = "(I)I")
     public final int read() throws IOException {
-        return this.closed ? 0 : this.in.read();
+        if (this.closed) {
+            return 0;
+        }
+        if (this.localPresentationReading) {
+            int value = LocalPresentationBridge.readServerByte();
+            if (value < 0) {
+                throw new EOFException("Local presentation byte unavailable");
+            }
+            this.localPresentationBytesRead++;
+            return value;
+        }
+        return this.in.read();
     }
 
     /**
@@ -213,7 +303,13 @@ public final class BufferedSocket implements Runnable {
 
     @OriginalMember(owner = "client!ma", name = "c", descriptor = "(I)I")
     public final int available() throws IOException {
-        return this.closed ? 0 : this.in.available();
+        if (this.closed) {
+            return 0;
+        }
+        if (useLocalPresentationStream()) {
+            return LocalPresentationBridge.availableServerBytes();
+        }
+        return this.in.available();
     }
 
     @OriginalMember(owner = "client!ma", name = "d", descriptor = "(I)V")
