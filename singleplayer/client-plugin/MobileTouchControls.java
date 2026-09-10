@@ -197,6 +197,8 @@ public class plugin extends Plugin {
                 inventory
                         || genericDraggable
                         || scrollable
+                        || component.aBoolean25
+                        || InterfaceList.getServerActiveProperties(component).events != 0
                         || component.noClickThrough
                         || component.buttonType != 0
                         || component.clientCode != 0
