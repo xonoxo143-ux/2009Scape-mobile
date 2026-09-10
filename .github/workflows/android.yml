@@ -336,15 +336,16 @@ jobs:
           set -euxo pipefail
           rm -rf build/singleplayer-bootstrap
           mkdir -p build/singleplayer-bootstrap
+          mapfile -t RT4_PATCHES < <(find singleplayer/client-patches/rt4 -maxdepth 1 -type f -name '*.java' | sort)
+          test "${#RT4_PATCHES[@]}" -ge 7
+          printf 'RT4 patch source: %s\n' "${RT4_PATCHES[@]}"
           javac --release 17 \
             -cp app_pojavlauncher/src/main/assets/rt4.jar \
             -d build/singleplayer-bootstrap \
             singleplayer/inprocess/InProcessBootstrap.java \
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
-            singleplayer/client-patches/rt4/AudioThread.java \
-            singleplayer/client-patches/rt4/NanoTimer.java \
-            singleplayer/client-patches/rt4/OpenALAudioChannel.java
+            "${RT4_PATCHES[@]}"
           rm -f app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
           jar --create \
             --file app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar \
@@ -357,6 +358,10 @@ jobs:
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/AudioThread.class'
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/NanoTimer.class'
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/OpenALAudioChannel.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/ClientProt.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/FriendsList.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/IgnoreList.class'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q 'rt4/ClanChat.class'
 
       - name: Package production ARM64 Java 17 runtime
         run: |
@@ -507,6 +512,10 @@ jobs:
           unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/AudioThread.class'
           unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/NanoTimer.class'
           unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/OpenALAudioChannel.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/ClientProt.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/FriendsList.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/IgnoreList.class'
+          unzip -l out/singleplayer-bootstrap.jar | grep -q 'rt4/ClanChat.class'
 
           unzip -p out/2009scape-mobile.apk assets/plugins/LocalSinglePlayerLogin.zip > out/LocalSinglePlayerLogin.zip
           unzip -t out/LocalSinglePlayerLogin.zip
