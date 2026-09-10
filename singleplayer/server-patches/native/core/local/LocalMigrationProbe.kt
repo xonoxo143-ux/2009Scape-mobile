@@ -1,12 +1,21 @@
 package core.local
 
+import core.auth.AuthResponse
+import core.cache.crypto.ISAACCipher
+import core.cache.crypto.ISAACPair
 import core.game.bots.AIPlayer
+import core.game.node.entity.player.info.ClientInfo
+import core.game.node.entity.player.info.PlayerDetails
+import core.game.world.GameWorld
+import core.game.world.repository.Repository
 import core.net.IoSession
 import core.net.packet.Context
+import core.net.packet.`in`.Login
 import core.net.packet.`in`.Packet
 import java.lang.reflect.Method
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -19,6 +28,10 @@ import java.util.concurrent.atomic.AtomicLong
 object LocalMigrationProbe {
     private val incomingCounts = ConcurrentHashMap<String, AtomicLong>()
     private val outgoingCounts = ConcurrentHashMap<String, AtomicLong>()
+
+    private val localSessionExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "singleplayer-local-session").apply { isDaemon = true }
+    }
 
     @Volatile private var presentationResolved = false
     @Volatile private var presentationRequested: Method? = null
@@ -36,13 +49,62 @@ object LocalMigrationProbe {
     }
 
     /**
+     * Create the human player's normal 2009Scape session without parsing a TCP
+     * login packet. The existing authenticator, PlayerDetails, Login.proceedWith
+     * and LoginParser initialization are deliberately retained.
+     *
+     * The provided ISAAC seed is installed exactly as the legacy login decoder
+     * would install it, even though this RT4 line currently has ISAAC disabled.
+     */
+    @JvmStatic
+    @Synchronized
+    fun beginLocalLogin(
+        username: String,
+        displayMode: Int,
+        windowMode: Int,
+        screenWidth: Int,
+        screenHeight: Int,
+        seed: IntArray
+    ): Boolean {
+        if (!java.lang.Boolean.getBoolean("singleplayer")) return false
+        if (username.isBlank() || seed.size != 4) return false
+        if (Repository.getPlayerByName(username) != null) return false
+
+        val (response, accountInfo) = GameWorld.authenticator.checkLogin(username, "local")
+        if (response != AuthResponse.Success || accountInfo == null) {
+            System.err.println("SINGLEPLAYER_LOCAL_LOGIN: authentication failed: $response")
+            return false
+        }
+
+        val session = IoSession(null, localSessionExecutor, "127.0.0.1")
+        session.associatedUsername = username
+        session.clientInfo = ClientInfo(displayMode, windowMode, screenWidth, screenHeight)
+
+        val inputSeed = seed.copyOf()
+        val outputSeed = IntArray(seed.size) { index -> seed[index] + 50 }
+        session.isaacPair = ISAACPair(ISAACCipher(inputSeed), ISAACCipher(outputSeed))
+
+        // There is no transport to detach for a fresh local session, but this
+        // puts IoSession into its explicit local mode before LoginParser begins
+        // emitting the normal success response and initial world packets.
+        session.promoteToLocalTransport()
+
+        val details = PlayerDetails(username)
+        details.accountInfo = accountInfo
+        details.communication.parse(accountInfo)
+
+        Login.proceedWith(session, details, 16)
+        println("SINGLEPLAYER_LOCAL_LOGIN: SESSION_CREATED username=$username")
+        return true
+    }
+
+    /**
      * Try to move an already-encoded world -> RT4 byte sequence into the shared
      * in-process stream. false means the legacy socket path remains responsible
      * for the buffer; true means ownership has moved to the local bridge.
      *
-     * The first successful route also promotes the established human session
-     * away from its NIO channel. That operation intentionally preserves the
-     * Player/session/ISAAC state; it only retires the physical loopback link.
+     * A successful route also promotes a legacy-established human session away
+     * from its NIO channel. Fresh socketless sessions are already promoted.
      */
     @JvmStatic
     fun routeOutgoingBytes(session: IoSession, buffer: ByteBuffer, canActivate: Boolean): Boolean {
