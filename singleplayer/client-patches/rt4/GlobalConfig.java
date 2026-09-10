@@ -1,7 +1,7 @@
 package rt4;
 
 import org.openrs2.deob.annotation.OriginalMember;
-import singleplayer.GameConfig;
+import singleplayer.InProcessBootstrap;
 
 import java.math.BigInteger;
 
@@ -25,7 +25,7 @@ public class GlobalConfig {
     public static boolean USE_ISAAC = false;
 
     // One authority owns this value. Legacy RT4 calculations derive from it.
-    public static int TILE_DISTANCE = GameConfig.load().viewDistance();
+    public static int TILE_DISTANCE = InProcessBootstrap.getViewDistance();
     public static int VIEW_DISTANCE = TILE_DISTANCE * 128;
     public static float VIEW_FADE_DISTANCE =
             ((float) TILE_DISTANCE / 28.0f) * 256.0f;
