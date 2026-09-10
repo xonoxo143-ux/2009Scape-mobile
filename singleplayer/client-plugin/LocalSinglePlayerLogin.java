@@ -5,8 +5,6 @@ import plugin.annotations.PluginMeta;
 import plugin.api.API;
 import rt4.Component;
 import rt4.CreateManager;
-import rt4.JagString;
-import rt4.LoginManager;
 import rt4.WorldList;
 import rt4.client;
 
@@ -14,16 +12,24 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
+import java.lang.reflect.Method;
 
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
-        description = "Transitional login adapter while local session removal is in progress.",
-        version = 1.5
+        description = "Creates and enters the local player session without a network login handshake.",
+        version = 2.0
 )
 public class plugin extends Plugin {
-    private long lastAttemptMs = 0L;
     private boolean loginScreenAnnounced = false;
+    private boolean localLoginStarted = false;
+    private boolean loginFailureAnnounced = false;
     private boolean loggedInAnnounced = false;
+
+    private Class<?> localLoginBridge;
+    private Method localLoginBegin;
+    private Method localLoginPoll;
+    private Method localLoginFailed;
+    private Method localLoginReset;
 
     @Override
     public void Update() {
@@ -61,29 +67,59 @@ public class plugin extends Plugin {
             loginScreenAnnounced = true;
         }
 
-        if (LoginManager.anInt4937 != 0
-                || LoginManager.step != 0
-                || CreateManager.step != 0
-                || WorldList.step != 0) {
-            return;
-        }
-
-        long now = System.currentTimeMillis();
-        if (now - lastAttemptMs < 3000L) {
+        // Keep account-creation/world-list UI state from racing the local entry
+        // path. No LoginManager network state is started by this plugin anymore.
+        if (CreateManager.step != 0 || WorldList.step != 0) {
             return;
         }
 
         String username = loadProfileName();
-        String password = "local";
-
         API.SetVarcStr(32, username);
-        API.SetVarcStr(33, password);
-        lastAttemptMs = now;
-        System.out.println("SINGLEPLAYER_E2E: LOGIN_ATTEMPT");
-        LoginManager.method3896(
-                JagString.of(username),
-                JagString.of(password),
-                0);
+        API.SetVarcStr(33, "local");
+
+        try {
+            resolveLocalLoginBridge();
+
+            if (!localLoginStarted) {
+                Object started = localLoginBegin.invoke(null, username);
+                if (!Boolean.TRUE.equals(started)) {
+                    announceFailure("local session request was rejected");
+                    return;
+                }
+                localLoginStarted = true;
+                System.out.println("SINGLEPLAYER_E2E: LOGIN_ATTEMPT");
+                writeStage("Loading local player...");
+            }
+
+            Object complete = localLoginPoll.invoke(null);
+            if (Boolean.TRUE.equals(complete)) {
+                writeStage("Loading world...");
+                return;
+            }
+
+            Object failed = localLoginFailed.invoke(null);
+            if (Boolean.TRUE.equals(failed)) {
+                announceFailure("local login bridge reported failure");
+            }
+        } catch (Throwable failure) {
+            announceFailure(failure.getClass().getSimpleName() + ": " + failure.getMessage());
+        }
+    }
+
+    private void resolveLocalLoginBridge() throws Exception {
+        if (localLoginBridge != null) return;
+        localLoginBridge = Class.forName("rt4.LocalLoginBridge");
+        localLoginBegin = localLoginBridge.getMethod("begin", String.class);
+        localLoginPoll = localLoginBridge.getMethod("poll");
+        localLoginFailed = localLoginBridge.getMethod("hasFailed");
+        localLoginReset = localLoginBridge.getMethod("reset");
+    }
+
+    private void announceFailure(String reason) {
+        if (loginFailureAnnounced) return;
+        loginFailureAnnounced = true;
+        writeStage("Local login failed");
+        System.err.println("SINGLEPLAYER_LOCAL_LOGIN: plugin failure: " + reason);
     }
 
     private void notifyLocalRuntimeReady() {
@@ -92,9 +128,6 @@ public class plugin extends Plugin {
             bootstrap.getMethod("markClientReady").invoke(null);
             System.out.println("SINGLEPLAYER_RUNTIME: CLIENT_ATTACHED");
 
-            // Shadow proof for the new client->world direct command boundary.
-            // This does not replace any gameplay command yet and is intentionally
-            // harmless: Ping only refreshes the local player's heartbeat.
             Class<?> localCommands =
                     Class.forName("singleplayer.InProcessBootstrap$LocalCommands");
             Object directPing = localCommands.getMethod("ping").invoke(null);
@@ -102,7 +135,7 @@ public class plugin extends Plugin {
                 System.out.println("SINGLEPLAYER_LOCAL_COMMAND: DIRECT_PING_OK");
             }
         } catch (ClassNotFoundException ignored) {
-            // The known-good legacy APK can still run without native overlay code.
+            // Keep the plugin loadable in a bare RT4 development environment.
         } catch (Throwable failure) {
             System.err.println(
                     "SINGLEPLAYER_RUNTIME: client attach failed: " + failure);
@@ -155,8 +188,13 @@ public class plugin extends Plugin {
     public void OnLogout() {
         markGameReady(false);
         writeStage("Returning to game...");
-        lastAttemptMs = 0L;
+        try {
+            resolveLocalLoginBridge();
+            localLoginReset.invoke(null);
+        } catch (Throwable ignored) { }
         loginScreenAnnounced = false;
+        localLoginStarted = false;
+        loginFailureAnnounced = false;
         loggedInAnnounced = false;
     }
 }
