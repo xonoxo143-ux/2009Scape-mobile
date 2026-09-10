@@ -278,6 +278,12 @@ public class plugin extends Plugin {
     private void beginDrag(int x, int y) {
         cancelDrag(x, y);
 
+        if (Cs1ScriptRunner.aBoolean108) {
+            dragMode = DragMode.BLOCKED;
+            moveMouse(x, y);
+            return;
+        }
+
         HitRegion hit = chooseHitRegion(x, y);
         if (hit != null) {
             if (hit.hasDraggableTargetAt(x, y)) {
@@ -380,7 +386,7 @@ public class plugin extends Plugin {
     }
 
     private void applyPinch(int spanDelta) {
-        if (spanDelta == 0) {
+        if (spanDelta == 0 || Cs1ScriptRunner.aBoolean108) {
             return;
         }
 
