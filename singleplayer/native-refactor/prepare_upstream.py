@@ -3,7 +3,8 @@
 
 The upstream world remains authoritative for game/content behavior. This overlay
 only removes transport/multiplayer plumbing, applies Android lifecycle/runtime
-compatibility, and writes the packaged single-player configuration.
+compatibility, installs native single-player extensions, and writes the packaged
+single-player configuration.
 """
 from __future__ import annotations
 
@@ -44,14 +45,31 @@ def patch_sqlite_dependency(server_root: Path) -> None:
     print("overlay: Android sqlite-jdbc")
 
 
-def install_probe(repo_root: Path, server_root: Path) -> None:
-    source = repo_root / "singleplayer/server-patches/native/core/local/LocalMigrationProbe.kt"
-    destination = server_root / "src/main/core/local/LocalMigrationProbe.kt"
-    if not source.is_file():
-        raise SystemExit(f"Missing migration probe: {source}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
-    print("overlay: local/LocalMigrationProbe.kt")
+def install_native_overlay(repo_root: Path, server_root: Path) -> None:
+    """Copy every source-native single-player extension into Server/src/main.
+
+    Keeping this generic is deliberate: league rules, local-runtime helpers and
+    later transport removals can be added as ordinary source files without
+    teaching this preparation script about each class individually.
+    """
+    source_root = repo_root / "singleplayer/server-patches/native"
+    destination_root = server_root / "src/main"
+    if not source_root.is_dir():
+        raise SystemExit(f"Missing native overlay tree: {source_root}")
+
+    copied = 0
+    for source in sorted(source_root.rglob("*")):
+        if not source.is_file():
+            continue
+        relative = source.relative_to(source_root)
+        destination = destination_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        print(f"overlay: native/{relative.as_posix()}")
+        copied += 1
+
+    if copied == 0:
+        raise SystemExit(f"Native overlay tree is empty: {source_root}")
 
 
 def patch_command_boundary(server_root: Path) -> None:
@@ -161,7 +179,7 @@ def patch_local_session_transport(server_root: Path) -> None:
 \t\t\t\t\tkey.interestOps(key.interestOps() | SelectionKey.OP_WRITE);
 \t\t\t\t\tbreak;
 \t\t\t\t}
-\t\t\t\twritingQueue.remove(0);
+\t\t\twritingQueue.remove(0);
 \t\t\t}
 \t\t} catch (IOException e) {
 \t\t\tdisconnect();
@@ -410,6 +428,19 @@ def write_singleplayer_config(repo_root: Path, server_root: Path) -> Path:
     return generated
 
 
+def digest_tree(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix().encode()
+        digest.update(relative)
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def write_version_manifest(repo_root: Path, server_root: Path, config: Path) -> None:
     def digest(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -422,6 +453,7 @@ def write_version_manifest(repo_root: Path, server_root: Path, config: Path) -> 
         "io-session=" + digest(server_root / "src/main/core/net/IoSession.java"),
         "pause-worker=" + digest(server_root / "src/main/core/worker/MajorUpdateWorker.kt"),
         "local-probe=" + digest(server_root / "src/main/core/local/LocalMigrationProbe.kt"),
+        "native-overlay=" + digest_tree(repo_root / "singleplayer/server-patches/native"),
         "config=" + digest(config),
         "bootstrap=" + digest(repo_root / "singleplayer/inprocess/InProcessBootstrap.java"),
         "lifecycle=" + digest(repo_root / "singleplayer/inprocess/MobileLifecycleBridge.java"),
@@ -444,7 +476,7 @@ def main() -> None:
         raise SystemExit(f"Not a 2009Scape Server checkout: {server_root}")
 
     patch_sqlite_dependency(server_root)
-    install_probe(repo_root, server_root)
+    install_native_overlay(repo_root, server_root)
     patch_command_boundary(server_root)
     patch_presentation_boundary(server_root)
     patch_local_session_transport(server_root)
