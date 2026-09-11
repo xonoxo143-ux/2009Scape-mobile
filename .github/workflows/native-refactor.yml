@@ -44,6 +44,7 @@ jobs:
             -cp app_pojavlauncher/src/main/assets/rt4.jar \
             -d build/native-bootstrap \
             singleplayer/inprocess/InProcessBootstrap.java \
+            singleplayer/inprocess/SinglePlayerDebug.java \
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
             "${RT4_PATCHES[@]}" \
@@ -51,6 +52,7 @@ jobs:
           test -f build/native-bootstrap/singleplayer/LocalGameRuntime.class
           test -f build/native-bootstrap/singleplayer/GameConfig.class
           test -f build/native-bootstrap/singleplayer/InProcessBootstrap\$LocalCommands.class
+          test -f build/native-bootstrap/singleplayer/SinglePlayerDebug.class
           test -f build/native-bootstrap/rt4/ClientProt.class
           test -f build/native-bootstrap/rt4/SignLink.class
           test -f build/native-bootstrap/rt4/LocalJs5Socket.class
@@ -109,6 +111,7 @@ jobs:
           test -n "$ENGINE_JAR"
           jar -tf "$ENGINE_JAR" | grep -q 'core/local/LocalMigrationProbe.class'
           jar -tf "$ENGINE_JAR" | grep -q 'core/local/LeagueRuntime.class'
+          jar -tf "$ENGINE_JAR" | grep -q 'core/storage/LocalFileStorageProvider.class'
 
           cat > build/NativeBridgeSmoke.java <<'JAVA'
           import java.lang.reflect.Constructor;
@@ -158,12 +161,13 @@ jobs:
                   }
 
                   Class.forName("core.local.LeagueRuntime");
+                  Class.forName("core.storage.LocalFileStorageProvider");
                   Class.forName("rt4.LocalLeagueBridge");
 
                   System.out.println(
                           "NATIVE_REFACTOR: CLIENT_VIEW=" + clientView +
                           " ENTITY_SYNC=" + entitySync +
-                          " DIRECT_COMMAND_TYPES=READY LEAGUE_RUNTIME=READY");
+                          " DIRECT_COMMAND_TYPES=READY LEAGUE_RUNTIME=READY ACCOUNT_STORE=READY");
               }
 
               private static void requireCommand(
@@ -214,3 +218,4 @@ jobs:
           echo 'Socketless local login is runtime-driven rather than plugin-driven: verified'
           echo 'Pinned RT4 SignLink override redirects JS5 to memory: compiled'
           echo 'Persistent league task/relic runtime and RT4 state bridge: verified'
+          echo 'Persistent local account metadata provider: verified'
