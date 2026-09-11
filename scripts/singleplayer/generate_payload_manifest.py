@@ -19,6 +19,7 @@ FILES = {
     "runtime-jre17-version.txt": "singleplayer/runtime-jre17-version.txt",
     "LocalSinglePlayerLogin.zip": "plugins/LocalSinglePlayerLogin.zip",
     "MobileTouchControls.zip": "plugins/MobileTouchControls.zip",
+    "LoginTimer.zip": "plugins/LoginTimer.zip",
 }
 
 
