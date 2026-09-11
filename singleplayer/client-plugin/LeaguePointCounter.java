@@ -1,6 +1,7 @@
 package LoginTimer;
 
 import plugin.Plugin;
+import plugin.annotations.PluginMeta;
 import rt4.Component;
 import rt4.JagString;
 import rt4.LocalLeagueBridge;
@@ -13,6 +14,11 @@ import rt4.LocalLeagueBridge;
  * Click behavior is intentionally left separate so the future League menu can be
  * wired without coupling presentation text to a client-side state mutation.
  */
+@PluginMeta(
+        author = "2009Scape Mobile Single Player",
+        description = "Displays authoritative League points on the stock Report Abuse button.",
+        version = 1.0
+)
 public final class plugin extends Plugin {
     private static final int REPORT_ABUSE_COMPONENT = 49217565; // 751:29
 
