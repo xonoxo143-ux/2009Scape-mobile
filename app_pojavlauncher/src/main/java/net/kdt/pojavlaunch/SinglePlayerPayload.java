@@ -39,6 +39,9 @@ public final class SinglePlayerPayload {
             "https://github.com/xonoxo143-ux/2009Scape-mobile/releases/download/" +
             "singleplayer-payload/";
 
+    // Keep this baseline list backward compatible: APKs already installed on a
+    // phone know about these files. New payload-managed additions can be optional
+    // until the newer APK/updater has been installed once.
     private static final String[] REQUIRED_FILES = new String[] {
             "rt4.jar",
             "singleplayer-bootstrap.jar",
@@ -51,6 +54,8 @@ public final class SinglePlayerPayload {
             "MobileTouchControls.zip"
     };
 
+    private static final String LEAGUE_COUNTER_PLUGIN = "LoginTimer.zip";
+
     private static final String[] PRESERVED_WORLD_KEYS = new String[] {
             "enable_bots",
             "bots_influence_ge_price",
@@ -62,6 +67,19 @@ public final class SinglePlayerPayload {
 
     public static String[] requiredFiles() {
         return REQUIRED_FILES.clone();
+    }
+
+    /**
+     * Files understood by this updater generation. Optional managed files are
+     * downloaded when a newer manifest advertises them, but old manifests remain
+     * valid so installing a newer APK never strands an existing profile.
+     */
+    public static String[] managedFiles(JSONObject manifest) {
+        boolean hasLeagueCounter = hasEntry(manifest, LEAGUE_COUNTER_PLUGIN);
+        String[] files = new String[REQUIRED_FILES.length + (hasLeagueCounter ? 1 : 0)];
+        System.arraycopy(REQUIRED_FILES, 0, files, 0, REQUIRED_FILES.length);
+        if (hasLeagueCounter) files[REQUIRED_FILES.length] = LEAGUE_COUNTER_PLUGIN;
+        return files;
     }
 
     public static File getPayloadDirectory(Context context) {
@@ -164,6 +182,16 @@ public final class SinglePlayerPayload {
         }
     }
 
+    public static boolean hasEntry(JSONObject manifest, String name) {
+        if (manifest == null || name == null) return false;
+        try {
+            requireEntry(manifest, name);
+            return true;
+        } catch (IOException ignored) {
+            return false;
+        }
+    }
+
     public static JSONObject requireEntry(JSONObject manifest, String name) throws IOException {
         try {
             JSONArray files = manifest.getJSONArray("files");
@@ -200,6 +228,10 @@ public final class SinglePlayerPayload {
             if ("world-data.zip".equals(name)
                     && zip.getEntry("data/cache/main_file_cache.dat2") == null) {
                 throw new IOException("Payload world data archive is invalid.");
+            }
+            if (LEAGUE_COUNTER_PLUGIN.equals(name)
+                    && zip.getEntry("LoginTimer/plugin.class") == null) {
+                throw new IOException("League point-counter plugin is invalid.");
             }
         }
     }
@@ -245,6 +277,7 @@ public final class SinglePlayerPayload {
         applyRuntime(app, manifest);
         applyPlugin(app, manifest, "LocalSinglePlayerLogin.zip", "LocalSinglePlayerLogin");
         applyPlugin(app, manifest, "MobileTouchControls.zip", "MobileTouchControls");
+        applyOptionalPlugin(app, manifest, LEAGUE_COUNTER_PLUGIN, "LoginTimer");
     }
 
     public static synchronized void restoreBundledBaseline(Context context) throws IOException {
@@ -268,6 +301,7 @@ public final class SinglePlayerPayload {
         SinglePlayerManager.ensureWorldInstalled(app);
         restoreBundledPlugin(app, "LocalSinglePlayerLogin.zip", "LocalSinglePlayerLogin");
         restoreBundledPlugin(app, "MobileTouchControls.zip", "MobileTouchControls");
+        restoreBundledPlugin(app, LEAGUE_COUNTER_PLUGIN, "LoginTimer");
         clearApplyMarkers(app);
     }
 
@@ -382,6 +416,36 @@ public final class SinglePlayerPayload {
         writeFileText(marker, expected + "\n");
     }
 
+    private static void applyOptionalPlugin(Context context, JSONObject manifest,
+                                            String zipName, String directoryName) throws IOException {
+        if (!hasEntry(manifest, zipName)) {
+            restoreBundledPlugin(context, zipName, directoryName);
+            return;
+        }
+
+        JSONObject entry = requireEntry(manifest, zipName);
+        String expected = entry.optString("sha256").toLowerCase(Locale.US);
+        File object = getObjectFile(context, expected);
+        boolean verified = object.isFile() && object.length() == entry.optLong("size", -1L);
+        if (verified) {
+            try {
+                verified = expected.equalsIgnoreCase(sha256(object));
+                if (verified) validatePayloadObject(zipName, object);
+            } catch (Exception ignored) {
+                verified = false;
+            }
+        }
+
+        // A phone may have activated a newer manifest with an older APK that did
+        // not yet know this optional plugin. Do not brick the first launch after
+        // installing the new APK; use its bundled counter until Update downloads it.
+        if (!verified) {
+            restoreBundledPlugin(context, zipName, directoryName);
+            return;
+        }
+        applyPlugin(context, manifest, zipName, directoryName);
+    }
+
     private static void clearApplyMarkers(Context context) {
         File dir = getPayloadDirectory(context);
         String[] names = new String[] {
@@ -389,7 +453,8 @@ public final class SinglePlayerPayload {
                 ".world-data-sha256",
                 ".runtime-sha256",
                 ".plugin-LocalSinglePlayerLogin.sha256",
-                ".plugin-MobileTouchControls.sha256"
+                ".plugin-MobileTouchControls.sha256",
+                ".plugin-LoginTimer.sha256"
         };
         for (String name : names) {
             File marker = new File(dir, name);
@@ -443,6 +508,7 @@ public final class SinglePlayerPayload {
     private static boolean isPersistentPath(String name) {
         return name.startsWith("data/players/")
                 || name.startsWith("data/serverstore/")
+                || name.startsWith("data/localaccounts/")
                 || name.startsWith("data/logs/")
                 || name.startsWith("data/snapshots/")
                 || name.startsWith("data/eco/");
