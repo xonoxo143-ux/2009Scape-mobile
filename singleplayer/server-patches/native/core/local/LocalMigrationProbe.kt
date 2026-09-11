@@ -112,6 +112,12 @@ object LocalMigrationProbe {
 
         val details = PlayerDetails(username)
         details.accountInfo = accountInfo
+        // DevelopmentAuthenticator can return a persisted account object whose
+        // username field is blank. Player(details) takes its authoritative entity
+        // name from details.getUsername(), so restore the requested local profile
+        // name before constructing the Player. Otherwise revision-530 appearance
+        // packets encode name37=0 and RT4 rejects them during live player updates.
+        details.accountInfo.setUsername(username)
         details.communication.parse(accountInfo)
         details.session = session
 
