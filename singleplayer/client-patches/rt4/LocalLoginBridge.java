@@ -47,16 +47,19 @@ public final class LocalLoginBridge {
         if (!Boolean.getBoolean("singleplayer")) return;
 
         if (client.gameState == 30) {
-            if (!leagueAttached) {
-                leagueAttached = tryAttachLeagueRuntime();
-                if (!leagueAttached) return;
-            }
+            // RT4/world readiness owns game visibility. League attachment is an
+            // optional extension and must never be able to strand Android on the
+            // loading overlay. Attach it independently and keep retrying after
+            // the game is already visible if Player.init is still finishing.
             if (!readyAnnounced) {
                 readyAnnounced = true;
                 writeStage("Ready");
                 markGameReady(true);
                 notifyLocalRuntimeReady();
                 System.out.println("SINGLEPLAYER_E2E: LOGGED_IN");
+            }
+            if (!leagueAttached) {
+                leagueAttached = tryAttachLeagueRuntime();
             }
             return;
         }
@@ -260,7 +263,7 @@ public final class LocalLoginBridge {
                 leagueAttached = tryAttachLeagueRuntime();
 
                 state = COMPLETE;
-                writeStage("Loading world...");
+                writeStage("Loading map...");
                 System.out.println("SINGLEPLAYER_LOCAL_LOGIN: RT4_REBUILD_READY");
                 return true;
             }
