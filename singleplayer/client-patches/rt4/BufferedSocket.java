@@ -51,6 +51,7 @@ public final class BufferedSocket implements Runnable {
 	private static volatile Method singlePlayerFlushBoundary;
 
 	private final boolean localOnly;
+	private final boolean localJs5;
 	private boolean localPresentationRequested;
 	private boolean localPresentationReading;
 	private long localPresentationQuietSince;
@@ -61,10 +62,14 @@ public final class BufferedSocket implements Runnable {
 		this.signLink = signLink;
 		this.socket = socket;
 		this.localOnly = false;
+		this.localJs5 = socket instanceof LocalJs5Socket;
 		this.socket.setSoTimeout(30000);
 		this.socket.setTcpNoDelay(true);
 		this.in = this.socket.getInputStream();
 		this.out = this.socket.getOutputStream();
+		if (this.localJs5) {
+			System.out.println("SINGLEPLAYER_LOCAL_JS5: BUFFERED_SOCKET_DIRECT");
+		}
 	}
 
 	private BufferedSocket(SignLink signLink) {
@@ -73,6 +78,7 @@ public final class BufferedSocket implements Runnable {
 		this.in = null;
 		this.out = null;
 		this.localOnly = true;
+		this.localJs5 = false;
 		this.localPresentationRequested = true;
 		this.localPresentationReading = true;
 	}
@@ -86,7 +92,7 @@ public final class BufferedSocket implements Runnable {
 	@OriginalMember(owner = "client!ma", name = "run", descriptor = "()V")
 	@Override
 	public final void run() {
-		if (this.localOnly) {
+		if (this.localOnly || this.localJs5) {
 			return;
 		}
 		try {
@@ -160,6 +166,9 @@ public final class BufferedSocket implements Runnable {
 	private boolean useLocalPresentationStream() throws IOException {
 		if (this.localOnly) {
 			return true;
+		}
+		if (this.localJs5) {
+			return false;
 		}
 		if (!Boolean.getBoolean("singleplayer") || client.gameState != 30) {
 			return false;
@@ -291,6 +300,11 @@ public final class BufferedSocket implements Runnable {
 			this.error = false;
 			throw new IOException();
 		}
+		if (this.localJs5) {
+			this.out.write(src, 0, len);
+			this.out.flush();
+			return;
+		}
 		if (this.buffer == null) {
 			this.buffer = new byte[5000];
 		}
@@ -328,7 +342,7 @@ public final class BufferedSocket implements Runnable {
 
 	@OriginalMember(owner = "client!ma", name = "d", descriptor = "(I)V")
 	public final void checkError() throws IOException {
-		if (this.localOnly) {
+		if (this.localOnly || this.localJs5) {
 			return;
 		}
 		if (!this.closed && this.error) {
@@ -343,6 +357,10 @@ public final class BufferedSocket implements Runnable {
 			this.closed = true;
 			return;
 		}
+		if (this.localJs5) {
+			this.close();
+			return;
+		}
 		if (!this.closed) {
 			this.in = new BrokenInputStream();
 			this.out = new BrokenOutputStream();
@@ -352,6 +370,22 @@ public final class BufferedSocket implements Runnable {
 	@OriginalMember(owner = "client!ma", name = "e", descriptor = "(I)V")
 	public final void close() {
 		if (this.closed) {
+			return;
+		}
+		if (this.localJs5) {
+			this.closed = true;
+			try {
+				if (this.in != null) {
+					this.in.close();
+				}
+				if (this.out != null) {
+					this.out.close();
+				}
+				if (this.socket != null) {
+					this.socket.close();
+				}
+			} catch (IOException ignored) {
+			}
 			return;
 		}
 		synchronized (this) {
