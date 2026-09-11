@@ -1,20 +1,28 @@
 package core.local.league
 
 import content.data.EnchantedJewellery
+import content.global.skill.fishing.Fish
+import content.global.skill.gather.mining.MiningNode
+import content.global.skill.gather.woodcutting.WoodcuttingNode
 import core.api.Commands
 import core.api.addItemOrDrop
 import core.api.openDialogue
 import core.cache.def.impl.ItemDefinition
 import core.game.dialogue.DialogueFile
 import core.game.event.Event
+import core.game.event.ResourceProducedEvent
+import core.game.event.TeleportEvent
 import core.game.event.TickEvent
+import core.game.event.XPGainEvent
 import core.game.interaction.InteractionListener
 import core.game.interaction.IntType
 import core.game.node.entity.player.Player
-import core.game.node.item.Item
 import core.game.node.entity.player.link.TeleportManager
+import core.game.node.entity.skill.SkillPulse
 import core.game.node.entity.skill.Skills
+import core.game.node.item.Item
 import core.game.system.command.Privilege
+import core.game.system.task.Pulse
 import core.game.world.map.Location
 import core.local.LeagueRuntime
 
@@ -69,8 +77,7 @@ object LeagueItems {
     fun ensureRelicItem(player: Player, itemId: Int) {
         if (player.inventory.contains(itemId, 1) || player.bank.contains(itemId, 1)) return
         val item = Item(itemId)
-        if (!player.inventory.isFull) player.inventory.add(item)
-        else player.bank.add(item)
+        if (!player.inventory.isFull) player.inventory.add(item) else player.bank.add(item)
         player.sendMessage("Your ${item.name} has been restored.")
     }
 
@@ -96,12 +103,7 @@ object FirstPassRelics {
     fun registerAll() {
         if (registered) return
         registered = true
-        LeagueRelics.register(SimpleRelic(
-            ENDLESS_HARVEST,
-            "Endless Harvest",
-            "Gather twice the resources and twice the gathering XP from Mining, Fishing and Woodcutting.",
-            1
-        ))
+        LeagueRelics.register(EndlessHarvestEffect)
         LeagueRelics.register(RelicItemEffect(
             VOIDWALKER,
             "Voidwalker",
@@ -109,27 +111,9 @@ object FirstPassRelics {
             1,
             LeagueItemIds.VOIDWALKER
         ))
-        LeagueRelics.register(SimpleRelic(
-            PRODUCTION_MASTER,
-            "Production Master",
-            "Batch-process supported production actions with their normal ingredients, products and XP.",
-            2
-        ))
-        LeagueRelics.register(RelicItemEffect(
-            LAST_RECALL,
-            "Last Recall",
-            "Gain the Disk of Memories, which returns you to the origin of your last eligible teleport.",
-            2,
-            LeagueItemIds.DISK_OF_MEMORIES
-        ))
+        LeagueRelics.register(ProductionMasterEffect)
+        LeagueRelics.register(LastRecallEffect)
     }
-
-    private class SimpleRelic(
-        override val id: String,
-        override val name: String,
-        override val description: String,
-        override val tier: Int
-    ) : LeagueRelicEffect
 
     private class RelicItemEffect(
         override val id: String,
@@ -148,48 +132,154 @@ object FirstPassRelics {
             }
         }
     }
+
+    private object EndlessHarvestEffect : LeagueRelicEffect {
+        override val id = ENDLESS_HARVEST
+        override val name = "Endless Harvest"
+        override val description = "Gather twice the resources and twice the gathering XP from Mining, Fishing and Woodcutting."
+        override val tier = 1
+
+        private const val XP_GUARD = "league:endless-harvest-xp-guard"
+        private val resourceIds: Set<Int> by lazy {
+            buildSet {
+                WoodcuttingNode.values().mapTo(this) { it.reward }
+                MiningNode.values().mapTo(this) { it.reward }
+                Fish.values().mapTo(this) { it.id }
+                removeIf { it <= 0 }
+            }
+        }
+
+        override fun onEvent(player: Player, event: Event) {
+            when (event) {
+                is ResourceProducedEvent -> {
+                    if (event.amount > 0 && event.itemId in resourceIds) {
+                        addItemOrDrop(player, event.itemId, event.amount)
+                    }
+                }
+                is XPGainEvent -> {
+                    if (event.skillId !in intArrayOf(Skills.MINING, Skills.FISHING, Skills.WOODCUTTING)) return
+                    if (player.getAttribute(XP_GUARD, false)) return
+                    player.setAttribute(XP_GUARD, true)
+                    try {
+                        player.skills.addExperience(event.skillId, event.amount, false)
+                    } finally {
+                        player.removeAttribute(XP_GUARD)
+                    }
+                }
+            }
+        }
+    }
+
+    private object ProductionMasterEffect : LeagueRelicEffect {
+        override val id = PRODUCTION_MASTER
+        override val name = "Production Master"
+        override val description = "Batch-process supported production actions with their normal ingredients, products and XP."
+        override val tier = 2
+
+        private const val GUARD = "league:production-master-running"
+
+        override fun onEvent(player: Player, event: Event) {
+            if (event !is TickEvent || player.getAttribute(GUARD, false)) return
+            val pulse = player.pulseManager.current ?: return
+            if (!LeagueModifiers.isProductionPulse(pulse)) return
+
+            player.setAttribute(GUARD, true)
+            try {
+                LeagueModifiers.finishProductionPulse(pulse)
+            } finally {
+                player.removeAttribute(GUARD)
+            }
+        }
+    }
+
+    private object LastRecallEffect : LeagueRelicEffect {
+        override val id = LAST_RECALL
+        override val name = "Last Recall"
+        override val description = "Gain the Disk of Memories, which returns you to the origin of your last eligible teleport."
+        override val tier = 2
+
+        override fun onAttach(player: Player) {
+            LeagueItems.ensureRelicItem(player, LeagueItemIds.DISK_OF_MEMORIES)
+            LeagueModifiers.rememberCurrentTile(player)
+        }
+
+        override fun onEvent(player: Player, event: Event) {
+            when (event) {
+                is TickEvent -> {
+                    if (event.worldTicks % 50 == 0) {
+                        LeagueItems.ensureRelicItem(player, LeagueItemIds.DISK_OF_MEMORIES)
+                    }
+                    LeagueModifiers.rememberCurrentTile(player)
+                }
+                is TeleportEvent -> LeagueModifiers.captureTeleportOrigin(player)
+            }
+        }
+    }
 }
 
-/** Narrow hooks called from retained mechanics; no transport or duplicated game authority. */
+/** Reusable League mechanics built on the retained player/event/pulse APIs. */
 object LeagueModifiers {
     const val RECALL_ORIGIN = "league:last-recall-origin"
     const val RECALL_IN_PROGRESS = "league:last-recall-in-progress"
+    private const val LAST_TILE = "league:last-recall-last-tile"
 
     @JvmStatic
-    fun hasEndlessHarvest(player: Player): Boolean =
-        LeagueRuntime.hasRelic(player, FirstPassRelics.ENDLESS_HARVEST)
-
-    @JvmStatic
-    fun productionMaster(player: Player): Boolean =
-        LeagueRuntime.hasRelic(player, FirstPassRelics.PRODUCTION_MASTER)
-
-    /** Called only by Mining/Fishing/Woodcutting reward sites. */
-    @JvmStatic
-    fun onGather(player: Player, skillId: Int, itemId: Int, amount: Int, experience: Double) {
-        if (!hasEndlessHarvest(player) || amount <= 0) return
-        if (skillId != Skills.MINING && skillId != Skills.FISHING && skillId != Skills.WOODCUTTING) return
-        addItemOrDrop(player, itemId, amount)
-        player.skills.addExperience(skillId, experience, true)
-        player.sendMessage("Endless Harvest grants an additional ${if (amount == 1) "resource" else "$amount resources"}.")
-    }
-
-    /** Production Master batching is restricted to known production SkillPulse packages. */
-    @JvmStatic
-    fun isProductionPulse(pulse: Any): Boolean {
+    fun isProductionPulse(pulse: Pulse): Boolean {
         val name = pulse.javaClass.name
         return name.startsWith("content.global.skill.smithing.") ||
             name.startsWith("content.global.skill.crafting.") ||
             name.startsWith("content.global.skill.herblore.") ||
-            name.startsWith("content.global.skill.cooking.dairy.")
+            name.startsWith("content.global.skill.cooking.dairy.") ||
+            name == "content.global.skill.cooking.StandardCookingPulse"
     }
 
-    /** Capture the departure tile before an eligible teleport mutates player.location. */
+    /** Run only the current recognized production pulse to completion, capped defensively. */
     @JvmStatic
-    fun beforeTeleport(player: Player) {
-        if (!LeagueRuntime.hasRelic(player, FirstPassRelics.LAST_RECALL)) return
+    fun finishProductionPulse(pulse: Pulse) {
+        var iterations = 0
+        while (pulse.isRunning && iterations++ < 1024) {
+            if (pulse is SkillPulse<*>) {
+                if (!pulse.checkRequirements()) {
+                    pulse.stop()
+                    break
+                }
+                pulse.animate()
+                if (pulse.reward()) {
+                    pulse.stop()
+                    break
+                }
+                continue
+            }
+
+            // StandardCookingPulse predates SkillPulse but deliberately exposes
+            // the same checkRequirements/reward shape. Keep this reflection local.
+            try {
+                val check = pulse.javaClass.getMethod("checkRequirements")
+                val reward = pulse.javaClass.getMethod("reward")
+                if (check.invoke(pulse) != true || reward.invoke(pulse) == true) {
+                    pulse.stop()
+                    break
+                }
+            } catch (_: ReflectiveOperationException) {
+                break
+            }
+        }
+    }
+
+    @JvmStatic
+    fun rememberCurrentTile(player: Player) {
         if (player.getAttribute(RECALL_IN_PROGRESS, false)) return
         val loc = player.location
-        player.setAttribute("/save:$RECALL_ORIGIN", "${loc.x},${loc.y},${loc.z}")
+        player.setAttribute(LAST_TILE, "${loc.x},${loc.y},${loc.z}")
+    }
+
+    /** TeleportEvent may fire after movement, so use the tile remembered at tick start. */
+    @JvmStatic
+    fun captureTeleportOrigin(player: Player) {
+        if (player.getAttribute(RECALL_IN_PROGRESS, false)) return
+        val origin = player.getAttribute(LAST_TILE, "")
+        if (origin.isNotBlank()) player.setAttribute("/save:$RECALL_ORIGIN", origin)
+        rememberCurrentTile(player)
     }
 
     @JvmStatic
@@ -215,9 +305,13 @@ object LeagueModifiers {
             player.sendMessage("The Disk of Memories cannot be used here.")
             return false
         }
+
         player.setAttribute(RECALL_IN_PROGRESS, true)
-        val started = player.teleporter.send(Location.create(x, y, z), TeleportManager.TeleportType.NORMAL, -1)
-        player.removeAttribute(RECALL_IN_PROGRESS)
+        val started = try {
+            player.teleporter.send(Location.create(x, y, z), TeleportManager.TeleportType.NORMAL, -1)
+        } finally {
+            player.removeAttribute(RECALL_IN_PROGRESS)
+        }
         if (!started) player.sendMessage("The memory slips away before you can follow it.")
         return started
     }
@@ -241,7 +335,7 @@ class LeagueRelicItemListener : InteractionListener {
     }
 }
 
-/** Two-stage menu that delegates the actual teleports to existing jewellery code. */
+/** Two-stage menu that delegates actual teleport rules/animations to existing jewellery code. */
 class VoidwalkerDialogue : DialogueFile() {
     private val families = arrayOf(
         EnchantedJewellery.AMULET_OF_GLORY,
@@ -277,8 +371,6 @@ class VoidwalkerDialogue : DialogueFile() {
                 end()
                 val destination = buttonID - 1
                 if (destination in jewellery.locations.indices) {
-                    // A charged synthetic jewellery item lets the retained handler perform
-                    // its authentic checks/animations without consuming any charges.
                     jewellery.attemptTeleport(p, Item(jewellery.ids[0]), destination, false, false)
                 }
             }
@@ -295,7 +387,7 @@ class LeagueSandboxCommands : Commands {
                 val selected = if (LeagueRuntime.hasRelic(player, effect.id)) " [SELECTED]" else ""
                 player.sendMessage("Tier ${effect.tier}: ${effect.name}$selected - ${effect.description}")
             }
-            player.sendMessage("Choose with ::relic endless, ::relic voidwalker, ::relic production, or ::relic recall")
+            player.sendMessage("Choose: ::relic endless | voidwalker | production | recall")
             player.sendMessage("Development reset: ::resetrelics")
         }
 
