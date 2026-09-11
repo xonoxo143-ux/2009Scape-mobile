@@ -193,6 +193,7 @@ public final class SinglePlayerManager {
     private static boolean isPersistentPath(String name) {
         return name.startsWith("data/players/")
                 || name.startsWith("data/serverstore/")
+                || name.startsWith("data/localaccounts/")
                 || name.startsWith("data/logs/")
                 || name.startsWith("data/snapshots/")
                 || name.startsWith("data/eco/");
