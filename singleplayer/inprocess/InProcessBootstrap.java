@@ -18,6 +18,13 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class InProcessBootstrap {
     private static final String STAGE_FILE = "singleplayer-game-stage.txt";
 
+    static {
+        // Log capture is part of the normal runtime, not a diagnostic-only build
+        // feature. Diagnostic payloads may add extra timing/watchdog detail, but
+        // every full payload must still rotate and refresh singleplayer-debug.log.
+        SinglePlayerDebug.install();
+    }
+
     private InProcessBootstrap() {}
 
     /** Temporary public adapter while retained RT4 classes cannot import package-private config. */
