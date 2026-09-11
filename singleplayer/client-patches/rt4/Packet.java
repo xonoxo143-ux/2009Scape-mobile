@@ -30,11 +30,18 @@ public final class Packet extends Buffer {
     private int localOpcode = -1;
 
     /*
-     * These revision-530 signals are transport/telemetry ceremony with no world
-     * gameplay effect in the retained server. Keep the original RT4 call sites
-     * untouched for now, but deliberately consume the completed packet before
-     * it reaches the compatibility decoder. This makes the removal explicit and
-     * independently observable while larger retained RT4 classes are migrated.
+     * Revision-530 transport/server-hosting ceremony that has no useful local
+     * gameplay meaning. Keep retained RT4 call sites compatible during the
+     * migration, but consume these packets before the compatibility decoder.
+     *
+     * 20/110  map rebuild acknowledgements: server NoProcess
+     * 21      camera telemetry: server TODO/no-op
+     * 22      focus telemetry: server no-op
+     * 75/123  mouse telemetry: server TODO/unhandled
+     * 93      remote keepalive: local session cannot time out
+     * 98      player preference telemetry: server TODO/no-op
+     * 99      hosted abuse-report/moderation transport
+     * 245     remote AFK logout: Android lifecycle pauses locally instead
      */
     private static final boolean[] localDiscardAnnounced = new boolean[256];
 
@@ -91,10 +98,16 @@ public final class Packet extends Buffer {
 
     private static boolean isTransportOnlySinglePlayerSignal(int opcode) {
         switch (opcode) {
-            case 20:  // map rebuild started; server returns NoProcess
-            case 110: // map rebuild finished; server returns NoProcess
-            case 21:  // camera tracking; retained server handler is intentionally empty
-            case 75:  // mouse-click tracking; retained server handler is intentionally empty
+            case 20:  // map rebuild started
+            case 21:  // camera tracking
+            case 22:  // applet focus tracking
+            case 75:  // mouse click tracking
+            case 93:  // remote keepalive
+            case 98:  // player preference telemetry
+            case 99:  // hosted abuse report
+            case 110: // map rebuild finished
+            case 123: // mouse movement tracking / unsupported in retained decoder
+            case 245: // remote AFK logout
                 return true;
             default:
                 return false;
