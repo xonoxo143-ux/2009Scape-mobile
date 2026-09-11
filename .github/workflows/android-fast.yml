@@ -177,6 +177,9 @@ jobs:
           rm -rf build/generated-rt4
           python3 singleplayer/native-refactor/prepare_rt4.py build/generated-rt4
           test -f build/generated-rt4/rt4/SignLink.java
+          test -f build/generated-rt4/rt4/MiniMenu.java
+          grep -q 'LocalClientCommands.npcAction(0, local36)' build/generated-rt4/rt4/MiniMenu.java
+          grep -q 'LocalClientCommands.sceneryAction(0,' build/generated-rt4/rt4/MiniMenu.java
 
       - name: Build combined JVM bootstrap
         run: |
@@ -193,12 +196,15 @@ jobs:
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
             "${RT4_PATCHES[@]}" \
-            build/generated-rt4/rt4/SignLink.java
+            build/generated-rt4/rt4/SignLink.java \
+            build/generated-rt4/rt4/MiniMenu.java
+          test -f build/singleplayer-bootstrap/rt4/MiniMenu.class
           rm -f app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
           jar --create \
             --file app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar \
             -C build/singleplayer-bootstrap singleplayer \
             -C build/singleplayer-bootstrap rt4
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q '^rt4/MiniMenu.class$'
 
       - name: Restore ARM64 Java 17 runtime download
         id: jre-cache
