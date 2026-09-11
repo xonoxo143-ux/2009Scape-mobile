@@ -55,9 +55,10 @@ public final class GitHubClientUpdater {
             previousText = SinglePlayerPayload.readFileText(activeManifest);
         }
         String previousVersion = SinglePlayerPayload.activeVersion(context);
+        String[] managedFiles = SinglePlayerPayload.managedFiles(remote);
 
         long totalBytes = 0L;
-        for (String name : SinglePlayerPayload.requiredFiles()) {
+        for (String name : managedFiles) {
             JSONObject entry = SinglePlayerPayload.requireEntry(remote, name);
             File object = SinglePlayerPayload.getObjectFile(context, entry.getString("sha256"));
             if (!isVerifiedObject(name, object, entry)) totalBytes += entry.getLong("size");
@@ -65,7 +66,7 @@ public final class GitHubClientUpdater {
 
         long completedBytes = 0L;
         boolean downloadedAny = false;
-        for (String name : SinglePlayerPayload.requiredFiles()) {
+        for (String name : managedFiles) {
             JSONObject entry = SinglePlayerPayload.requireEntry(remote, name);
             File object = SinglePlayerPayload.getObjectFile(context, entry.getString("sha256"));
             if (isVerifiedObject(name, object, entry)) continue;
@@ -75,7 +76,7 @@ public final class GitHubClientUpdater {
         }
 
         // One final validation pass before the tiny active-manifest pointer moves.
-        for (String name : SinglePlayerPayload.requiredFiles()) {
+        for (String name : managedFiles) {
             JSONObject entry = SinglePlayerPayload.requireEntry(remote, name);
             File object = SinglePlayerPayload.getObjectFile(context, entry.getString("sha256"));
             if (!isVerifiedObject(name, object, entry)) {
