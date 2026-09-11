@@ -41,6 +41,7 @@ public final class ClientProt {
     public static final int CLOSE_MODAL = 184;
     public static final int NO_TIMEOUT = 93;
 
+    private static final int LEAGUE_LAUNCHER_COMPONENT = 49217565; // 751:29
     private static final int MINIMAP_TRAILER_BYTES = 14;
     private static final ArrayList<Integer> pendingMinimapTrailerOffsets =
             new ArrayList<>();
@@ -136,6 +137,22 @@ public final class ClientProt {
         if (local8 == null) {
             return;
         }
+
+        // In the single-player client the stock Report Abuse control is our
+        // League launcher. Intercept it before RT4 runs the old onOptionClick
+        // script so the abuse interface never flashes or receives a legacy
+        // action. League state is still world-authoritative; this only opens the
+        // presentation surface.
+        if (Boolean.getBoolean("singleplayer")
+                && (local8.id == LEAGUE_LAUNCHER_COMPONENT
+                        || arg3 == LEAGUE_LAUNCHER_COMPONENT)) {
+            LocalLeagueUiBridge.open();
+            System.out.println(
+                    "SINGLEPLAYER_LEAGUE_UI: COMPONENT_ACTION_OPEN option=" + arg2
+                            + " component=" + local8.id);
+            return;
+        }
+
         if (local8.onOptionClick != null) {
             @Pc(19) HookRequest local19 = new HookRequest();
             local19.arguments = local8.onOptionClick;
