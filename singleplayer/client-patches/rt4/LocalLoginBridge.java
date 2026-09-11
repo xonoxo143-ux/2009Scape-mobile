@@ -35,6 +35,7 @@ public final class LocalLoginBridge {
     private static boolean readyAnnounced;
     private static boolean leagueAttached;
     private static long retryAfterMs;
+    private static String failureStage = "Local login failed";
 
     private LocalLoginBridge() {}
 
@@ -64,14 +65,15 @@ public final class LocalLoginBridge {
             return;
         }
 
-        // A real logout returns to state 10. Region rebuilds transiently use 25,
-        // so do not tear the world session down for those.
+        // gameState 25 is a normal region rebuild. A completed socketless local
+        // session returning to state 10, however, is not enough evidence that the
+        // human explicitly logged out. RT4 also falls back to 10 after a decoder
+        // or presentation failure. Treat that as a terminal client-side failure
+        // instead of tearing everything down, resetting the presentation bridge,
+        // and immediately creating another player/session in an endless loop.
         if (state == COMPLETE && client.gameState == 10) {
-            reset();
-            readyAnnounced = false;
-            loginScreenAnnounced = false;
-            markGameReady(false);
-            writeStage("Returning to game...");
+            handleUnexpectedClientReset();
+            return;
         }
 
         if (client.gameState != 10 || CreateManager.step != 0 || WorldList.step != 0) {
@@ -85,7 +87,7 @@ public final class LocalLoginBridge {
         }
 
         if (state == FAILED) {
-            writeStage("Local login failed");
+            writeStage(failureStage);
             return;
         }
 
@@ -281,10 +283,37 @@ public final class LocalLoginBridge {
         return state == FAILED;
     }
 
+    /**
+     * A completed local session falling back to the login state is a presentation
+     * failure until an explicit logout path says otherwise. Close the world-side
+     * player once, but deliberately leave the in-memory presentation bridge alive
+     * so any final disconnect/save packets from that retiring session can drain
+     * instead of throwing Local presentation route unavailable. Most importantly,
+     * do not reset to IDLE and silently manufacture another login attempt.
+     */
+    private static void handleUnexpectedClientReset() {
+        String username = activeUsername;
+        closeWorldSession();
+        state = FAILED;
+        leagueAttached = false;
+        readyAnnounced = false;
+        loginScreenAnnounced = true;
+        LoginManager.step = 0;
+        markGameReady(false);
+        failureStage = "Client presentation failed";
+        writeStage(failureStage);
+        System.err.println(
+                "SINGLEPLAYER_LOCAL_LOGIN: UNEXPECTED_CLIENT_RESET"
+                        + (username == null ? "" : " username=" + username)
+                        + " gameState=" + client.gameState
+                        + " autoRelogin=false");
+    }
+
     public static synchronized void reset() {
         closeWorldSession();
         state = IDLE;
         leagueAttached = false;
+        failureStage = "Local login failed";
         LoginManager.step = 0;
         retryAfterMs = System.currentTimeMillis() + 250L;
         if (Protocol.socket != null) {
@@ -408,9 +437,10 @@ public final class LocalLoginBridge {
         closeWorldSession();
         state = FAILED;
         leagueAttached = false;
+        failureStage = "Local login failed";
         LoginManager.reply = reply;
         LoginManager.step = 0;
-        writeStage("Local login failed");
+        writeStage(failureStage);
         System.err.println("SINGLEPLAYER_LOCAL_LOGIN: FAILED " + reason);
     }
 }
