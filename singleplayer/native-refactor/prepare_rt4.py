@@ -130,6 +130,31 @@ def wrap_scenery_action(
     )
 
 
+def wrap_continue_option(source: str) -> str:
+    old = (
+        "\tpublic static void method10(@OriginalArg(0) int arg0, @OriginalArg(2) int arg1) {\n"
+        "\t\tProtocol.outboundBuffer.p1isaac(132);\n"
+        "\t\tProtocol.outboundBuffer.imp4(arg1);\n"
+        "\t\tProtocol.outboundBuffer.ip2(arg0);\n"
+        "\t}\n"
+    )
+    new = (
+        "\tpublic static void method10(@OriginalArg(0) int arg0, @OriginalArg(2) int arg1) {\n"
+        "\t\tif (Boolean.getBoolean(\"singleplayer\")\n"
+        "\t\t\t\t&& singleplayer.InProcessBootstrap.LocalCommands.continueOption(\n"
+        "\t\t\t\t\t\targ1 >>> 16, arg1 & 0xFFFF, arg0, 132)) {\n"
+        "\t\t\tSystem.out.println(\"SINGLEPLAYER_LOCAL_COMMAND: CONTINUE_OPTION_DIRECT iface=\"\n"
+        "\t\t\t\t\t+ (arg1 >>> 16) + \" child=\" + (arg1 & 0xFFFF) + \" slot=\" + arg0);\n"
+        "\t\t\treturn;\n"
+        "\t\t}\n"
+        "\t\tProtocol.outboundBuffer.p1isaac(132);\n"
+        "\t\tProtocol.outboundBuffer.imp4(arg1);\n"
+        "\t\tProtocol.outboundBuffer.ip2(arg0);\n"
+        "\t}\n"
+    )
+    return replace_exact(source, old, new, "MiniMenu continue option")
+
+
 def generate_minimenu(output_root: Path) -> Path:
     source = fetch_verified(MINIMENU_URL, MINIMENU_BLOB_SHA, "MiniMenu")
 
@@ -203,6 +228,7 @@ def generate_minimenu(output_root: Path) -> Path:
             "Protocol.outboundBuffer.ip2add(local19 + Camera.originZ);",
         ],
     )
+    source = wrap_continue_option(source)
 
     destination = output_root / "rt4/MiniMenu.java"
     destination.parent.mkdir(parents=True, exist_ok=True)
