@@ -33,7 +33,27 @@ public final class MobileGestureBridge {
 
     public static Event poll() {
         synchronized (EVENTS) {
-            return EVENTS.pollFirst();
+            while (true) {
+                Event event = EVENTS.pollFirst();
+                if (event == null) {
+                    return null;
+                }
+
+                // League UI touch handling happens before the generic RT4 touch
+                // plugin can turn a gesture into a world click/camera drag. The
+                // UI owns presentation state only; gameplay state remains in the
+                // authoritative retained world.
+                if (rt4.LocalLeagueUiBridge.handleGesture(
+                        event.type,
+                        event.x,
+                        event.y,
+                        event.value1,
+                        event.value2)) {
+                    continue;
+                }
+
+                return event;
+            }
         }
     }
 
