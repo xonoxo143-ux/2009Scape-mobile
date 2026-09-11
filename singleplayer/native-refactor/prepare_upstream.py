@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import shutil
 from pathlib import Path
 
@@ -19,6 +20,14 @@ def replace_once(path: Path, old: str, new: str, label: str) -> None:
     if old not in text:
         raise SystemExit(f"{label}: expected source anchor not found in {path}")
     path.write_text(text.replace(old, new, 1))
+
+
+def replace_regex_once(path: Path, pattern: str, new: str, label: str) -> None:
+    text = path.read_text()
+    replaced, count = re.subn(pattern, lambda _: new, text, count=1, flags=re.DOTALL)
+    if count != 1:
+        raise SystemExit(f"{label}: expected structural source anchor not found in {path}")
+    path.write_text(replaced)
 
 
 def patch_sqlite_dependency(server_root: Path) -> None:
@@ -46,12 +55,7 @@ def patch_sqlite_dependency(server_root: Path) -> None:
 
 
 def install_native_overlay(repo_root: Path, server_root: Path) -> None:
-    """Copy every source-native single-player extension into Server/src/main.
-
-    Keeping this generic is deliberate: league rules, local-runtime helpers and
-    later transport removals can be added as ordinary source files without
-    teaching this preparation script about each class individually.
-    """
+    """Copy every source-native single-player extension into Server/src/main."""
     source_root = repo_root / "singleplayer/server-patches/native"
     destination_root = server_root / "src/main"
     if not source_root.is_dir():
@@ -67,7 +71,6 @@ def install_native_overlay(repo_root: Path, server_root: Path) -> None:
         shutil.copy2(source, destination)
         print(f"overlay: native/{relative.as_posix()}")
         copied += 1
-
     if copied == 0:
         raise SystemExit(f"Native overlay tree is empty: {source_root}")
 
@@ -158,35 +161,6 @@ def patch_local_session_transport(server_root: Path) -> None:
 """
     replace_once(session, old_queue, new_queue, "IoSession local presentation queue")
 
-    old_write = """\tpublic void write() {
-\t\tif (!key.isValid()) {
-\t\t\tdisconnect();
-\t\t\treturn;
-\t\t}
-\t\ttry {
-\t\t\twritingLock.tryLock(1000L, TimeUnit.MILLISECONDS);
-\t\t} catch (Exception e){
-\t\t\te.printStackTrace();
-\t\t\twritingLock.unlock();
-\t\t\treturn;
-\t\t}
-\t\tSocketChannel channel = (SocketChannel) key.channel();
-\t\ttry {
-\t\t\twhile (!writingQueue.isEmpty()) {
-\t\t\t\tByteBuffer buffer = writingQueue.get(0);
-\t\t\t\tchannel.write(buffer);
-\t\t\t\tif (buffer.hasRemaining()) {
-\t\t\t\t\tkey.interestOps(key.interestOps() | SelectionKey.OP_WRITE);
-\t\t\t\t\tbreak;
-\t\t\t\t}
-\t\t\twritingQueue.remove(0);
-\t\t\t}
-\t\t} catch (IOException e) {
-\t\t\tdisconnect();
-\t\t}
-\t\twritingLock.unlock();
-\t}
-"""
     new_write = """\tpublic void write() {
 \t\tif (localTransport) {
 \t\t\tboolean locked = false;
@@ -235,7 +209,15 @@ def patch_local_session_transport(server_root: Path) -> None:
 \t\t}
 \t}
 """
-    replace_once(session, old_write, new_write, "IoSession local transport write")
+    # Match the no-argument write() method structurally rather than requiring an
+    # exact historical body. This keeps the overlay pinned to the method boundary
+    # while tolerating harmless upstream implementation drift.
+    replace_regex_once(
+        session,
+        r"\tpublic void write\(\) \{.*?\n\t\}\n(?=\n\t/\*\*\n\t \* Disconnects the session\.)",
+        new_write,
+        "IoSession local transport write",
+    )
 
     replace_once(
         session,
