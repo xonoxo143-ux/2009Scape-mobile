@@ -43,11 +43,15 @@ def main() -> None:
     session = read(server / "src/main/core/net/IoSession.java")
     player = read(server / "src/main/core/game/node/entity/player/Player.java")
     flags = read(server / "src/main/core/game/world/update/flag/PlayerFlags530.kt")
+    world_comm = read(server / "src/main/core/net/amsc/WorldCommunicator.java")
+    auth = read(server / "src/main/core/auth/Auth.kt")
+    account_store = read(server / "src/main/core/storage/LocalFileStorageProvider.kt")
 
     bootstrap = read(repo / "singleplayer/inprocess/InProcessBootstrap.java")
     login = read(repo / "singleplayer/client-patches/rt4/LocalLoginBridge.java")
     packet = read(repo / "singleplayer/client-patches/rt4/Packet.java")
     presentation = read(repo / "singleplayer/client-patches/rt4/LocalPresentationBridge.java")
+    config = read(repo / "singleplayer/default.conf")
 
     require(server_kt, "SINGLEPLAYER_WORLD: NETWORK_LISTENER_DISABLED",
             "gameplay network listener disabled")
@@ -71,13 +75,35 @@ def main() -> None:
     require(flags, "Invalid player identity before revision-530 appearance encode",
             "appearance identity invariant")
 
+    require(world_comm, "SINGLEPLAYER_MANAGEMENT: CONNECT_BLOCKED",
+            "management-server connection physically blocked")
+    require(world_comm,
+            "return !isSinglePlayer() && state == ManagementServerState.AVAILABLE;",
+            "management state cannot become active locally")
+    require(world_comm, "return isSinglePlayer() ? null : session;",
+            "local runtime exposes no management session")
+
+    require(auth, "LocalFileStorageProvider",
+            "single-player auth selects local persistent account store")
+    require(account_store, "StandardCopyOption.ATOMIC_MOVE",
+            "account metadata writes use atomic replacement when available")
+    require(account_store, "Repository.getPlayerByName",
+            "online social state comes from local repository")
+
+    require(config, "noauth_default_admin = false",
+            "single-player account is not implicitly administrator")
+    require(config, "debug = false",
+            "diagnostics separated from world debug gameplay mode")
+    require(config, "dev = false",
+            "diagnostics separated from development gameplay rules")
+
     require(bootstrap, "class LocalCommands", "typed local command authority")
     require(login, "UNEXPECTED_CLIENT_RESET", "client failure is not implicit logout")
     require(login, "autoRelogin=false", "automatic relog loop blocked")
     require(presentation, "SERVER_TO_CLIENT_ACTIVE", "in-memory presentation bridge")
 
     require(packet, "TRANSPORT_ONLY_REMOVED", "transport-only client signals classified")
-    for opcode in (20, 21, 75, 110):
+    for opcode in (20, 21, 22, 75, 93, 98, 99, 110, 123, 245):
         require(packet, f"case {opcode}:", f"transport-only opcode {opcode} removed")
 
     # Hosted/server-only paths should not be reintroduced into the local bootstrap.
