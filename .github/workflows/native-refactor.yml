@@ -30,7 +30,10 @@ jobs:
           rm -rf build/generated-rt4
           python3 singleplayer/native-refactor/prepare_rt4.py build/generated-rt4
           test -f build/generated-rt4/rt4/SignLink.java
+          test -f build/generated-rt4/rt4/MiniMenu.java
           grep -q 'LocalSocketPolicy.openJs5IfRequested' build/generated-rt4/rt4/SignLink.java
+          grep -q 'LocalClientCommands.npcAction(0, local36)' build/generated-rt4/rt4/MiniMenu.java
+          grep -q 'LocalClientCommands.sceneryAction(0,' build/generated-rt4/rt4/MiniMenu.java
 
       - name: Compile local runtime authority and RT4 patch source set
         run: |
@@ -48,13 +51,15 @@ jobs:
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
             "${RT4_PATCHES[@]}" \
-            build/generated-rt4/rt4/SignLink.java
+            build/generated-rt4/rt4/SignLink.java \
+            build/generated-rt4/rt4/MiniMenu.java
           test -f build/native-bootstrap/singleplayer/LocalGameRuntime.class
           test -f build/native-bootstrap/singleplayer/GameConfig.class
           test -f build/native-bootstrap/singleplayer/InProcessBootstrap\$LocalCommands.class
           test -f build/native-bootstrap/singleplayer/SinglePlayerDebug.class
           test -f build/native-bootstrap/rt4/ClientProt.class
           test -f build/native-bootstrap/rt4/SignLink.class
+          test -f build/native-bootstrap/rt4/MiniMenu.class
           test -f build/native-bootstrap/rt4/LocalJs5Socket.class
           test -f build/native-bootstrap/rt4/LocalSocketPolicy.class
           test -f build/native-bootstrap/rt4/LocalLoginBridge.class
@@ -163,11 +168,12 @@ jobs:
                   Class.forName("core.local.LeagueRuntime");
                   Class.forName("core.storage.LocalFileStorageProvider");
                   Class.forName("rt4.LocalLeagueBridge");
+                  Class.forName("rt4.MiniMenu");
 
                   System.out.println(
                           "NATIVE_REFACTOR: CLIENT_VIEW=" + clientView +
                           " ENTITY_SYNC=" + entitySync +
-                          " DIRECT_COMMAND_TYPES=READY LEAGUE_RUNTIME=READY ACCOUNT_STORE=READY");
+                          " DIRECT_COMMAND_TYPES=READY LEAGUE_RUNTIME=READY ACCOUNT_STORE=READY MENU_CUTOVER=READY");
               }
 
               private static void requireCommand(
@@ -214,7 +220,7 @@ jobs:
           echo 'Client view radius and retained 15-tile entity sync radius are independent: verified'
           echo 'Existing typed 2009Scape commands reachable without TCP: verified'
           echo 'RT4 migration patches compile as independent source files: verified'
-          echo 'World, interaction, and minimap walking cut over to direct typed commands: compiled'
+          echo 'World, NPC, scenery, interaction, and minimap actions cut over to direct typed commands: compiled'
           echo 'Socketless local login is runtime-driven rather than plugin-driven: verified'
           echo 'Pinned RT4 SignLink override redirects JS5 to memory: compiled'
           echo 'Persistent league task/relic runtime and RT4 state bridge: verified'
