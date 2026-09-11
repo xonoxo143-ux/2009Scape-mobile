@@ -6,6 +6,8 @@ on:
       - singleplayer-native-refactor
     paths:
       - '.github/fast-build-trigger'
+      - '.github/workflows/publish-payload.yml'
+  workflow_dispatch:
 
 permissions:
   actions: read
@@ -21,19 +23,48 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 35
     steps:
-      - name: Checkout exact build commit
+      - name: Checkout publisher commit
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
-      - name: Wait for matching fast APK build
+      - name: Resolve payload source commit
+        id: source
+        run: |
+          set -euo pipefail
+          SOURCE_SHA="$GITHUB_SHA"
+
+          # A fast-build-trigger commit owns its own APK artifact. A publisher-only
+          # maintenance commit reuses the immediately preceding game's artifact,
+          # so fixing the update channel never forces a new APK build.
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            CHANGED=$(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}^" "$GITHUB_SHA" || true)
+            if ! grep -Fxq '.github/fast-build-trigger' <<<"$CHANGED"; then
+              SOURCE_SHA=$(git rev-parse "${GITHUB_SHA}^")
+            fi
+          else
+            SOURCE_SHA=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/android-fast.yml/runs?branch=singleplayer-native-refactor&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha')
+          fi
+
+          test -n "$SOURCE_SHA"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "Payload source commit: $SOURCE_SHA"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Wait for matching fast APK artifact
         id: fast-run
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
         run: |
           set -euo pipefail
           RUN_ID=""
           for attempt in $(seq 1 100); do
             RUN_JSON=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/android-fast.yml/runs?head_sha=${GITHUB_SHA}&per_page=20")
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/android-fast.yml/runs?head_sha=${SOURCE_SHA}&per_page=20")
             RUN_ID=$(jq -r '.workflow_runs[0].id // empty' <<<"$RUN_JSON")
             STATUS=$(jq -r '.workflow_runs[0].status // empty' <<<"$RUN_JSON")
             CONCLUSION=$(jq -r '.workflow_runs[0].conclusion // empty' <<<"$RUN_JSON")
@@ -47,7 +78,7 @@ jobs:
             fi
             sleep 15
           done
-          echo "Timed out waiting for the matching fast APK build." >&2
+          echo "Timed out waiting for the matching fast APK artifact." >&2
           exit 1
 
       - name: Download matching APK artifact
@@ -59,6 +90,8 @@ jobs:
           run-id: ${{ steps.fast-run.outputs.run_id }}
 
       - name: Extract updateable payload from APK
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
         run: |
           set -euxo pipefail
           APK=build/fast-artifact/2009scape-mobile.apk
@@ -76,9 +109,41 @@ jobs:
             'assets/plugins/LocalSinglePlayerLogin.zip' \
             'assets/plugins/MobileTouchControls.zip' \
             -d build/apk-payload
+
+          # Android's java.util.zip.ZipFile rejects duplicate entry names. The
+          # shaded RT4 JAR historically contains duplicate META-INF entries even
+          # though the game JVM accepts it. Repack only the published copy with
+          # the first occurrence of each path; gameplay classes are unchanged.
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import os
+
+          jar = Path('build/apk-payload/assets/rt4.jar')
+          temp = jar.with_suffix('.jar.android-safe')
+          seen = set()
+          duplicates = []
+          with ZipFile(jar, 'r') as source, ZipFile(temp, 'w', allowZip64=True) as target:
+              for info in source.infolist():
+                  if info.filename in seen:
+                      duplicates.append(info.filename)
+                      continue
+                  seen.add(info.filename)
+                  target.writestr(info, source.read(info))
+          os.replace(temp, jar)
+          print('Removed duplicate RT4 ZIP entries:', sorted(set(duplicates)))
+
+          with ZipFile(jar, 'r') as check:
+              names = check.namelist()
+              if len(names) != len(set(names)):
+                  raise SystemExit('RT4 payload still contains duplicate ZIP entry names')
+              if 'rt4/client.class' not in names:
+                  raise SystemExit('Sanitized RT4 payload lost rt4/client.class')
+          PY
+
           python3 scripts/singleplayer/generate_payload_manifest.py \
             --assets-root build/apk-payload/assets \
-            --version "$GITHUB_SHA" \
+            --version "$SOURCE_SHA" \
             --output build/payload-release/payload-manifest.json \
             --publish-dir build/payload-release \
             --release-base \
@@ -89,12 +154,13 @@ jobs:
       - name: Publish stable payload channel
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
         run: |
           set -euxo pipefail
           TAG=singleplayer-payload
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
-              --target "$GITHUB_SHA" \
+              --target "$SOURCE_SHA" \
               --title "2009Scape Single-Player Payload" \
               --notes "Stable update channel for the single-player Android shell." \
               --prerelease
@@ -110,8 +176,9 @@ jobs:
             fi
           done
 
-          # Publish the APK before the manifest. The manifest is the activation pointer,
-          # so it is deliberately the last release asset replaced.
+          # The manifest is the activation pointer and is deliberately replaced last.
+          # Re-publishing the already-built APK is harmless and gives the release a
+          # matching recovery installer without causing any APK build.
           gh release upload "$TAG" \
             build/payload-release/2009scape-mobile.apk --clobber
           gh release upload "$TAG" \
