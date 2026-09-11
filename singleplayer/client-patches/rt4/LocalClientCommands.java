@@ -53,6 +53,43 @@ public final class LocalClientCommands {
                 return false;
             }
 
+            /*
+             * Interface 771 is the revision-530 tutorial character designer.
+             * Its retained server plugin intentionally handles ordinary option-1
+             * interface clicks (opcode 155). RT4's final confirmation widgets can
+             * instead leave through the older CS-button opcode 10, whose payload
+             * is only the component hash. On the networked client that historical
+             * distinction was transport-facing; in the single-player process it
+             * must not split one semantic action into two incompatible routes.
+             *
+             * Normalize any CS-button action from interface 771 into the same
+             * typed IfAction the character-design plugin already understands.
+             * The plugin remains authoritative over which child ids actually do
+             * anything, including the final confirm child.
+             */
+            if (opcode == 10 && wirePayload.length == 4) {
+                int componentHash = ((wirePayload[0] & 0xFF) << 24)
+                        | ((wirePayload[1] & 0xFF) << 16)
+                        | ((wirePayload[2] & 0xFF) << 8)
+                        | (wirePayload[3] & 0xFF);
+                int iface = componentHash >>> 16;
+                int child = componentHash & 0xFFFF;
+                if (iface == 771) {
+                    boolean routed = singleplayer.InProcessBootstrap.LocalCommands.interfaceAction(
+                            155, 0, iface, child, -1, -1);
+                    if (routed) {
+                        System.out.println(
+                                "SINGLEPLAYER_LOCAL_PACKET: CHARACTER_DESIGN_CS_NORMALIZED"
+                                        + " iface=" + iface + " child=" + child
+                                        + " opcode=10->155");
+                        return true;
+                    }
+                    System.err.println(
+                            "SINGLEPLAYER_LOCAL_PACKET: CHARACTER_DESIGN_CS_FALLBACK"
+                                    + " iface=" + iface + " child=" + child);
+                }
+            }
+
             int packetShape = packetSizes[opcode];
             if (packetShape == -3) {
                 // The network server treated these as malformed and counted them
