@@ -93,6 +93,28 @@ def patch_command_boundary(server_root: Path) -> None:
     )
 
 
+def patch_player_debug_output(server_root: Path) -> None:
+    player = server_root / "src/main/core/game/node/entity/player/Player.java"
+    old = """\tpublic void debug(String string) {
+\t\tif (getAttribute("debug",false)) {
+\t\t\tpacketDispatch.sendMessage(string);
+\t\t}
+\t}
+"""
+    new = """\tpublic void debug(String string) {
+\t\tif (java.lang.Boolean.getBoolean("singleplayer")) {
+\t\t\tSystem.out.println("SINGLEPLAYER_GAME_DEBUG: " + string);
+\t\t\treturn;
+\t\t}
+\t\tif (getAttribute("debug",false)) {
+\t\t\tpacketDispatch.sendMessage(string);
+\t\t}
+\t}
+"""
+    replace_once(player, old, new, "single-player debug output")
+    print("overlay: route player debug output away from chat")
+
+
 def patch_presentation_boundary(server_root: Path) -> None:
     repository = server_root / "src/main/core/net/packet/PacketRepository.java"
     replace_once(
@@ -110,6 +132,24 @@ def patch_presentation_boundary(server_root: Path) -> None:
         "                if(context.getPlayer() instanceof AIPlayer) return;\n",
         "PacketRepository send hook",
     )
+
+
+def patch_presentation_invariants(server_root: Path) -> None:
+    flags = server_root / "src/main/core/game/world/update/flag/PlayerFlags530.kt"
+    old = """            buffer.p2 (appearance.renderAnimation)
+            buffer.p8 (StringUtils.stringToLong(context.username))
+"""
+    new = """            buffer.p2 (appearance.renderAnimation)
+            val encodedUsername = StringUtils.stringToLong(context.username)
+            if (context.username.isBlank() || encodedUsername == 0L) {
+                throw IllegalStateException(
+                    "Invalid player identity before revision-530 appearance encode: '${context.username}'"
+                )
+            }
+            buffer.p8 (encodedUsername)
+"""
+    replace_once(flags, old, new, "player appearance identity invariant")
+    print("overlay: player appearance identity invariant")
 
 
 def patch_local_session_transport(server_root: Path) -> None:
@@ -209,9 +249,6 @@ def patch_local_session_transport(server_root: Path) -> None:
 \t\t}
 \t}
 """
-    # Match the no-argument write() method structurally rather than requiring an
-    # exact historical body. This keeps the overlay pinned to the method boundary
-    # while tolerating harmless upstream implementation drift.
     replace_regex_once(
         session,
         r"\tpublic void write\(\) \{.*?\n\t\}\n(?=\n\t/\*\*\n\t \* Disconnects the session\.)",
@@ -271,10 +308,6 @@ def patch_mobile_pause(server_root: Path) -> None:
         "                    println(\"SINGLEPLAYER_WORLD: PAUSED\")\n"
         "                }\n"
         "                Server.heartbeat()\n"
-        "                val now = System.currentTimeMillis()\n"
-        "                for (player in Repository.players.filter { !it.isArtificial }) {\n"
-        "                    player.session.lastPing = now\n"
-        "                }\n"
         "                Thread.sleep(500L)\n"
         "                continue\n"
         "            } else if (singlePlayerWasPaused) {\n"
@@ -286,6 +319,36 @@ def patch_mobile_pause(server_root: Path) -> None:
     if loop_old not in source:
         raise SystemExit("MajorUpdateWorker loop anchor not found")
     source = source.replace(loop_old, loop_new, 1)
+
+    reachability_old = """            if (Server.networkReachability == NetworkReachability.Reachable)
+                handleTickActions()
+            else
+                tickOffline()
+"""
+    reachability_new = """            if (java.lang.Boolean.getBoolean("singleplayer") ||
+                Server.networkReachability == NetworkReachability.Reachable)
+                handleTickActions()
+            else
+                tickOffline()
+"""
+    if reachability_old not in source:
+        raise SystemExit("MajorUpdateWorker network reachability anchor not found")
+    source = source.replace(reachability_old, reachability_new, 1)
+
+    timeout_old = """                if (System.currentTimeMillis() - player.session.lastPing > 20000L) {
+                    player?.session?.lastPing = Long.MAX_VALUE
+                    player?.session?.disconnect()
+                }
+"""
+    timeout_new = """                if (!player.session.isLocalTransport &&
+                    System.currentTimeMillis() - player.session.lastPing > 20000L) {
+                    player?.session?.lastPing = Long.MAX_VALUE
+                    player?.session?.disconnect()
+                }
+"""
+    if timeout_old not in source:
+        raise SystemExit("MajorUpdateWorker remote ping timeout anchor not found")
+    source = source.replace(timeout_old, timeout_new, 1)
 
     method_old = "    fun tickOffline()\n    {\n"
     method_new = (
@@ -305,7 +368,7 @@ def patch_mobile_pause(server_root: Path) -> None:
     if method_old not in source:
         raise SystemExit("MajorUpdateWorker helper anchor not found")
     worker.write_text(source.replace(method_old, method_new, 1))
-    print("overlay: Android lifecycle pause")
+    print("overlay: Android lifecycle pause + local tick authority")
 
 
 def patch_server_host_mode(server_root: Path) -> None:
@@ -353,6 +416,7 @@ def patch_server_host_mode(server_root: Path) -> None:
         } else {
             reactor = null
             webSocketServer = null
+            networkReachability = NetworkReachability.Reachable
             println("SINGLEPLAYER_WORLD: NETWORK_LISTENER_DISABLED")
         }
 """
@@ -395,7 +459,16 @@ def patch_server_host_mode(server_root: Path) -> None:
 """
     if console_old not in source:
         raise SystemExit("Server console anchor not found")
-    server.write_text(source.replace(console_old, console_new, 1))
+    source = source.replace(console_old, console_new, 1)
+
+    watchdog_old = "        if (ServerConstants.WATCHDOG_ENABLED) {\n"
+    watchdog_new = (
+        "        if (ServerConstants.WATCHDOG_ENABLED &&\n"
+        "            !java.lang.Boolean.getBoolean(\"singleplayer\")) {\n"
+    )
+    if watchdog_old not in source:
+        raise SystemExit("Server connectivity watchdog anchor not found")
+    server.write_text(source.replace(watchdog_old, watchdog_new, 1))
     print("overlay: networkless single-player host")
 
 
@@ -434,6 +507,8 @@ def write_version_manifest(repo_root: Path, server_root: Path, config: Path) -> 
         "server=" + digest(server_root / "src/main/core/Server.kt"),
         "io-session=" + digest(server_root / "src/main/core/net/IoSession.java"),
         "pause-worker=" + digest(server_root / "src/main/core/worker/MajorUpdateWorker.kt"),
+        "player-debug=" + digest(server_root / "src/main/core/game/node/entity/player/Player.java"),
+        "player-flags=" + digest(server_root / "src/main/core/game/world/update/flag/PlayerFlags530.kt"),
         "local-probe=" + digest(server_root / "src/main/core/local/LocalMigrationProbe.kt"),
         "native-overlay=" + digest_tree(repo_root / "singleplayer/server-patches/native"),
         "config=" + digest(config),
@@ -460,7 +535,9 @@ def main() -> None:
     patch_sqlite_dependency(server_root)
     install_native_overlay(repo_root, server_root)
     patch_command_boundary(server_root)
+    patch_player_debug_output(server_root)
     patch_presentation_boundary(server_root)
+    patch_presentation_invariants(server_root)
     patch_local_session_transport(server_root)
     patch_mobile_pause(server_root)
     patch_server_host_mode(server_root)
