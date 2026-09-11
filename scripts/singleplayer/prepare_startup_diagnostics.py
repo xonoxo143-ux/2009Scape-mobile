@@ -269,11 +269,13 @@ def prepare_login(repo: Path, output: Path) -> None:
     source = replace_exact(
         source,
         "        state = FAILED;\n"
-        "        leagueAttached = false;\n",
+        "        leagueAttached = false;\n"
+        "        failureStage = \"Local login failed\";\n",
         "        state = FAILED;\n"
         "        debugTransition(\"FAILED\");\n"
         "        singleplayer.SinglePlayerDebug.log(\"LOGIN_FAIL\", reason);\n"
-        "        leagueAttached = false;\n",
+        "        leagueAttached = false;\n"
+        "        failureStage = \"Local login failed\";\n",
         "FAILED transition",
     )
 
