@@ -54,18 +54,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Restore prepared world bundle
-        id: world-cache
+      - name: Restore patched world engine bundle
+        id: engine-cache
         uses: actions/cache@v4
         with:
-          path: build/ci-cache/world
+          path: build/ci-cache/world-engine
           key: >-
-            singleplayer-world-v3-${{ env.UPSTREAM_COMMIT }}-${{
+            singleplayer-engine-v4-${{ env.UPSTREAM_COMMIT }}-${{
             hashFiles('singleplayer/native-refactor/prepare_upstream.py',
             'singleplayer/server-patches/**', 'singleplayer/default.conf') }}
 
+      - name: Restore static world data archive
+        id: world-data-cache
+        uses: actions/cache@v4
+        with:
+          path: build/ci-cache/world-data.zip
+          key: singleplayer-world-data-v2-${{ env.UPSTREAM_COMMIT }}
+
       - name: Restore pristine pinned 2009Scape tree
-        if: steps.world-cache.outputs.cache-hit != 'true'
+        if: steps.engine-cache.outputs.cache-hit != 'true' || steps.world-data-cache.outputs.cache-hit != 'true'
         id: upstream-cache
         uses: actions/cache@v4
         with:
@@ -73,7 +80,7 @@ jobs:
           key: singleplayer-upstream-v2-${{ env.UPSTREAM_COMMIT }}
 
       - name: Fetch pinned 2009Scape tree on cache miss
-        if: steps.world-cache.outputs.cache-hit != 'true' && steps.upstream-cache.outputs.cache-hit != 'true'
+        if: (steps.engine-cache.outputs.cache-hit != 'true' || steps.world-data-cache.outputs.cache-hit != 'true') && steps.upstream-cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
           rm -rf build/ci-cache/upstream-pristine
@@ -88,8 +95,18 @@ jobs:
           test "$(stat -c%s "$CACHE")" -gt 50000000
           ! grep -a -q 'git-lfs.github.com/spec/v1' "$CACHE"
 
+      - name: Create static world data archive on cache miss
+        if: steps.world-data-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          rm -f build/ci-cache/world-data.zip
+          (cd build/ci-cache/upstream-pristine/Server && \
+            zip -qr "$GITHUB_WORKSPACE/build/ci-cache/world-data.zip" data)
+          test -s build/ci-cache/world-data.zip
+          unzip -l build/ci-cache/world-data.zip | grep -q 'data/cache/main_file_cache.dat2'
+
       - name: Restore Maven repository
-        if: steps.world-cache.outputs.cache-hit != 'true'
+        if: steps.engine-cache.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository
@@ -97,12 +114,13 @@ jobs:
           restore-keys: |
             singleplayer-maven-v2-${{ runner.os }}-
 
-      - name: Prepare and build world bundle on cache miss
-        if: steps.world-cache.outputs.cache-hit != 'true'
+      - name: Prepare and build world engine on cache miss
+        if: steps.engine-cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
-          rm -rf upstream-server build/ci-cache/world
+          rm -rf upstream-server build/ci-cache/world-engine
           cp -a build/ci-cache/upstream-pristine upstream-server
+          printf '%s\n' "$UPSTREAM_COMMIT" > upstream-server-commit.txt
 
           python3 singleplayer/native-refactor/prepare_upstream.py \
             upstream-server/Server \
@@ -118,15 +136,14 @@ jobs:
             | head -n 1)
           test -n "$ENGINE_JAR"
 
-          mkdir -p build/ci-cache/world
-          cp "$ENGINE_JAR" build/ci-cache/world/engine.jar
-          cp singleplayer-generated.conf build/ci-cache/world/world-default.conf
-          cp singleplayer-world-version.txt build/ci-cache/world/world-version.txt
-          (cd upstream-server/Server && zip -qr "$GITHUB_WORKSPACE/build/ci-cache/world/world-data.zip" data)
+          mkdir -p build/ci-cache/world-engine
+          cp "$ENGINE_JAR" build/ci-cache/world-engine/engine.jar
+          cp singleplayer-generated.conf build/ci-cache/world-engine/world-default.conf
+          cp singleplayer-world-version.txt build/ci-cache/world-engine/world-version.txt
 
           python3 - <<'PY'
           import struct, zipfile
-          jar = 'build/ci-cache/world/engine.jar'
+          jar = 'build/ci-cache/world-engine/engine.jar'
           highest = 0
           with zipfile.ZipFile(jar) as z:
               for name in z.namelist():
@@ -142,15 +159,17 @@ jobs:
           print('Highest world-engine classfile version:', highest)
           PY
 
-      - name: Install prepared world bundle
+      - name: Install cached world payload
         run: |
           set -euxo pipefail
           ASSET_DIR=app_pojavlauncher/src/main/assets/singleplayer
           mkdir -p "$ASSET_DIR"
-          for file in engine.jar world-data.zip world-default.conf world-version.txt; do
-            test -s "build/ci-cache/world/$file"
-            cp "build/ci-cache/world/$file" "$ASSET_DIR/$file"
+          for file in engine.jar world-default.conf world-version.txt; do
+            test -s "build/ci-cache/world-engine/$file"
+            cp "build/ci-cache/world-engine/$file" "$ASSET_DIR/$file"
           done
+          test -s build/ci-cache/world-data.zip
+          cp build/ci-cache/world-data.zip "$ASSET_DIR/world-data.zip"
 
       - name: Generate pinned RT4 source overrides
         run: |
