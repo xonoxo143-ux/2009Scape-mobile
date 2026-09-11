@@ -130,6 +130,35 @@ def wrap_scenery_action(
     )
 
 
+def wrap_local_packet(
+    source: str,
+    label: str,
+    indent: int,
+    direct_expression: str,
+    opcode: int,
+    payload_lines: list[str],
+) -> str:
+    """Replace one retained MiniMenu serialization site with a typed local call.
+
+    The historical bytes remain as a non-single-player/failure fallback, but a
+    healthy local game never creates them. Keeping this helper anchored to the
+    exact pinned source lets us remove protocol ceremony in batches without
+    forking the rest of MiniMenu's pathfinding, crosshair, and UI behavior.
+    """
+    prefix = "\t" * indent
+    inner = "\t" * (indent + 1)
+    old = prefix + f"Protocol.outboundBuffer.p1isaac({opcode});\n" + "".join(
+        prefix + line + "\n" for line in payload_lines
+    )
+    new = (
+        prefix + f"if (!{direct_expression}) {{\n"
+        + inner + f"Protocol.outboundBuffer.p1isaac({opcode});\n"
+        + "".join(inner + line + "\n" for line in payload_lines)
+        + prefix + "}\n"
+    )
+    return replace_exact(source, old, new, label)
+
+
 def wrap_continue_option(source: str) -> str:
     old = (
         "\tpublic static void method10(@OriginalArg(0) int arg0, @OriginalArg(2) int arg1) {\n"
@@ -228,6 +257,129 @@ def generate_minimenu(output_root: Path) -> Path:
             "Protocol.outboundBuffer.ip2add(local19 + Camera.originZ);",
         ],
     )
+
+    # Supported player actions no longer need to cross the retained decoder.
+    source = wrap_local_packet(
+        source, "MiniMenu player follow", 4,
+        "LocalClientCommands.playerAction(2, local36)", 71,
+        ["Protocol.outboundBuffer.ip2add(local36);"],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu player option 4", 4,
+        "LocalClientCommands.playerAction(3, local36)", 180,
+        ["Protocol.outboundBuffer.ip2add(local36);"],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu player option 7", 4,
+        "LocalClientCommands.playerAction(6, local36)", 114,
+        ["Protocol.outboundBuffer.ip2add(local36);"],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu player option 8", 4,
+        "LocalClientCommands.playerAction(7, local36)", 175,
+        ["Protocol.outboundBuffer.p2add(local36);"],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu player option 1", 4,
+        "LocalClientCommands.playerAction(0, local36)", 68,
+        ["Protocol.outboundBuffer.ip2add(local36);"],
+    )
+
+    # Ground-item actions keep RT4 pathfinding/crosshair state but enter the
+    # authoritative world as semantic GroundItemAction commands.
+    source = wrap_local_packet(
+        source, "MiniMenu ground item option 1", 3,
+        "LocalClientCommands.groundItemAction(2, local36, Camera.originX + local15, Camera.originZ + local19)",
+        66,
+        [
+            "Protocol.outboundBuffer.ip2(Camera.originX + local15);",
+            "Protocol.outboundBuffer.p2(local36);",
+            "Protocol.outboundBuffer.ip2add(local19 + Camera.originZ);",
+        ],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu ground item option 2", 3,
+        "LocalClientCommands.groundItemAction(3, local36, Camera.originX + local15, Camera.originZ + local19)",
+        33,
+        [
+            "Protocol.outboundBuffer.p2(local36);",
+            "Protocol.outboundBuffer.p2(Camera.originX + local15);",
+            "Protocol.outboundBuffer.ip2(Camera.originZ + local19);",
+        ],
+    )
+
+    # Inventory actions already have a typed ItemAction in the world engine.
+    # local36=item id, local15=slot, local19=component hash at these sites.
+    source = wrap_local_packet(
+        source, "MiniMenu item option 1", 3,
+        "LocalClientCommands.itemAction(0, local36, local15, local19)", 156,
+        [
+            "Protocol.outboundBuffer.ip2add(local15);",
+            "Protocol.outboundBuffer.p2add(local36);",
+            "Protocol.outboundBuffer.ip4(local19);",
+        ],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu item option 2", 3,
+        "LocalClientCommands.itemAction(1, local36, local15, local19)", 55,
+        [
+            "Protocol.outboundBuffer.ip2(local36);",
+            "Protocol.outboundBuffer.p2add(local15);",
+            "Protocol.outboundBuffer.imp4(local19);",
+        ],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu item option 3", 3,
+        "LocalClientCommands.itemAction(2, local36, local15, local19)", 153,
+        [
+            "Protocol.outboundBuffer.ip4(local19);",
+            "Protocol.outboundBuffer.ip2(local15);",
+            "Protocol.outboundBuffer.ip2(local36);",
+        ],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu item option 4", 3,
+        "LocalClientCommands.itemAction(3, local36, local15, local19)", 161,
+        [
+            "Protocol.outboundBuffer.ip4(local19);",
+            "Protocol.outboundBuffer.ip2add(local36);",
+            "Protocol.outboundBuffer.ip2add(local15);",
+        ],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu item option 5", 3,
+        "LocalClientCommands.itemAction(4, local36, local15, local19)", 135,
+        [
+            "Protocol.outboundBuffer.p2add(local36);",
+            "Protocol.outboundBuffer.p2add(local15);",
+            "Protocol.outboundBuffer.mp4(local19);",
+        ],
+    )
+
+    # Examine is pure semantic input. Patch the nested component occurrence
+    # before the ordinary one so the exact-source anchor cannot match the
+    # generated fallback inside the first wrapper.
+    source = wrap_local_packet(
+        source, "MiniMenu component item examine", 4,
+        "LocalClientCommands.itemExamine(local36)", 92,
+        ["Protocol.outboundBuffer.ip2add(local36);"],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu item examine", 3,
+        "LocalClientCommands.itemExamine(local36)", 92,
+        ["Protocol.outboundBuffer.ip2add(local36);"],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu NPC examine", 5,
+        "LocalClientCommands.npcExamine(local884.id)", 72,
+        ["Protocol.outboundBuffer.p2(local884.id);"],
+    )
+    source = wrap_local_packet(
+        source, "MiniMenu scenery examine", 3,
+        "LocalClientCommands.sceneryExamine(local36)", 94,
+        ["Protocol.outboundBuffer.ip2add(local36);"],
+    )
+
     source = wrap_continue_option(source)
 
     destination = output_root / "rt4/MiniMenu.java"
