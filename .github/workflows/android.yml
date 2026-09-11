@@ -173,7 +173,10 @@ jobs:
           rm -rf build/generated-rt4
           python3 singleplayer/native-refactor/prepare_rt4.py build/generated-rt4
           test -f build/generated-rt4/rt4/SignLink.java
+          test -f build/generated-rt4/rt4/MiniMenu.java
           grep -q 'LocalSocketPolicy.openJs5IfRequested' build/generated-rt4/rt4/SignLink.java
+          grep -q 'LocalClientCommands.npcAction(0, local36)' build/generated-rt4/rt4/MiniMenu.java
+          grep -q 'LocalClientCommands.sceneryAction(0,' build/generated-rt4/rt4/MiniMenu.java
 
       - name: Build combined JVM bootstrap
         run: |
@@ -187,10 +190,12 @@ jobs:
             -cp app_pojavlauncher/src/main/assets/rt4.jar \
             -d build/singleplayer-bootstrap \
             singleplayer/inprocess/InProcessBootstrap.java \
+            singleplayer/inprocess/SinglePlayerDebug.java \
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
             "${RT4_PATCHES[@]}" \
-            build/generated-rt4/rt4/SignLink.java
+            build/generated-rt4/rt4/SignLink.java \
+            build/generated-rt4/rt4/MiniMenu.java
           rm -f app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
           jar --create \
             --file app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar \
@@ -199,6 +204,7 @@ jobs:
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar
           for class in \
             singleplayer/InProcessBootstrap.class \
+            singleplayer/SinglePlayerDebug.class \
             singleplayer/MobileGestureBridge.class \
             singleplayer/MobileLifecycleBridge.class \
             rt4/AudioThread.class \
@@ -213,7 +219,8 @@ jobs:
             rt4/LocalJs5Socket.class \
             rt4/LocalSocketPolicy.class \
             rt4/BufferedSocket.class \
-            rt4/SignLink.class; do
+            rt4/SignLink.class \
+            rt4/MiniMenu.class; do
             jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q "$class"
           done
 
@@ -373,6 +380,7 @@ jobs:
           unzip -t out/singleplayer-bootstrap.jar
           for class in \
             singleplayer/InProcessBootstrap.class \
+            singleplayer/SinglePlayerDebug.class \
             singleplayer/MobileGestureBridge.class \
             singleplayer/MobileLifecycleBridge.class \
             rt4/AudioThread.class \
@@ -387,7 +395,8 @@ jobs:
             rt4/LocalJs5Socket.class \
             rt4/LocalSocketPolicy.class \
             rt4/BufferedSocket.class \
-            rt4/SignLink.class; do
+            rt4/SignLink.class \
+            rt4/MiniMenu.class; do
             unzip -l out/singleplayer-bootstrap.jar | grep -q "$class"
           done
 
