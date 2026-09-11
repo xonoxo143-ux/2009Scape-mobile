@@ -8,6 +8,7 @@ on:
       - 'singleplayer/inprocess/InProcessBootstrap.java'
       - 'singleplayer/inprocess/SinglePlayerDebug.java'
       - 'singleplayer/client-patches/rt4/**'
+      - 'singleplayer/native-refactor/prepare_rt4.py'
       - 'scripts/singleplayer/prepare_startup_diagnostics.py'
       - '.github/workflows/publish-debug-bootstrap.yml'
   workflow_dispatch:
@@ -44,6 +45,9 @@ jobs:
             --output-root build/generated-diagnostics
           test -s build/generated-diagnostics/singleplayer/InProcessBootstrap.java
           test -s build/generated-diagnostics/rt4/LocalLoginBridge.java
+          test -s build/generated-rt4/rt4/MiniMenu.java
+          grep -q 'LocalClientCommands.npcAction(0, local36)' build/generated-rt4/rt4/MiniMenu.java
+          grep -q 'LocalClientCommands.sceneryAction(0,' build/generated-rt4/rt4/MiniMenu.java
 
       - name: Compile diagnostic bootstrap
         run: |
@@ -62,7 +66,8 @@ jobs:
             singleplayer/inprocess/MobileLifecycleBridge.java \
             "${RT4_PATCHES[@]}" \
             build/generated-diagnostics/rt4/LocalLoginBridge.java \
-            build/generated-rt4/rt4/SignLink.java
+            build/generated-rt4/rt4/SignLink.java \
+            build/generated-rt4/rt4/MiniMenu.java
           jar --create \
             --file build/singleplayer-bootstrap.jar \
             -C build/diagnostic-bootstrap singleplayer \
@@ -72,6 +77,7 @@ jobs:
           jar tf build/singleplayer-bootstrap.jar | grep -q '^singleplayer/InProcessBootstrap.class$'
           jar tf build/singleplayer-bootstrap.jar | grep -q '^rt4/LocalLoginBridge.class$'
           jar tf build/singleplayer-bootstrap.jar | grep -q '^rt4/Js5CachedResourceProvider.class$'
+          jar tf build/singleplayer-bootstrap.jar | grep -q '^rt4/MiniMenu.class$'
 
       - name: Prepare bootstrap-only manifest update
         env:
@@ -152,3 +158,4 @@ jobs:
           EXPECTED=${ASSET_NAME%%-*}
           ACTUAL=$(sha256sum "build/verify/$ASSET_NAME" | awk '{print $1}')
           test "$EXPECTED" = "$ACTUAL"
+          jar tf "build/verify/$ASSET_NAME" | grep -q '^rt4/MiniMenu.class$'
