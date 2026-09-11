@@ -1,0 +1,151 @@
+name: Publish Startup Diagnostic Payload
+
+on:
+  push:
+    branches:
+      - singleplayer-native-refactor
+    paths:
+      - 'singleplayer/inprocess/SinglePlayerDebug.java'
+      - 'scripts/singleplayer/prepare_startup_diagnostics.py'
+      - '.github/workflows/publish-debug-bootstrap.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: singleplayer-startup-diagnostics
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build and publish diagnostic bootstrap only
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Generate diagnostic sources
+        run: |
+          set -euxo pipefail
+          rm -rf build/generated-rt4 build/generated-diagnostics build/diagnostic-bootstrap
+          python3 singleplayer/native-refactor/prepare_rt4.py build/generated-rt4
+          python3 scripts/singleplayer/prepare_startup_diagnostics.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output-root build/generated-diagnostics
+          test -s build/generated-diagnostics/singleplayer/InProcessBootstrap.java
+          test -s build/generated-diagnostics/rt4/LocalLoginBridge.java
+
+      - name: Compile diagnostic bootstrap
+        run: |
+          set -euxo pipefail
+          mkdir -p build/diagnostic-bootstrap
+          mapfile -t RT4_PATCHES < <(find singleplayer/client-patches/rt4 \
+            -maxdepth 1 -type f -name '*.java' \
+            ! -name 'LocalLoginBridge.java' | sort)
+          test "${#RT4_PATCHES[@]}" -ge 7
+          javac --release 17 \
+            -cp app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/diagnostic-bootstrap \
+            build/generated-diagnostics/singleplayer/InProcessBootstrap.java \
+            singleplayer/inprocess/SinglePlayerDebug.java \
+            singleplayer/inprocess/MobileGestureBridge.java \
+            singleplayer/inprocess/MobileLifecycleBridge.java \
+            "${RT4_PATCHES[@]}" \
+            build/generated-diagnostics/rt4/LocalLoginBridge.java \
+            build/generated-rt4/rt4/SignLink.java
+          jar --create \
+            --file build/singleplayer-bootstrap.jar \
+            -C build/diagnostic-bootstrap singleplayer \
+            -C build/diagnostic-bootstrap rt4
+          test -s build/singleplayer-bootstrap.jar
+          jar tf build/singleplayer-bootstrap.jar | grep -q '^singleplayer/SinglePlayerDebug.class$'
+          jar tf build/singleplayer-bootstrap.jar | grep -q '^singleplayer/InProcessBootstrap.class$'
+          jar tf build/singleplayer-bootstrap.jar | grep -q '^rt4/LocalLoginBridge.class$'
+
+      - name: Prepare bootstrap-only manifest update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          TAG=singleplayer-payload
+          rm -rf build/payload-debug build/current-manifest
+          mkdir -p build/payload-debug build/current-manifest
+          gh release download "$TAG" \
+            --pattern payload-manifest.json \
+            --dir build/current-manifest \
+            --clobber
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil
+
+          jar = pathlib.Path('build/singleplayer-bootstrap.jar')
+          digest = hashlib.sha256(jar.read_bytes()).hexdigest()
+          size = jar.stat().st_size
+          asset_name = f'{digest}-singleplayer-bootstrap.jar'
+          target = pathlib.Path('build/payload-debug') / asset_name
+          shutil.copy2(jar, target)
+
+          manifest_path = pathlib.Path('build/current-manifest/payload-manifest.json')
+          manifest = json.loads(manifest_path.read_text())
+          matches = [entry for entry in manifest['files']
+                     if entry.get('name') == 'singleplayer-bootstrap.jar']
+          if len(matches) != 1:
+              raise SystemExit(f'Expected one bootstrap manifest entry, found {len(matches)}')
+          entry = matches[0]
+          entry['sha256'] = digest
+          entry['size'] = size
+          entry['url'] = (
+              'https://github.com/xonoxo143-ux/2009Scape-mobile/releases/download/'
+              f'singleplayer-payload/{asset_name}'
+          )
+          manifest['version'] = os.environ['GITHUB_SHA']
+          pathlib.Path('build/payload-debug/payload-manifest.json').write_text(
+              json.dumps(manifest, indent=2) + '\n'
+          )
+          pathlib.Path('build/payload-debug/bootstrap-asset-name.txt').write_text(
+              asset_name + '\n'
+          )
+          print('diagnostic bootstrap:', asset_name, size)
+          PY
+
+      - name: Publish bootstrap object then activation manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          TAG=singleplayer-payload
+          ASSET_NAME=$(cat build/payload-debug/bootstrap-asset-name.txt)
+          if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq "$ASSET_NAME"; then
+            echo "Keeping existing content-addressed bootstrap: $ASSET_NAME"
+          else
+            gh release upload "$TAG" "build/payload-debug/$ASSET_NAME"
+          fi
+          # The manifest is the activation pointer and must move last.
+          gh release upload "$TAG" \
+            build/payload-debug/payload-manifest.json --clobber
+
+      - name: Verify published diagnostic payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          TAG=singleplayer-payload
+          ASSET_NAME=$(cat build/payload-debug/bootstrap-asset-name.txt)
+          mkdir -p build/verify
+          gh release download "$TAG" \
+            --pattern payload-manifest.json \
+            --pattern "$ASSET_NAME" \
+            --dir build/verify \
+            --clobber
+          cmp build/payload-debug/payload-manifest.json \
+            build/verify/payload-manifest.json
+          EXPECTED=${ASSET_NAME%%-*}
+          ACTUAL=$(sha256sum "build/verify/$ASSET_NAME" | awk '{print $1}')
+          test "$EXPECTED" = "$ACTUAL"
