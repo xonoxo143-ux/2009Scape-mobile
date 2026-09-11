@@ -29,6 +29,15 @@ public final class Packet extends Buffer {
     private int localPayloadStart = -1;
     private int localOpcode = -1;
 
+    /*
+     * These revision-530 signals are transport/telemetry ceremony with no world
+     * gameplay effect in the retained server. Keep the original RT4 call sites
+     * untouched for now, but deliberately consume the completed packet before
+     * it reaches the compatibility decoder. This makes the removal explicit and
+     * independently observable while larger retained RT4 classes are migrated.
+     */
+    private static final boolean[] localDiscardAnnounced = new boolean[256];
+
     @OriginalMember(owner = "client!i", name = "<init>", descriptor = "(I)V")
     public Packet(@OriginalArg(0) int arg0) {
         super(arg0);
@@ -80,6 +89,29 @@ public final class Packet extends Buffer {
                 && (client.gameState == 25 || client.gameState == 30);
     }
 
+    private static boolean isTransportOnlySinglePlayerSignal(int opcode) {
+        switch (opcode) {
+            case 20:  // map rebuild started; server returns NoProcess
+            case 110: // map rebuild finished; server returns NoProcess
+            case 21:  // camera tracking; retained server handler is intentionally empty
+            case 75:  // mouse-click tracking; retained server handler is intentionally empty
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static void announceDiscard(int opcode, int payloadBytes) {
+        if (opcode < 0 || opcode >= localDiscardAnnounced.length) return;
+        synchronized (localDiscardAnnounced) {
+            if (localDiscardAnnounced[opcode]) return;
+            localDiscardAnnounced[opcode] = true;
+        }
+        System.out.println(
+                "SINGLEPLAYER_LOCAL_PACKET: TRANSPORT_ONLY_REMOVED opcode=" + opcode
+                        + " payloadBytes=" + payloadBytes);
+    }
+
     /**
      * Finish the current retained outbound packet, routing it through the
      * existing 2009Scape decoder in memory when possible. A successful local
@@ -112,6 +144,13 @@ public final class Packet extends Buffer {
         }
 
         byte[] wirePayload = Arrays.copyOfRange(this.data, payloadStart, end);
+
+        if (isTransportOnlySinglePlayerSignal(opcode)) {
+            announceDiscard(opcode, wirePayload.length);
+            this.offset = packetStart;
+            return;
+        }
+
         if (LocalClientCommands.routeEncodedPacket(opcode, wirePayload)) {
             this.offset = packetStart;
         }
