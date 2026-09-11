@@ -108,7 +108,9 @@ jobs:
             'assets/singleplayer/runtime-jre17-version.txt' \
             'assets/plugins/LocalSinglePlayerLogin.zip' \
             'assets/plugins/MobileTouchControls.zip' \
+            'assets/plugins/LoginTimer.zip' \
             -d build/apk-payload
+          unzip -l build/apk-payload/assets/plugins/LoginTimer.zip | grep -q 'LoginTimer/plugin.class'
 
           # Android's java.util.zip.ZipFile rejects duplicate entry names. The
           # shaded RT4 JAR historically contains duplicate META-INF entries even
@@ -116,7 +118,7 @@ jobs:
           # the first occurrence of each path; gameplay classes are unchanged.
           python3 - <<'PY'
           from pathlib import Path
-          from zipfile import ZipFile, ZIP_DEFLATED
+          from zipfile import ZipFile
           import os
 
           jar = Path('build/apk-payload/assets/rt4.jar')
@@ -150,6 +152,7 @@ jobs:
               "https://github.com/${GITHUB_REPOSITORY}/releases/download/singleplayer-payload"
           cp "$APK" build/payload-release/2009scape-mobile.apk
           test -s build/payload-release/payload-manifest.json
+          grep -q '"LoginTimer.zip"' build/payload-release/payload-manifest.json
 
       - name: Publish stable payload channel
         env:
@@ -199,3 +202,4 @@ jobs:
             build/published/payload-manifest.json
           cmp build/payload-release/2009scape-mobile.apk \
             build/published/2009scape-mobile.apk
+          grep -q '"LoginTimer.zip"' build/published/payload-manifest.json
