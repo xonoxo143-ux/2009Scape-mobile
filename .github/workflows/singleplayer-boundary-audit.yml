@@ -1,0 +1,62 @@
+name: Single-Player Boundary Audit
+
+on:
+  push:
+    branches:
+      - singleplayer-native-refactor
+    paths:
+      - 'singleplayer/native-refactor/**'
+      - 'singleplayer/server-patches/**'
+      - 'singleplayer/inprocess/**'
+      - 'singleplayer/client-patches/rt4/**'
+      - 'singleplayer/default.conf'
+      - 'scripts/singleplayer/audit_multiplayer_boundaries.py'
+      - '.github/workflows/singleplayer-boundary-audit.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: singleplayer-boundary-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Fetch pinned 2009Scape source
+        run: |
+          set -euxo pipefail
+          UPSTREAM_COMMIT=9f634148bab11fad821943864cb71d7c6af98da4
+          git init upstream-server
+          git -C upstream-server remote add origin https://gitlab.com/2009scape/2009scape.git
+          git -C upstream-server fetch --depth 1 origin "$UPSTREAM_COMMIT"
+          git -C upstream-server checkout --detach FETCH_HEAD
+          test "$(git -C upstream-server rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+          printf '%s\n' "$UPSTREAM_COMMIT" > upstream-server-commit.txt
+
+      - name: Apply single-player world overlay
+        run: |
+          set -euxo pipefail
+          python3 singleplayer/native-refactor/prepare_upstream.py \
+            upstream-server/Server \
+            --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Audit multiplayer boundaries
+        run: |
+          set -euxo pipefail
+          python3 scripts/singleplayer/audit_multiplayer_boundaries.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --server-root upstream-server/Server
+
+      - name: Summary
+        run: |
+          echo 'No external gameplay listener: verified'
+          echo 'Local world ticks independent of internet reachability: verified'
+          echo 'Local session excluded from remote ping timeout: verified'
+          echo 'Connectivity watchdog excluded from single-player: verified'
+          echo 'Internal debug output kept out of player chat: verified'
+          echo 'Appearance identity invariant: verified'
+          echo 'Transport-only client signals classified: verified'
