@@ -85,6 +85,12 @@ def main() -> None:
 
     require(auth, "LocalFileStorageProvider",
             "single-player auth selects local persistent account store")
+    require(auth, 'return File(data, "localaccounts")',
+            "local account metadata stays outside ServerStore namespace")
+    require(auth, "MIGRATED_LEGACY_DIRECTORY",
+            "broken ServerStore account directory is self-migrated")
+    reject(auth, 'LocalFileStorageProvider(File(base, "accounts"))',
+            "account provider cannot recreate ServerStore directory collision")
     require(account_store, "StandardCopyOption.ATOMIC_MOVE",
             "account metadata writes use atomic replacement when available")
     require(account_store, "Repository.getPlayerByName",
