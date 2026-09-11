@@ -17,22 +17,39 @@ import rt4.LocalLeagueUiBridge;
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
         description = "Displays authoritative League points and the local League menu.",
-        version = 1.1
+        version = 1.2
 )
 public final class plugin extends Plugin {
     private static final int REPORT_ABUSE_COMPONENT = 49217565; // 751:29
 
+    private Component reportButton;
     private int lastPoints = Integer.MIN_VALUE;
     private JagString lastText = JagString.of("0");
+    private boolean announcedBinding;
 
     @Override
     public void Init() {
+        reportButton = null;
         lastPoints = Integer.MIN_VALUE;
         lastText = JagString.of("0");
+        announcedBinding = false;
     }
 
     @Override
     public void Draw(long timeDelta) {
+        // The stock LoginTimer plugin also keeps a reference to this component
+        // from ComponentDraw and mutates its text from Draw. Doing the mutation
+        // here is important because the normal interface renderer may rewrite the
+        // stock "Report Abuse" text during the component draw itself.
+        if (reportButton != null && reportButton.id == REPORT_ABUSE_COMPONENT) {
+            int points = LocalLeagueBridge.points();
+            if (points != lastPoints) {
+                lastPoints = points;
+                lastText = JagString.of(Integer.toString(points));
+            }
+            reportButton.text = lastText;
+        }
+
         LocalLeagueUiBridge.draw();
     }
 
@@ -40,17 +57,27 @@ public final class plugin extends Plugin {
     public void ComponentDraw(int componentIndex, Component component, int screenX, int screenY) {
         if (component == null || component.id != REPORT_ABUSE_COMPONENT) return;
 
+        reportButton = component;
         LocalLeagueUiBridge.noteLauncherButton(
                 screenX,
                 screenY,
                 component.width,
                 component.height);
 
-        int points = LocalLeagueBridge.points();
-        if (points != lastPoints) {
-            lastPoints = points;
-            lastText = JagString.of(Integer.toString(points));
+        if (!announcedBinding) {
+            announcedBinding = true;
+            System.out.println(
+                    "SINGLEPLAYER_LEAGUE_UI: LAUNCHER_BOUND x=" + screenX
+                            + " y=" + screenY
+                            + " w=" + component.width
+                            + " h=" + component.height);
         }
-        component.text = lastText;
+    }
+
+    @Override
+    public void ProcessCommand(String commandStr, String[] args) {
+        if (commandStr != null && commandStr.equalsIgnoreCase("::league")) {
+            LocalLeagueUiBridge.open();
+        }
     }
 }
