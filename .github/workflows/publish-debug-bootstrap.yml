@@ -6,6 +6,7 @@ on:
       - singleplayer-native-refactor
     paths:
       - 'singleplayer/inprocess/SinglePlayerDebug.java'
+      - 'singleplayer/client-patches/rt4/**'
       - 'scripts/singleplayer/prepare_startup_diagnostics.py'
       - '.github/workflows/publish-debug-bootstrap.yml'
   workflow_dispatch:
@@ -69,6 +70,7 @@ jobs:
           jar tf build/singleplayer-bootstrap.jar | grep -q '^singleplayer/SinglePlayerDebug.class$'
           jar tf build/singleplayer-bootstrap.jar | grep -q '^singleplayer/InProcessBootstrap.class$'
           jar tf build/singleplayer-bootstrap.jar | grep -q '^rt4/LocalLoginBridge.class$'
+          jar tf build/singleplayer-bootstrap.jar | grep -q '^rt4/Js5CachedResourceProvider.class$'
 
       - name: Prepare bootstrap-only manifest update
         env:
