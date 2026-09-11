@@ -205,6 +205,7 @@ jobs:
             -C build/singleplayer-bootstrap singleplayer \
             -C build/singleplayer-bootstrap rt4
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q '^rt4/MiniMenu.class$'
+          jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q '^rt4/LocalLeagueBridge.class$'
 
       - name: Restore ARM64 Java 17 runtime download
         id: jre-cache
@@ -264,7 +265,7 @@ jobs:
         run: |
           set -euxo pipefail
           rm -rf build/singleplayer-plugin
-          mkdir -p build/singleplayer-plugin/login build/singleplayer-plugin/touch
+          mkdir -p build/singleplayer-plugin/login build/singleplayer-plugin/touch build/singleplayer-plugin/league
 
           cp singleplayer/client-plugin/LocalSinglePlayerLogin.java build/singleplayer-plugin/login/plugin.java
           javac --release 8 \
@@ -280,14 +281,27 @@ jobs:
             build/singleplayer-plugin/touch/plugin.java
           rm -f build/singleplayer-plugin/touch/plugin.java
 
+          cp singleplayer/client-plugin/LeaguePointCounter.java build/singleplayer-plugin/league/plugin.java
+          javac --release 8 \
+            -cp "app_pojavlauncher/src/main/assets/rt4.jar:app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar" \
+            -d build/singleplayer-plugin/league \
+            build/singleplayer-plugin/league/plugin.java
+          rm -f build/singleplayer-plugin/league/plugin.java
+          test -f build/singleplayer-plugin/league/LoginTimer/plugin.class
+
           rm -f app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip \
-            app_pojavlauncher/src/main/assets/plugins/MobileTouchControls.zip
+            app_pojavlauncher/src/main/assets/plugins/MobileTouchControls.zip \
+            app_pojavlauncher/src/main/assets/plugins/LoginTimer.zip
           (cd build/singleplayer-plugin/login && zip -qr \
             "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/LocalSinglePlayerLogin.zip" \
             LocalSinglePlayerLogin)
           (cd build/singleplayer-plugin/touch && zip -qr \
             "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/MobileTouchControls.zip" \
             MobileTouchControls)
+          (cd build/singleplayer-plugin/league && zip -qr \
+            "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/plugins/LoginTimer.zip" \
+            LoginTimer)
+          unzip -l app_pojavlauncher/src/main/assets/plugins/LoginTimer.zip | grep -q 'LoginTimer/plugin.class'
 
       - name: Remove unused legacy Java 8 runtime assets
         run: rm -rf app_pojavlauncher/src/main/assets/components/jre
@@ -309,6 +323,7 @@ jobs:
           grep -q 'assets/singleplayer/world-data.zip' out/apk-contents.txt
           grep -q 'assets/singleplayer/runtime-jre17.tar.xz' out/apk-contents.txt
           grep -q 'assets/singleplayer-bootstrap.jar' out/apk-contents.txt
+          grep -q 'assets/plugins/LoginTimer.zip' out/apk-contents.txt
           grep -q 'lib/arm64-v8a/libsqlitejdbc.so' out/apk-contents.txt
 
       - name: Upload phone APK immediately
