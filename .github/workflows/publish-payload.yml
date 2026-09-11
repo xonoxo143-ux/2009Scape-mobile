@@ -1,0 +1,134 @@
+name: Publish Single-Player Payload
+
+on:
+  push:
+    branches:
+      - singleplayer-native-refactor
+    paths:
+      - '.github/fast-build-trigger'
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: singleplayer-payload-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish verified update payload
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact build commit
+        uses: actions/checkout@v5
+
+      - name: Wait for matching fast APK build
+        id: fast-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN_ID=""
+          for attempt in $(seq 1 100); do
+            RUN_JSON=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/android-fast.yml/runs?head_sha=${GITHUB_SHA}&per_page=20")
+            RUN_ID=$(jq -r '.workflow_runs[0].id // empty' <<<"$RUN_JSON")
+            STATUS=$(jq -r '.workflow_runs[0].status // empty' <<<"$RUN_JSON")
+            CONCLUSION=$(jq -r '.workflow_runs[0].conclusion // empty' <<<"$RUN_JSON")
+            if [ -n "$RUN_ID" ] && [ "$STATUS" = "completed" ]; then
+              if [ "$CONCLUSION" != "success" ]; then
+                echo "Fast APK build $RUN_ID finished with $CONCLUSION" >&2
+                exit 1
+              fi
+              echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for the matching fast APK build." >&2
+          exit 1
+
+      - name: Download matching APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: 2009scape-mobile-fast
+          path: build/fast-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.fast-run.outputs.run_id }}
+
+      - name: Extract updateable payload from APK
+        run: |
+          set -euxo pipefail
+          APK=build/fast-artifact/2009scape-mobile.apk
+          test -s "$APK"
+          rm -rf build/apk-payload build/payload-release
+          mkdir -p build/apk-payload build/payload-release
+          unzip -q "$APK" \
+            'assets/rt4.jar' \
+            'assets/singleplayer-bootstrap.jar' \
+            'assets/singleplayer/engine.jar' \
+            'assets/singleplayer/world-default.conf' \
+            'assets/singleplayer/world-data.zip' \
+            'assets/singleplayer/runtime-jre17.tar.xz' \
+            'assets/singleplayer/runtime-jre17-version.txt' \
+            'assets/plugins/LocalSinglePlayerLogin.zip' \
+            'assets/plugins/MobileTouchControls.zip' \
+            -d build/apk-payload
+          python3 scripts/singleplayer/generate_payload_manifest.py \
+            --assets-root build/apk-payload/assets \
+            --version "$GITHUB_SHA" \
+            --output build/payload-release/payload-manifest.json \
+            --publish-dir build/payload-release \
+            --release-base \
+              "https://github.com/${GITHUB_REPOSITORY}/releases/download/singleplayer-payload"
+          cp "$APK" build/payload-release/2009scape-mobile.apk
+          test -s build/payload-release/payload-manifest.json
+
+      - name: Publish stable payload channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          TAG=singleplayer-payload
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "2009Scape Single-Player Payload" \
+              --notes "Stable update channel for the single-player Android shell." \
+              --prerelease
+          fi
+
+          EXISTING=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          for file in build/payload-release/[0-9a-f]*-*; do
+            name=$(basename "$file")
+            if grep -Fxq "$name" <<<"$EXISTING"; then
+              echo "Keeping existing content-addressed asset: $name"
+            else
+              gh release upload "$TAG" "$file"
+            fi
+          done
+
+          # Publish the APK before the manifest. The manifest is the activation pointer,
+          # so it is deliberately the last release asset replaced.
+          gh release upload "$TAG" \
+            build/payload-release/2009scape-mobile.apk --clobber
+          gh release upload "$TAG" \
+            build/payload-release/payload-manifest.json --clobber
+
+      - name: Verify published manifest and APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          TAG=singleplayer-payload
+          gh release download "$TAG" \
+            --pattern payload-manifest.json \
+            --pattern 2009scape-mobile.apk \
+            --dir build/published \
+            --clobber
+          cmp build/payload-release/payload-manifest.json \
+            build/published/payload-manifest.json
+          cmp build/payload-release/2009scape-mobile.apk \
+            build/published/2009scape-mobile.apk

@@ -21,21 +21,35 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 
-/**
- * Applies the updateable single-player payload over the APK's bundled fallback.
- *
- * The APK remains the stable Android shell. Game/client/world/runtime files may be
- * replaced from the verified GitHub payload directory without reinstalling the APK.
- */
+/** Applies a verified, content-addressed game payload over the APK fallback. */
 public final class SinglePlayerPayload {
-    public static final String BUNDLED_MANIFEST_ASSET = "singleplayer/payload-manifest.json";
+    public static final int MANIFEST_SCHEMA = 1;
     public static final String ACTIVE_MANIFEST = "active-manifest.json";
+    public static final String OBJECTS_DIRECTORY = "objects";
+    public static final String RELEASE_PREFIX =
+            "https://github.com/xonoxo143-ux/2009Scape-mobile/releases/download/" +
+            "singleplayer-payload/";
+
+    private static final String[] REQUIRED_FILES = new String[] {
+            "rt4.jar",
+            "singleplayer-bootstrap.jar",
+            "engine.jar",
+            "world-default.conf",
+            "world-data.zip",
+            "runtime-jre17.tar.xz",
+            "runtime-jre17-version.txt",
+            "LocalSinglePlayerLogin.zip",
+            "MobileTouchControls.zip"
+    };
 
     private static final String[] PRESERVED_WORLD_KEYS = new String[] {
             "enable_bots",
@@ -46,9 +60,19 @@ public final class SinglePlayerPayload {
 
     private SinglePlayerPayload() {}
 
+    public static String[] requiredFiles() {
+        return REQUIRED_FILES.clone();
+    }
+
     public static File getPayloadDirectory(Context context) {
         Tools.initContextConstants(context.getApplicationContext());
         File dir = new File(Tools.DIR_DATA, "singleplayer-payload");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    public static File getObjectsDirectory(Context context) {
+        File dir = new File(getPayloadDirectory(context), OBJECTS_DIRECTORY);
         if (!dir.exists()) dir.mkdirs();
         return dir;
     }
@@ -57,77 +81,227 @@ public final class SinglePlayerPayload {
         return new File(getPayloadDirectory(context), ACTIVE_MANIFEST);
     }
 
-    public static JSONObject getInstalledManifest(Context context) throws Exception {
-        File active = getActiveManifestFile(context);
-        if (active.isFile()) {
-            return new JSONObject(readFileText(active));
-        }
-        return new JSONObject(readAssetText(context, BUNDLED_MANIFEST_ASSET));
+    public static File getObjectFile(Context context, String sha256) {
+        return new File(getObjectsDirectory(context), sha256.toLowerCase(Locale.US));
     }
 
-    public static String getBundledManifestText(Context context) throws IOException {
-        return readAssetText(context, BUNDLED_MANIFEST_ASSET);
+    public static boolean hasActivePayload(Context context) {
+        File manifestFile = getActiveManifestFile(context);
+        if (!manifestFile.isFile()) return false;
+        try {
+            JSONObject manifest = new JSONObject(readFileText(manifestFile));
+            validateManifest(manifest, false);
+            for (String name : REQUIRED_FILES) {
+                JSONObject entry = requireEntry(manifest, name);
+                File object = getObjectFile(context, entry.getString("sha256"));
+                if (!object.isFile() || object.length() != entry.getLong("size")) return false;
+            }
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    public static JSONObject getActiveManifest(Context context) throws IOException {
+        File active = getActiveManifestFile(context);
+        if (!active.isFile()) return null;
+        try {
+            JSONObject manifest = new JSONObject(readFileText(active));
+            validateManifest(manifest, false);
+            return manifest;
+        } catch (Exception e) {
+            throw new IOException("Active single-player payload manifest is invalid.", e);
+        }
+    }
+
+    public static String activeVersion(Context context) {
+        try {
+            JSONObject manifest = getActiveManifest(context);
+            return manifest == null ? "" : manifest.optString("version", "");
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    public static void validateManifest(JSONObject manifest, boolean requireRemoteUrls)
+            throws IOException {
+        try {
+            if (manifest.getInt("schema") != MANIFEST_SCHEMA) {
+                throw new IOException("Unsupported payload manifest schema.");
+            }
+            if (manifest.getString("version").trim().isEmpty()) {
+                throw new IOException("Payload version is missing.");
+            }
+            JSONArray files = manifest.getJSONArray("files");
+            Set<String> seen = new HashSet<>();
+            for (int i = 0; i < files.length(); i++) {
+                JSONObject file = files.getJSONObject(i);
+                String name = file.getString("name");
+                if (!seen.add(name)) throw new IOException("Duplicate payload entry: " + name);
+                String sha = file.getString("sha256").toLowerCase(Locale.US);
+                if (!sha.matches("[0-9a-f]{64}")) {
+                    throw new IOException("Invalid SHA-256 for " + name);
+                }
+                if (file.getLong("size") <= 0) {
+                    throw new IOException("Invalid payload size for " + name);
+                }
+                if (requireRemoteUrls) {
+                    String url = file.getString("url");
+                    if (!url.startsWith(RELEASE_PREFIX)) {
+                        throw new IOException("Untrusted payload URL for " + name);
+                    }
+                }
+            }
+            for (String required : REQUIRED_FILES) {
+                if (!seen.contains(required)) {
+                    throw new IOException("Payload manifest is missing " + required);
+                }
+            }
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Payload manifest is malformed.", e);
+        }
+    }
+
+    public static JSONObject requireEntry(JSONObject manifest, String name) throws IOException {
+        try {
+            JSONArray files = manifest.getJSONArray("files");
+            for (int i = 0; i < files.length(); i++) {
+                JSONObject file = files.getJSONObject(i);
+                if (name.equals(file.getString("name"))) return file;
+            }
+        } catch (Exception e) {
+            throw new IOException("Payload manifest entry is invalid: " + name, e);
+        }
+        throw new IOException("Payload manifest is missing " + name);
+    }
+
+    public static void validatePayloadObject(String name, File file) throws IOException {
+        if (!file.isFile() || file.length() <= 0) {
+            throw new IOException("Payload object is missing: " + name);
+        }
+        if ("runtime-jre17.tar.xz".equals(name)) return;
+        if ("runtime-jre17-version.txt".equals(name)
+                || "world-default.conf".equals(name)) {
+            if (readFileText(file).trim().isEmpty()) {
+                throw new IOException("Payload text file is empty: " + name);
+            }
+            return;
+        }
+        try (ZipFile zip = new ZipFile(file)) {
+            if ("rt4.jar".equals(name) && zip.getEntry("rt4/client.class") == null) {
+                throw new IOException("Payload RT4 JAR is invalid.");
+            }
+            if ("singleplayer-bootstrap.jar".equals(name)
+                    && zip.getEntry("singleplayer/InProcessBootstrap.class") == null) {
+                throw new IOException("Payload bootstrap JAR is invalid.");
+            }
+            if ("world-data.zip".equals(name)
+                    && zip.getEntry("data/cache/main_file_cache.dat2") == null) {
+                throw new IOException("Payload world data archive is invalid.");
+            }
+        }
+    }
+
+    public static synchronized void writeActiveManifestAtomically(
+            Context context, String manifestText) throws IOException {
+        File target = getActiveManifestFile(context);
+        File temp = new File(target.getAbsolutePath() + ".new");
+        writeFileText(temp, manifestText);
+        try {
+            JSONObject parsed = new JSONObject(readFileText(temp));
+            validateManifest(parsed, false);
+        } catch (Exception e) {
+            temp.delete();
+            if (e instanceof IOException) throw (IOException) e;
+            throw new IOException("Could not validate staged payload manifest.", e);
+        }
+        if (target.exists() && !target.delete()) {
+            temp.delete();
+            throw new IOException("Could not replace active payload manifest.");
+        }
+        if (!temp.renameTo(target)) {
+            temp.delete();
+            throw new IOException("Could not activate payload manifest.");
+        }
     }
 
     public static synchronized void apply(Context context) throws IOException {
         Context app = context.getApplicationContext();
         Tools.initContextConstants(app);
+        JSONObject manifest = getActiveManifest(app);
+        if (manifest == null) return;
 
-        JSONObject manifest;
-        boolean externalActive = getActiveManifestFile(app).isFile();
-        try {
-            manifest = getInstalledManifest(app);
-        } catch (Exception e) {
-            throw new IOException("Single-player payload manifest is invalid.", e);
-        }
+        for (String name : REQUIRED_FILES) ensureObjectPresent(app, manifest, name);
 
         syncRegularFile(app, manifest, "rt4.jar", new File(Tools.DIR_DATA, "rt4.jar"));
         syncRegularFile(app, manifest, "singleplayer-bootstrap.jar",
                 new File(Tools.DIR_DATA, "singleplayer-bootstrap.jar"));
         syncRegularFile(app, manifest, "engine.jar",
                 new File(SinglePlayerManager.getWorldRoot(app), "engine.jar"));
-
-        applyWorldConfig(app, manifest, externalActive);
-        applyWorldData(app, manifest, externalActive);
-        applyRuntime(app, manifest, externalActive);
+        applyWorldConfig(app, manifest);
+        applyWorldData(app, manifest);
+        applyRuntime(app, manifest);
         applyPlugin(app, manifest, "LocalSinglePlayerLogin.zip", "LocalSinglePlayerLogin");
         applyPlugin(app, manifest, "MobileTouchControls.zip", "MobileTouchControls");
     }
 
+    public static synchronized void restoreBundledBaseline(Context context) throws IOException {
+        Context app = context.getApplicationContext();
+        Tools.initContextConstants(app);
+        copyAssetAtomically(app, "rt4.jar", new File(Tools.DIR_DATA, "rt4.jar"));
+        copyAssetAtomically(app, "singleplayer-bootstrap.jar",
+                new File(Tools.DIR_DATA, "singleplayer-bootstrap.jar"));
+
+        // Force the baseline installers to run, but tell the world installer this
+        // is an update so player/account/economy data remains untouched.
+        try {
+            File runtimeHome = MultiRTUtils.getRuntimeHome(SinglePlayerManager.RUNTIME_NAME);
+            writeFileText(new File(runtimeHome, ".singleplayer-runtime-version"),
+                    "payload-rollback\n");
+        } catch (Exception ignored) {}
+        File worldRoot = SinglePlayerManager.getWorldRoot(app);
+        writeFileText(new File(worldRoot, ".singleplayer-world-version"),
+                "payload-rollback\n");
+        SinglePlayerManager.ensureRuntimeInstalled(app);
+        SinglePlayerManager.ensureWorldInstalled(app);
+        restoreBundledPlugin(app, "LocalSinglePlayerLogin.zip", "LocalSinglePlayerLogin");
+        restoreBundledPlugin(app, "MobileTouchControls.zip", "MobileTouchControls");
+        clearApplyMarkers(app);
+    }
+
+    private static void ensureObjectPresent(Context context, JSONObject manifest, String name)
+            throws IOException {
+        JSONObject entry = requireEntry(manifest, name);
+        File object = getObjectFile(context, entry.optString("sha256"));
+        if (!object.isFile() || object.length() != entry.optLong("size", -1L)) {
+            throw new IOException("Active payload object is unavailable: " + name);
+        }
+    }
+
     private static void syncRegularFile(Context context, JSONObject manifest,
                                         String name, File target) throws IOException {
-        String expected = shaFor(manifest, name);
-        if (expected.length() == 0) return;
+        JSONObject entry = requireEntry(manifest, name);
+        String expected = entry.optString("sha256").toLowerCase(Locale.US);
         if (target.isFile() && expected.equalsIgnoreCase(sha256(target))) return;
-
-        try (InputStream input = openSource(context, name)) {
-            copyStreamAtomically(input, target);
-        }
-        String installed = sha256(target);
-        if (!expected.equalsIgnoreCase(installed)) {
+        copyFileAtomically(getObjectFile(context, expected), target);
+        if (!expected.equalsIgnoreCase(sha256(target))) {
             throw new IOException("Installed " + name + " did not match the payload manifest.");
         }
     }
 
-    private static void applyWorldConfig(Context context, JSONObject manifest,
-                                         boolean externalActive) throws IOException {
-        String expected = shaFor(manifest, "world-default.conf");
-        if (expected.length() == 0) return;
+    private static void applyWorldConfig(Context context, JSONObject manifest) throws IOException {
+        JSONObject entry = requireEntry(manifest, "world-default.conf");
+        String expected = entry.optString("sha256");
         File marker = new File(getPayloadDirectory(context), ".world-config-sha256");
-        if (!externalActive && !marker.isFile()) {
-            writeFileText(marker, expected + "\n");
-            return;
-        }
-        String applied = marker.isFile() ? readFileText(marker).trim() : "";
-        if (expected.equalsIgnoreCase(applied)) return;
-
         File localConf = new File(SinglePlayerManager.getWorldRoot(context), "worldprops/local.conf");
+        String applied = marker.isFile() ? readFileText(marker).trim() : "";
+        if (expected.equalsIgnoreCase(applied) && localConf.isFile()) return;
+
         String previous = localConf.isFile() ? readFileText(localConf) : "";
-        String refreshed;
-        try (InputStream input = openSource(context, "world-default.conf")) {
-            refreshed = readStreamText(input);
-        }
-        if (previous.length() > 0) {
+        String refreshed = readFileText(getObjectFile(context, expected));
+        if (!previous.isEmpty()) {
             for (String key : PRESERVED_WORLD_KEYS) {
                 Boolean value = readBooleanSetting(previous, key);
                 if (value != null) refreshed = writeBooleanSetting(refreshed, key, value);
@@ -138,39 +312,37 @@ public final class SinglePlayerPayload {
         writeFileText(marker, expected + "\n");
     }
 
-    private static void applyWorldData(Context context, JSONObject manifest,
-                                       boolean externalActive) throws IOException {
-        String expected = shaFor(manifest, "world-data.zip");
-        if (expected.length() == 0) return;
+    private static void applyWorldData(Context context, JSONObject manifest) throws IOException {
+        JSONObject entry = requireEntry(manifest, "world-data.zip");
+        String expected = entry.optString("sha256");
         File marker = new File(getPayloadDirectory(context), ".world-data-sha256");
-        if (!externalActive && !marker.isFile()) {
-            writeFileText(marker, expected + "\n");
-            return;
-        }
+        File root = SinglePlayerManager.getWorldRoot(context);
+        File cache = new File(root, "data/cache/main_file_cache.dat2");
         String applied = marker.isFile() ? readFileText(marker).trim() : "";
-        if (expected.equalsIgnoreCase(applied)) return;
+        if (expected.equalsIgnoreCase(applied) && cache.isFile() && cache.length() > 0) return;
 
-        try (InputStream input = openSource(context, "world-data.zip")) {
-            extractWorldData(input, SinglePlayerManager.getWorldRoot(context));
+        try (InputStream input = new BufferedInputStream(
+                new FileInputStream(getObjectFile(context, expected)))) {
+            extractWorldData(input, root);
         }
         writeFileText(marker, expected + "\n");
     }
 
-    private static void applyRuntime(Context context, JSONObject manifest,
-                                     boolean externalActive) throws IOException {
-        String archiveSha = shaFor(manifest, "runtime-jre17.tar.xz");
-        String versionSha = shaFor(manifest, "runtime-jre17-version.txt");
-        if (archiveSha.length() == 0 || versionSha.length() == 0) return;
+    private static void applyRuntime(Context context, JSONObject manifest) throws IOException {
+        String archiveSha = requireEntry(manifest, "runtime-jre17.tar.xz").optString("sha256");
+        String versionSha = requireEntry(manifest, "runtime-jre17-version.txt").optString("sha256");
         String fingerprint = archiveSha + ":" + versionSha;
         File marker = new File(getPayloadDirectory(context), ".runtime-sha256");
-        if (!externalActive && !marker.isFile()) {
-            writeFileText(marker, fingerprint + "\n");
-            return;
-        }
         String applied = marker.isFile() ? readFileText(marker).trim() : "";
-        if (fingerprint.equalsIgnoreCase(applied)) return;
+        if (fingerprint.equalsIgnoreCase(applied)) {
+            try {
+                SinglePlayerManager.getRuntime();
+                return;
+            } catch (Exception ignored) {}
+        }
 
-        try (InputStream runtime = openSource(context, "runtime-jre17.tar.xz")) {
+        try (InputStream runtime = new BufferedInputStream(
+                new FileInputStream(getObjectFile(context, archiveSha)))) {
             MultiRTUtils.installRuntimeNamed(Tools.NATIVE_LIB_DIR, runtime,
                     SinglePlayerManager.RUNTIME_NAME);
             MultiRTUtils.postPrepare(SinglePlayerManager.RUNTIME_NAME);
@@ -178,68 +350,64 @@ public final class SinglePlayerPayload {
             ProgressLayout.clearProgress(ProgressLayout.UNPACK_RUNTIME);
         }
 
-        Runtime installed = MultiRTUtils.forceReread(SinglePlayerManager.RUNTIME_NAME);
+        Runtime installed = SinglePlayerManager.getRuntime();
         if (installed == null || installed.javaVersion < 17) {
             throw new IOException("Updated Java runtime is invalid.");
         }
         writeFileText(marker, fingerprint + "\n");
+
+        // Keep the APK baseline guard satisfied. The external payload remains the
+        // final authority and is re-applied by SinglePlayerManager.prepare().
+        File runtimeHome = MultiRTUtils.getRuntimeHome(SinglePlayerManager.RUNTIME_NAME);
+        String bundledVersion = readAssetText(context,
+                "singleplayer/runtime-jre17-version.txt").trim();
+        writeFileText(new File(runtimeHome, ".singleplayer-runtime-version"),
+                bundledVersion + "\n");
     }
 
     private static void applyPlugin(Context context, JSONObject manifest,
                                     String zipName, String directoryName) throws IOException {
-        String expected = shaFor(manifest, zipName);
-        if (expected.length() == 0) return;
-        File payloadDir = getPayloadDirectory(context);
-        File marker = new File(payloadDir, ".plugin-" + directoryName + ".sha256");
+        String expected = requireEntry(manifest, zipName).optString("sha256");
+        File marker = new File(getPayloadDirectory(context),
+                ".plugin-" + directoryName + ".sha256");
         File pluginDir = new File(Tools.DIR_DATA + "/plugins/", directoryName);
         String applied = marker.isFile() ? readFileText(marker).trim() : "";
         if (expected.equalsIgnoreCase(applied) && pluginDir.isDirectory()) return;
-
-        File materialized = new File(payloadDir, ".apply-" + zipName);
-        try (InputStream input = openSource(context, zipName);
-             OutputStream output = new BufferedOutputStream(new FileOutputStream(materialized))) {
-            copy(input, output);
-        }
-        if (!expected.equalsIgnoreCase(sha256(materialized))) {
-            materialized.delete();
-            throw new IOException("Plugin payload failed validation: " + zipName);
-        }
 
         deleteRecursively(pluginDir);
         deleteRecursively(new File(Tools.DIR_DATA + "/disabledPlugins/", directoryName));
         File plugins = new File(Tools.DIR_DATA, "plugins");
         plugins.mkdirs();
-        Tools.ZipTool.unzip(materialized, plugins);
-        materialized.delete();
+        Tools.ZipTool.unzip(getObjectFile(context, expected), plugins);
         writeFileText(marker, expected + "\n");
     }
 
-    private static InputStream openSource(Context context, String name) throws IOException {
-        File external = new File(getPayloadDirectory(context), name);
-        if (external.isFile()) return new BufferedInputStream(new FileInputStream(external));
-        return new BufferedInputStream(context.getAssets().open(assetPath(name)));
-    }
-
-    private static String assetPath(String name) {
-        if ("rt4.jar".equals(name) || "singleplayer-bootstrap.jar".equals(name)) return name;
-        if (name.endsWith(".zip") && (name.startsWith("LocalSinglePlayer")
-                || name.startsWith("MobileTouchControls"))) return "plugins/" + name;
-        return "singleplayer/" + name;
-    }
-
-    private static String shaFor(JSONObject manifest, String name) throws IOException {
-        try {
-            JSONArray files = manifest.getJSONArray("files");
-            for (int i = 0; i < files.length(); i++) {
-                JSONObject file = files.getJSONObject(i);
-                if (name.equals(file.getString("name"))) {
-                    return file.getString("sha256").toLowerCase(Locale.US);
-                }
-            }
-            return "";
-        } catch (Exception e) {
-            throw new IOException("Payload manifest entry is invalid: " + name, e);
+    private static void clearApplyMarkers(Context context) {
+        File dir = getPayloadDirectory(context);
+        String[] names = new String[] {
+                ".world-config-sha256",
+                ".world-data-sha256",
+                ".runtime-sha256",
+                ".plugin-LocalSinglePlayerLogin.sha256",
+                ".plugin-MobileTouchControls.sha256"
+        };
+        for (String name : names) {
+            File marker = new File(dir, name);
+            if (marker.exists()) marker.delete();
         }
+    }
+
+    private static void restoreBundledPlugin(Context context, String zipName, String directoryName)
+            throws IOException {
+        File pluginDir = new File(Tools.DIR_DATA + "/plugins/", directoryName);
+        deleteRecursively(pluginDir);
+        deleteRecursively(new File(Tools.DIR_DATA + "/disabledPlugins/", directoryName));
+        File temp = new File(getPayloadDirectory(context), ".baseline-" + zipName);
+        copyAssetAtomically(context, "plugins/" + zipName, temp);
+        File plugins = new File(Tools.DIR_DATA, "plugins");
+        plugins.mkdirs();
+        Tools.ZipTool.unzip(temp, plugins);
+        temp.delete();
     }
 
     private static void extractWorldData(InputStream input, File root) throws IOException {
@@ -281,27 +449,41 @@ public final class SinglePlayerPayload {
     }
 
     private static Boolean readBooleanSetting(String text, String key) {
-        Pattern pattern = Pattern.compile("(?m)^\\s*" + Pattern.quote(key)
-                + "\\s*=\\s*(true|false)\\s*(?:#.*)?$");
-        Matcher matcher = pattern.matcher(text);
+        Matcher matcher = Pattern.compile("(?m)^\\s*" + Pattern.quote(key)
+                + "\\s*=\\s*(true|false)\\s*(?:#.*)?$").matcher(text);
         return matcher.find() ? Boolean.valueOf(matcher.group(1)) : null;
     }
 
     private static String writeBooleanSetting(String text, String key, boolean value) {
-        Pattern pattern = Pattern.compile("(?m)^(\\s*" + Pattern.quote(key)
-                + "\\s*=\\s*)(true|false)(.*)$");
-        Matcher matcher = pattern.matcher(text);
+        Matcher matcher = Pattern.compile("(?m)^(\\s*" + Pattern.quote(key)
+                + "\\s*=\\s*)(true|false)(.*)$").matcher(text);
         if (!matcher.find()) return text;
         return matcher.replaceFirst(Matcher.quoteReplacement(
                 matcher.group(1) + value + matcher.group(3)));
+    }
+
+    private static void copyAssetAtomically(Context context, String asset, File target)
+            throws IOException {
+        try (InputStream input = new BufferedInputStream(context.getAssets().open(asset))) {
+            copyStreamAtomically(input, target);
+        }
+    }
+
+    private static void copyFileAtomically(File source, File target) throws IOException {
+        try (InputStream input = new BufferedInputStream(new FileInputStream(source))) {
+            copyStreamAtomically(input, target);
+        }
     }
 
     private static void copyStreamAtomically(InputStream input, File target) throws IOException {
         File parent = target.getParentFile();
         if (parent != null) parent.mkdirs();
         File temp = new File(target.getAbsolutePath() + ".payload-tmp");
-        try (OutputStream output = new BufferedOutputStream(new FileOutputStream(temp))) {
+        try (FileOutputStream raw = new FileOutputStream(temp);
+             OutputStream output = new BufferedOutputStream(raw)) {
             copy(input, output);
+            output.flush();
+            raw.getFD().sync();
         }
         if (target.exists() && !target.delete()) {
             temp.delete();
@@ -319,7 +501,7 @@ public final class SinglePlayerPayload {
         while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
     }
 
-    private static String sha256(File file) throws IOException {
+    public static String sha256(File file) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
@@ -328,7 +510,9 @@ public final class SinglePlayerPayload {
                 while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
             }
             StringBuilder out = new StringBuilder(64);
-            for (byte value : digest.digest()) out.append(String.format(Locale.US, "%02x", value & 0xff));
+            for (byte value : digest.digest()) {
+                out.append(String.format(Locale.US, "%02x", value & 0xff));
+            }
             return out.toString();
         } catch (Exception e) {
             if (e instanceof IOException) throw (IOException) e;
@@ -351,7 +535,7 @@ public final class SinglePlayerPayload {
         }
     }
 
-    private static String readFileText(File file) throws IOException {
+    public static String readFileText(File file) throws IOException {
         try (InputStream input = new FileInputStream(file)) {
             return readStreamText(input);
         }
@@ -365,11 +549,14 @@ public final class SinglePlayerPayload {
         return new String(output.toByteArray(), StandardCharsets.UTF_8);
     }
 
-    private static void writeFileText(File file, String text) throws IOException {
+    public static void writeFileText(File file, String text) throws IOException {
         File parent = file.getParentFile();
         if (parent != null) parent.mkdirs();
-        try (OutputStream output = new FileOutputStream(file)) {
+        try (FileOutputStream raw = new FileOutputStream(file);
+             OutputStream output = new BufferedOutputStream(raw)) {
             output.write(text.getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            raw.getFD().sync();
         }
     }
 }

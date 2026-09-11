@@ -4,9 +4,9 @@ import android.content.Context;
 
 import org.json.JSONObject;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,21 +14,15 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Locale;
-import java.util.zip.ZipFile;
 
-/**
- * Updates the RT4 client JAR from the tested single-player branch.
- *
- * The launcher APK is intentionally kept separate from game/client updates:
- * changing rt4.jar in GitHub is enough to publish a new client build.
- */
+/** Downloads and atomically activates the complete single-player game payload. */
 public final class GitHubClientUpdater {
-    private static final String METADATA_URL =
-            "https://api.github.com/repos/xonoxo143-ux/2009Scape-mobile/contents/" +
-            "app_pojavlauncher/src/main/assets/rt4.jar?ref=singleplayer-apk-build";
-    private static final String USER_AGENT = "2009Scape-Mobile-RT4-Updater";
+    private static final String MANIFEST_URL =
+            SinglePlayerPayload.RELEASE_PREFIX + "payload-manifest.json";
+    private static final String USER_AGENT = "2009Scape-Mobile-Payload-Updater";
     private static final int CONNECT_TIMEOUT_MS = 15000;
-    private static final int READ_TIMEOUT_MS = 60000;
+    private static final int READ_TIMEOUT_MS = 120000;
+    private static final int MAX_MANIFEST_BYTES = 256 * 1024;
 
     private GitHubClientUpdater() {}
 
@@ -46,117 +40,128 @@ public final class GitHubClientUpdater {
             } catch (Exception e) {
                 listener.onError(e);
             }
-        }, "rt4-github-updater").start();
+        }, "singleplayer-github-updater").start();
     }
 
     private static void performUpdate(Context context, Listener listener) throws Exception {
         listener.onStatus("Checking GitHub...");
-        JSONObject metadata = fetchMetadata();
+        String remoteText = fetchText(MANIFEST_URL, MAX_MANIFEST_BYTES);
+        JSONObject remote = new JSONObject(remoteText);
+        SinglePlayerPayload.validateManifest(remote, true);
+        String remoteVersion = remote.getString("version").trim();
+        String previousText = null;
+        File activeManifest = SinglePlayerPayload.getActiveManifestFile(context);
+        if (activeManifest.isFile()) {
+            previousText = SinglePlayerPayload.readFileText(activeManifest);
+        }
+        String previousVersion = SinglePlayerPayload.activeVersion(context);
 
-        String remoteSha = metadata.getString("sha").toLowerCase(Locale.US);
-        long remoteSize = metadata.getLong("size");
-        String downloadUrl = metadata.getString("download_url");
-        if (downloadUrl == null || downloadUrl.length() == 0 || "null".equals(downloadUrl)) {
-            throw new IOException("GitHub did not provide an RT4 download URL.");
+        long totalBytes = 0L;
+        for (String name : SinglePlayerPayload.requiredFiles()) {
+            JSONObject entry = SinglePlayerPayload.requireEntry(remote, name);
+            File object = SinglePlayerPayload.getObjectFile(context, entry.getString("sha256"));
+            if (!isVerifiedObject(name, object, entry)) totalBytes += entry.getLong("size");
         }
 
-        File dataDir;
-        if (Tools.DIR_DATA != null) {
-            dataDir = new File(Tools.DIR_DATA);
-        } else {
-            File filesDir = context.getFilesDir();
-            dataDir = filesDir.getParentFile() != null ? filesDir.getParentFile() : filesDir;
-        }
-        if (!dataDir.exists() && !dataDir.mkdirs()) {
-            throw new IOException("Could not create the launcher data directory.");
+        long completedBytes = 0L;
+        boolean downloadedAny = false;
+        for (String name : SinglePlayerPayload.requiredFiles()) {
+            JSONObject entry = SinglePlayerPayload.requireEntry(remote, name);
+            File object = SinglePlayerPayload.getObjectFile(context, entry.getString("sha256"));
+            if (isVerifiedObject(name, object, entry)) continue;
+            downloadedAny = true;
+            completedBytes = downloadObject(name, entry, object,
+                    completedBytes, totalBytes, listener);
         }
 
-        File target = new File(dataDir, "rt4.jar");
-        if (target.isFile()) {
-            String localSha = gitBlobSha1(target);
-            if (remoteSha.equalsIgnoreCase(localSha)) {
-                listener.onFinished(false, remoteSha);
-                return;
+        // One final validation pass before the tiny active-manifest pointer moves.
+        for (String name : SinglePlayerPayload.requiredFiles()) {
+            JSONObject entry = SinglePlayerPayload.requireEntry(remote, name);
+            File object = SinglePlayerPayload.getObjectFile(context, entry.getString("sha256"));
+            if (!isVerifiedObject(name, object, entry)) {
+                throw new IOException("Payload verification failed before activation: " + name);
             }
         }
 
-        File temp = new File(dataDir, "rt4.jar.download");
-        File previous = new File(dataDir, "rt4.jar.previous");
+        boolean versionChanged = !remoteVersion.equals(previousVersion);
+        listener.onStatus("Installing game update...");
+        try {
+            SinglePlayerPayload.writeActiveManifestAtomically(context, remote.toString(2) + "\n");
+            SinglePlayerPayload.apply(context);
+        } catch (Exception applyFailure) {
+            rollback(context, previousText);
+            throw new IOException("Game update could not be activated; previous files were restored.",
+                    applyFailure);
+        }
+
+        listener.onFinished(versionChanged || downloadedAny, remoteVersion);
+    }
+
+    private static void rollback(Context context, String previousText) {
+        try {
+            if (previousText != null) {
+                SinglePlayerPayload.writeActiveManifestAtomically(context, previousText);
+                SinglePlayerPayload.apply(context);
+            } else {
+                File active = SinglePlayerPayload.getActiveManifestFile(context);
+                if (active.exists()) active.delete();
+                SinglePlayerPayload.restoreBundledBaseline(context);
+            }
+        } catch (Exception ignored) {
+            // Original activation error is more useful to the user. The APK still
+            // contains a complete fallback and startup preparation can repair it.
+        }
+    }
+
+    private static boolean isVerifiedObject(String name, File object, JSONObject entry) {
+        try {
+            if (!object.isFile() || object.length() != entry.getLong("size")) return false;
+            if (!entry.getString("sha256").equalsIgnoreCase(SinglePlayerPayload.sha256(object))) {
+                return false;
+            }
+            SinglePlayerPayload.validatePayloadObject(name, object);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static long downloadObject(String name, JSONObject entry, File destination,
+                                       long completedBefore, long totalBytes, Listener listener)
+            throws Exception {
+        long expectedSize = entry.getLong("size");
+        String expectedSha = entry.getString("sha256").toLowerCase(Locale.US);
+        String url = entry.getString("url");
+        File parent = destination.getParentFile();
+        if (parent != null) parent.mkdirs();
+        File temp = new File(parent, ".download-" + expectedSha);
         if (temp.exists() && !temp.delete()) {
-            throw new IOException("Could not clear the previous partial download.");
+            throw new IOException("Could not clear an old partial payload download.");
         }
 
-        listener.onStatus("Downloading RT4 update...");
-        downloadAndVerify(downloadUrl, temp, remoteSize, remoteSha, listener);
-
-        listener.onStatus("Validating RT4 client...");
-        validateRt4Jar(temp);
-
-        if (previous.exists() && !previous.delete()) {
-            throw new IOException("Could not replace the previous-client backup.");
-        }
-        if (target.exists() && !target.renameTo(previous)) {
-            throw new IOException("Could not back up the installed RT4 client.");
-        }
-
-        if (!temp.renameTo(target)) {
-            if (previous.exists()) {
-                // Best-effort rollback.
-                previous.renameTo(target);
-            }
-            throw new IOException("Could not install the downloaded RT4 client.");
-        }
-
-        listener.onFinished(true, remoteSha);
-    }
-
-    private static JSONObject fetchMetadata() throws Exception {
-        HttpURLConnection connection = openConnection(METADATA_URL);
-        connection.setRequestProperty("Accept", "application/vnd.github+json");
-        connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
-        int responseCode = connection.getResponseCode();
-        if (responseCode != HttpURLConnection.HTTP_OK) {
-            String detail = readResponseMessage(connection);
-            connection.disconnect();
-            throw new IOException("GitHub metadata request failed (HTTP " + responseCode + ")" + detail);
-        }
-
-        String json;
-        try (InputStream input = connection.getInputStream()) {
-            json = readText(input);
-        } finally {
-            connection.disconnect();
-        }
-        return new JSONObject(json);
-    }
-
-    private static void downloadAndVerify(String url, File destination, long expectedSize,
-                                          String expectedGitSha, Listener listener) throws Exception {
         HttpURLConnection connection = openConnection(url);
         int responseCode = connection.getResponseCode();
         if (responseCode != HttpURLConnection.HTTP_OK) {
             String detail = readResponseMessage(connection);
             connection.disconnect();
-            throw new IOException("RT4 download failed (HTTP " + responseCode + ")" + detail);
+            throw new IOException("Payload download failed for " + name + " (HTTP "
+                    + responseCode + ")" + detail);
         }
 
-        MessageDigest digest = MessageDigest.getInstance("SHA-1");
-        digest.update(("blob " + expectedSize + "\0").getBytes("UTF-8"));
-        long copied = 0;
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        long copied = 0L;
         long nextProgress = 1024L * 1024L;
-
-        try (InputStream input = connection.getInputStream();
-             FileOutputStream output = new FileOutputStream(destination)) {
+        try (InputStream input = new BufferedInputStream(connection.getInputStream());
+             FileOutputStream output = new FileOutputStream(temp)) {
             byte[] buffer = new byte[64 * 1024];
             int count;
             while ((count = input.read(buffer)) != -1) {
                 output.write(buffer, 0, count);
                 digest.update(buffer, 0, count);
                 copied += count;
-                if (copied >= nextProgress && expectedSize > 0) {
-                    int percent = (int) Math.min(100, (copied * 100L) / expectedSize);
-                    listener.onStatus("Downloading RT4 update... " + percent + "%");
-                    nextProgress = copied + (1024L * 1024L);
+                if (copied >= nextProgress) {
+                    reportProgress(completedBefore + copied, totalBytes, listener);
+                    nextProgress = copied + 1024L * 1024L;
                 }
             }
             output.getFD().sync();
@@ -165,41 +170,69 @@ public final class GitHubClientUpdater {
         }
 
         if (copied != expectedSize) {
-            destination.delete();
-            throw new IOException("RT4 download was incomplete: expected " + expectedSize +
-                    " bytes, received " + copied + ".");
+            temp.delete();
+            throw new IOException("Incomplete payload download for " + name + ": expected "
+                    + expectedSize + " bytes, received " + copied + ".");
         }
+        String actualSha = toHex(digest.digest());
+        if (!expectedSha.equalsIgnoreCase(actualSha)) {
+            temp.delete();
+            throw new IOException("SHA-256 mismatch for " + name + ".");
+        }
+        SinglePlayerPayload.validatePayloadObject(name, temp);
 
-        String actualGitSha = toHex(digest.digest());
-        if (!expectedGitSha.equalsIgnoreCase(actualGitSha)) {
-            destination.delete();
-            throw new IOException("RT4 download checksum did not match GitHub.");
+        if (destination.exists() && !destination.delete()) {
+            temp.delete();
+            throw new IOException("Could not replace cached payload object for " + name + ".");
         }
+        if (!temp.renameTo(destination)) {
+            temp.delete();
+            throw new IOException("Could not store payload object for " + name + ".");
+        }
+        reportProgress(completedBefore + copied, totalBytes, listener);
+        return completedBefore + copied;
     }
 
-    private static String gitBlobSha1(File file) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-1");
-        digest.update(("blob " + file.length() + "\0").getBytes("UTF-8"));
-        try (FileInputStream input = new FileInputStream(file)) {
-            byte[] buffer = new byte[64 * 1024];
+    private static void reportProgress(long completed, long total, Listener listener) {
+        if (total <= 0) {
+            listener.onStatus("Downloading game update...");
+            return;
+        }
+        int percent = (int) Math.min(100L, (completed * 100L) / total);
+        listener.onStatus("Downloading game update... " + percent + "%");
+    }
+
+    private static String fetchText(String address, int maximumBytes) throws IOException {
+        HttpURLConnection connection = openConnection(address);
+        int responseCode = connection.getResponseCode();
+        if (responseCode != HttpURLConnection.HTTP_OK) {
+            String detail = readResponseMessage(connection);
+            connection.disconnect();
+            throw new IOException("GitHub payload manifest request failed (HTTP "
+                    + responseCode + ")" + detail);
+        }
+        try (InputStream input = connection.getInputStream()) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
             int count;
             while ((count = input.read(buffer)) != -1) {
-                digest.update(buffer, 0, count);
+                if (output.size() + count > maximumBytes) {
+                    throw new IOException("GitHub payload manifest was unexpectedly large.");
+                }
+                output.write(buffer, 0, count);
             }
-        }
-        return toHex(digest.digest());
-    }
-
-    private static void validateRt4Jar(File jar) throws IOException {
-        try (ZipFile zip = new ZipFile(jar)) {
-            if (zip.getEntry("rt4/client.class") == null) {
-                throw new IOException("Downloaded JAR is not an RT4 mobile client.");
-            }
+            return output.toString("UTF-8");
+        } finally {
+            connection.disconnect();
         }
     }
 
     private static HttpURLConnection openConnection(String address) throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
+        URL url = new URL(address);
+        if (!"https".equalsIgnoreCase(url.getProtocol())) {
+            throw new IOException("Refusing non-HTTPS payload URL.");
+        }
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(READ_TIMEOUT_MS);
         connection.setInstanceFollowRedirects(true);
@@ -212,22 +245,17 @@ public final class GitHubClientUpdater {
         try {
             InputStream error = connection.getErrorStream();
             if (error == null) return "";
-            String message = readText(error).trim();
-            if (message.length() > 240) message = message.substring(0, 240);
-            return message.length() == 0 ? "" : ": " + message;
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = error.read(buffer)) != -1 && output.size() < 240) {
+                output.write(buffer, 0, Math.min(count, 240 - output.size()));
+            }
+            String message = output.toString("UTF-8").trim();
+            return message.isEmpty() ? "" : ": " + message;
         } catch (Exception ignored) {
             return "";
         }
-    }
-
-    private static String readText(InputStream input) throws IOException {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        int count;
-        while ((count = input.read(buffer)) != -1) {
-            output.write(buffer, 0, count);
-        }
-        return output.toString("UTF-8");
     }
 
     private static String toHex(byte[] bytes) {
