@@ -24,13 +24,7 @@ import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-/**
- * Installs and prepares the self-contained single-player runtime.
- *
- * RT4 and the 2009Scape world engine share one Java 17 VM. The world engine
- * still speaks the stock loopback protocol so the RT4 client does not need a
- * networking rewrite, but there is no separate Android service or server JVM.
- */
+/** Installs the bundled single-player baseline, then applies any verified GitHub payload. */
 public final class SinglePlayerManager {
     public static final String RUNTIME_NAME = "SinglePlayer17";
 
@@ -39,7 +33,6 @@ public final class SinglePlayerManager {
     private static final String RUNTIME_VERSION_ASSET = ASSET_ROOT + "runtime-jre17-version.txt";
     private static final String RUNTIME_VERSION_MARKER = ".singleplayer-runtime-version";
     private static final String WORLD_VERSION_MARKER = ".singleplayer-world-version";
-
     private static final String PREFS = "singleplayer";
     private static final String PROFILE_KEY = "profile_name";
     private static final String DEFAULT_PROFILE = "Player";
@@ -50,32 +43,27 @@ public final class SinglePlayerManager {
         Context app = context.getApplicationContext();
         ensureRuntimeInstalled(app);
         ensureWorldInstalled(app);
+        // This is deliberately last: APK assets are the safe baseline; a verified
+        // GitHub payload overlays them and therefore survives future app launches.
+        SinglePlayerPayload.apply(app);
         writeLocalClientConfig(app);
         writeProfileFile(app, getProfileName(app));
     }
 
     public static synchronized void ensureRuntimeInstalled(Context context) throws IOException {
         Tools.initContextConstants(context.getApplicationContext());
-
         String packagedVersion = readAssetText(context, RUNTIME_VERSION_ASSET).trim();
         File runtimeHome = new File(Tools.MULTIRT_HOME, RUNTIME_NAME);
         File versionMarker = new File(runtimeHome, RUNTIME_VERSION_MARKER);
         String installedVersion = versionMarker.isFile() ? readFileText(versionMarker).trim() : "";
-
-        if (packagedVersion.equals(installedVersion) && isRuntimeUsable()) {
-            return;
-        }
+        if (packagedVersion.equals(installedVersion) && isRuntimeUsable()) return;
 
         try (InputStream runtime = context.getAssets().open(RUNTIME_ASSET)) {
             MultiRTUtils.installRuntimeNamed(Tools.NATIVE_LIB_DIR, runtime, RUNTIME_NAME);
-            // The old dedicated server runtime was headless. The shared runtime now
-            // also hosts RT4/Caciocavallo, so finish Pojav's AWT/freetype preparation.
             MultiRTUtils.postPrepare(RUNTIME_NAME);
         } finally {
-            // MultiRTUtils clears this on success, but guarantee release on any extraction error.
             ProgressLayout.clearProgress(ProgressLayout.UNPACK_RUNTIME);
         }
-
         Runtime installed = MultiRTUtils.forceReread(RUNTIME_NAME);
         validateRuntime(installed);
         writeFileText(versionMarker, packagedVersion + "\n");
@@ -105,24 +93,20 @@ public final class SinglePlayerManager {
         if (runtime == null || runtime.versionString == null || runtime.javaVersion < 17) {
             throw new IOException("Single-player Java 17 runtime is missing or invalid.");
         }
-
         int expectedArch = Architecture.getDeviceArchitecture();
         int runtimeArch = Architecture.archAsInt(runtime.arch);
         if (runtimeArch != expectedArch) {
             throw new IOException("Single-player runtime architecture " + runtime.arch
                     + " does not match this device.");
         }
-
         File runtimeHome;
         try {
             runtimeHome = MultiRTUtils.getRuntimeHome(runtime.name);
         } catch (RuntimeException e) {
             throw new IOException("Single-player runtime home is broken.", e);
         }
-
-        File release = new File(runtimeHome, "release");
-        File jvm = new File(runtimeHome, "lib/server/libjvm.so");
-        if (!release.isFile() || !jvm.isFile()) {
+        if (!new File(runtimeHome, "release").isFile()
+                || !new File(runtimeHome, "lib/server/libjvm.so").isFile()) {
             throw new IOException("Single-player runtime is incomplete: " + runtimeHome);
         }
     }
@@ -153,10 +137,8 @@ public final class SinglePlayerManager {
             String previous = readFileText(localConf);
             String refreshed = readAssetText(context, ASSET_ROOT + "world-default.conf");
             String[] preservedKeys = new String[] {
-                    "enable_bots",
-                    "bots_influence_ge_price",
-                    "wild_pvp_enabled",
-                    "enable_castle_wars"
+                    "enable_bots", "bots_influence_ge_price",
+                    "wild_pvp_enabled", "enable_castle_wars"
             };
             for (String key : preservedKeys) {
                 Boolean value = readBooleanSetting(previous, key);
@@ -189,13 +171,10 @@ public final class SinglePlayerManager {
                     zip.closeEntry();
                     continue;
                 }
-
                 File out = new File(root, name);
-                String canonical = out.getCanonicalPath();
-                if (!canonical.startsWith(rootPath)) {
+                if (!out.getCanonicalPath().startsWith(rootPath)) {
                     throw new IOException("Unsafe path in world data archive: " + name);
                 }
-
                 if (entry.isDirectory()) {
                     out.mkdirs();
                 } else {
@@ -203,9 +182,7 @@ public final class SinglePlayerManager {
                     if (parent != null) parent.mkdirs();
                     try (OutputStream os = new BufferedOutputStream(new FileOutputStream(out))) {
                         int read;
-                        while ((read = zip.read(buffer)) != -1) {
-                            os.write(buffer, 0, read);
-                        }
+                        while ((read = zip.read(buffer)) != -1) os.write(buffer, 0, read);
                     }
                 }
                 zip.closeEntry();
@@ -223,16 +200,13 @@ public final class SinglePlayerManager {
 
     public static String getProfileName(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        String name = prefs.getString(PROFILE_KEY, DEFAULT_PROFILE);
-        return sanitizeProfileName(name);
+        return sanitizeProfileName(prefs.getString(PROFILE_KEY, DEFAULT_PROFILE));
     }
 
     public static void setProfileName(Context context, String name) {
         String clean = sanitizeProfileName(name);
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putString(PROFILE_KEY, clean)
-                .apply();
+                .edit().putString(PROFILE_KEY, clean).apply();
         try {
             writeProfileFile(context, clean);
         } catch (IOException ignored) {}
@@ -247,8 +221,8 @@ public final class SinglePlayerManager {
     }
 
     private static void writeProfileFile(Context context, String name) throws IOException {
-        File file = new File(Tools.DIR_DATA, "singleplayer-profile.txt");
-        writeFileText(file, sanitizeProfileName(name) + "\n");
+        writeFileText(new File(Tools.DIR_DATA, "singleplayer-profile.txt"),
+                sanitizeProfileName(name) + "\n");
     }
 
     private static void writeLocalClientConfig(Context context) throws IOException {
@@ -266,16 +240,14 @@ public final class SinglePlayerManager {
     }
 
     private static Boolean readBooleanSetting(String text, String key) {
-        Pattern pattern = Pattern.compile("(?m)^\\s*" + Pattern.quote(key)
-                + "\\s*=\\s*(true|false)\\s*(?:#.*)?$");
-        Matcher matcher = pattern.matcher(text);
+        Matcher matcher = Pattern.compile("(?m)^\\s*" + Pattern.quote(key)
+                + "\\s*=\\s*(true|false)\\s*(?:#.*)?$").matcher(text);
         return matcher.find() ? Boolean.valueOf(matcher.group(1)) : null;
     }
 
     private static String writeBooleanSetting(String text, String key, boolean value) {
-        Pattern pattern = Pattern.compile("(?m)^(\\s*" + Pattern.quote(key)
-                + "\\s*=\\s*)(true|false)(.*)$");
-        Matcher matcher = pattern.matcher(text);
+        Matcher matcher = Pattern.compile("(?m)^(\\s*" + Pattern.quote(key)
+                + "\\s*=\\s*)(true|false)(.*)$").matcher(text);
         if (!matcher.find()) return text;
         return matcher.replaceFirst(Matcher.quoteReplacement(
                 matcher.group(1) + value + matcher.group(3)));
@@ -285,22 +257,16 @@ public final class SinglePlayerManager {
         File parent = destination.getParentFile();
         if (parent != null) parent.mkdirs();
         File temp = new File(destination.getAbsolutePath() + ".tmp");
-
         try (InputStream in = context.getAssets().open(asset);
              OutputStream out = new BufferedOutputStream(new FileOutputStream(temp))) {
             byte[] buffer = new byte[64 * 1024];
             int read;
-            while ((read = in.read(buffer)) != -1) {
-                out.write(buffer, 0, read);
-            }
+            while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
         }
-
         if (destination.exists() && !destination.delete()) {
             throw new IOException("Could not replace " + destination);
         }
-        if (!temp.renameTo(destination)) {
-            throw new IOException("Could not install " + destination);
-        }
+        if (!temp.renameTo(destination)) throw new IOException("Could not install " + destination);
     }
 
     private static String readAssetText(Context context, String asset) throws IOException {
