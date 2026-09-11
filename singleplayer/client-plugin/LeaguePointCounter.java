@@ -5,19 +5,19 @@ import plugin.annotations.PluginMeta;
 import rt4.Component;
 import rt4.JagString;
 import rt4.LocalLeagueBridge;
+import rt4.LocalLeagueUiBridge;
 
 /**
- * Reuses the stock Report Abuse button as a live League-point display.
+ * Reuses the stock Report Abuse button as a live League-point display and
+ * launcher for the local League menu.
  *
- * The component remains visually native to RT4. League state stays authoritative
- * in the retained world and is exposed read-only through LocalLeagueBridge.
- * Click behavior is intentionally left separate so the future League menu can be
- * wired without coupling presentation text to a client-side state mutation.
+ * League state remains authoritative in the retained world. This plugin only
+ * renders the point total and the RT4-side presentation surface.
  */
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
-        description = "Displays authoritative League points on the stock Report Abuse button.",
-        version = 1.0
+        description = "Displays authoritative League points and the local League menu.",
+        version = 1.1
 )
 public final class plugin extends Plugin {
     private static final int REPORT_ABUSE_COMPONENT = 49217565; // 751:29
@@ -32,8 +32,19 @@ public final class plugin extends Plugin {
     }
 
     @Override
+    public void Draw(long timeDelta) {
+        LocalLeagueUiBridge.draw();
+    }
+
+    @Override
     public void ComponentDraw(int componentIndex, Component component, int screenX, int screenY) {
         if (component == null || component.id != REPORT_ABUSE_COMPONENT) return;
+
+        LocalLeagueUiBridge.noteLauncherButton(
+                screenX,
+                screenY,
+                component.width,
+                component.height);
 
         int points = LocalLeagueBridge.points();
         if (points != lastPoints) {
