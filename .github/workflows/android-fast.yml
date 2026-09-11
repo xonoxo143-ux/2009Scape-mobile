@@ -189,6 +189,7 @@ jobs:
             -cp app_pojavlauncher/src/main/assets/rt4.jar \
             -d build/singleplayer-bootstrap \
             singleplayer/inprocess/InProcessBootstrap.java \
+            singleplayer/inprocess/SinglePlayerDebug.java \
             singleplayer/inprocess/MobileGestureBridge.java \
             singleplayer/inprocess/MobileLifecycleBridge.java \
             "${RT4_PATCHES[@]}" \
