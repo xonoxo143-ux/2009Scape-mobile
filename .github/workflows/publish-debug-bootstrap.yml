@@ -5,6 +5,7 @@ on:
     branches:
       - singleplayer-native-refactor
     paths:
+      - 'singleplayer/inprocess/InProcessBootstrap.java'
       - 'singleplayer/inprocess/SinglePlayerDebug.java'
       - 'singleplayer/client-patches/rt4/**'
       - 'scripts/singleplayer/prepare_startup_diagnostics.py'
