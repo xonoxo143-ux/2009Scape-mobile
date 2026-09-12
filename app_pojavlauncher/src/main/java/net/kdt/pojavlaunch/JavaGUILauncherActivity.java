@@ -6,6 +6,7 @@ import android.content.ClipboardManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
@@ -37,6 +38,7 @@ public class JavaGUILauncherActivity extends BaseActivity {
     private static final int CHAT_KEYBOARD_TOP_FROM_BOTTOM = 55;
     private static final int CHAT_KEYBOARD_BOTTOM_FROM_BOTTOM = 25;
     private static final long EXIT_BACK_WINDOW_MS = 1500L;
+    private static final long STARTUP_STALL_LOG_MS = 45000L;
 
     private AWTCanvasView mTextureView;
     private LoggerView mLoggerView;
@@ -49,6 +51,9 @@ public class JavaGUILauncherActivity extends BaseActivity {
     private Runnable mSinglePlayerLoadingPoll;
     private File mSinglePlayerStageFile;
     private File mSinglePlayerReadyFile;
+    private String mLastSinglePlayerStage = "";
+    private long mSinglePlayerLoadingStartedMs;
+    private boolean mSinglePlayerStallLogged;
 
     private long mLastBackPressMs;
 
@@ -79,6 +84,7 @@ public class JavaGUILauncherActivity extends BaseActivity {
                 throw new IOException("Failed to create a new log file");
             }
             Logger.begin(latestLogFile.getAbsolutePath());
+            Logger.appendToLog("SINGLEPLAYER_STARTUP: BOOTSTRAP");
         } catch (IOException e) {
             Tools.showError(this, e, true);
         }
@@ -97,29 +103,45 @@ public class JavaGUILauncherActivity extends BaseActivity {
                 new TouchInputController(mTextureView, this::onClientTap);
         mTextureView.setOnTouchListener(mTouchInputController);
 
-        installBackHandling();
+        /*
+         * Startup ordering is intentional:
+         *   1. Read Android's display geometry synchronously.
+         *   2. Freeze one logical RT4/Cacio viewport for this process.
+         *   3. Apply that frozen size to the TextureView.
+         *   4. Start the JVM immediately, as the known-good launcher did.
+         *
+         * Surface/layout callbacks must never decide when the game starts or
+         * mutate the framebuffer after Cacio/RT4 have consumed its dimensions.
+         */
+        DisplayMetrics viewportMetrics = Tools.getDisplayMetrics(this);
+        AWTCanvasView.freezeLogicalViewport(
+                viewportMetrics.widthPixels,
+                viewportMetrics.heightPixels);
+        mTextureView.applyFrozenViewport();
+        Logger.appendToLog(
+                "SINGLEPLAYER_STARTUP: VIEWPORT_FROZEN "
+                        + AWTCanvasView.AWT_CANVAS_WIDTH
+                        + "x"
+                        + AWTCanvasView.AWT_CANVAS_HEIGHT
+                        + " source="
+                        + viewportMetrics.widthPixels
+                        + "x"
+                        + viewportMetrics.heightPixels);
 
-        // Let Android finish measuring the game surface, then make the Cacio AWT
-        // screen and RT4's GLFW canvas agree on that same logical widescreen
-        // viewport before the child JVM starts.
-        mTextureView.post(() -> {
-            mTextureView.configureForCurrentView();
-            Logger.appendToLog(
-                    "SINGLEPLAYER_UI: LOGICAL_VIEWPORT "
-                            + AWTCanvasView.AWT_CANVAS_WIDTH
-                            + "x"
-                            + AWTCanvasView.AWT_CANVAS_HEIGHT);
-            launchCombinedRuntime();
-        });
+        installBackHandling();
+        launchCombinedRuntime();
     }
 
     private void launchCombinedRuntime() {
         try {
             final Runtime runtime = SinglePlayerManager.getRuntime();
+            Logger.appendToLog("SINGLEPLAYER_STARTUP: RUNTIME_THREAD_CREATED");
 
             new Thread(() -> {
                 try {
+                    Logger.appendToLog("SINGLEPLAYER_STARTUP: JVM_STARTING");
                     final int exit = launchJavaRuntime(runtime, "");
+                    Logger.appendToLog("SINGLEPLAYER_STARTUP: JVM_EXIT code=" + exit);
                     if (exit != 0) {
                         return;
                     }
@@ -188,6 +210,9 @@ public class JavaGUILauncherActivity extends BaseActivity {
     private void startSinglePlayerLoadingPoll() {
         mSinglePlayerLoadingOverlay.setVisibility(View.VISIBLE);
         mSinglePlayerLoadingStatus.setText("Starting single-player...");
+        mSinglePlayerLoadingStartedMs = android.os.SystemClock.elapsedRealtime();
+        mSinglePlayerStallLogged = false;
+        mLastSinglePlayerStage = "";
 
         mSinglePlayerLoadingPoll =
                 new Runnable() {
@@ -200,12 +225,30 @@ public class JavaGUILauncherActivity extends BaseActivity {
                         String stage = readSinglePlayerStage();
                         if (stage.length() > 0) {
                             mSinglePlayerLoadingStatus.setText(stage);
+                            if (!stage.equals(mLastSinglePlayerStage)) {
+                                mLastSinglePlayerStage = stage;
+                                Logger.appendToLog(
+                                        "SINGLEPLAYER_STARTUP: STAGE " + stage);
+                            }
                         }
 
                         if (mSinglePlayerReadyFile.isFile()) {
                             mSinglePlayerLoadingOverlay.setVisibility(View.GONE);
-                            Logger.appendToLog("SINGLEPLAYER_UI: GAME_VISIBLE");
+                            Logger.appendToLog("SINGLEPLAYER_STARTUP: GAME_VISIBLE");
                             return;
+                        }
+
+                        long elapsed = android.os.SystemClock.elapsedRealtime()
+                                - mSinglePlayerLoadingStartedMs;
+                        if (!mSinglePlayerStallLogged && elapsed >= STARTUP_STALL_LOG_MS) {
+                            mSinglePlayerStallLogged = true;
+                            Logger.appendToLog(
+                                    "SINGLEPLAYER_STARTUP: STALL elapsedMs="
+                                            + elapsed
+                                            + " stage="
+                                            + (mLastSinglePlayerStage.isEmpty()
+                                                    ? "unknown"
+                                                    : mLastSinglePlayerStage));
                         }
 
                         mSinglePlayerLoadingHandler.postDelayed(this, 250L);
@@ -335,6 +378,11 @@ public class JavaGUILauncherActivity extends BaseActivity {
                             LauncherPreferences.PREF_RAM_ALLOCATION,
                             4096);
 
+            Logger.appendToLog(
+                    "SINGLEPLAYER_STARTUP: JVM_ARGUMENTS_READY viewport="
+                            + AWTCanvasView.AWT_CANVAS_WIDTH
+                            + "x"
+                            + AWTCanvasView.AWT_CANVAS_HEIGHT);
             Logger.appendToLog(
                     "Info: combined Java arguments: "
                             + Arrays.toString(
