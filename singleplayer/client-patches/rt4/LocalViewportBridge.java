@@ -13,8 +13,7 @@ public final class LocalViewportBridge {
     private static final int DEFAULT_MODAL_CHILD = 6;
     private static final int CHARACTER_DESIGN_INTERFACE = 771;
     // The resizable chat history plus its tab row occupy roughly the bottom
-    // 165 logical pixels. Character design is a setup modal rather than HUD, so
-    // lay that one interface out in the unobscured region above the chatbox.
+    // 165 logical pixels. Keep Tutorial Island character design wholly above it.
     private static final int CHATBOX_RESERVED_HEIGHT = 165;
 
     private static int appliedWidth = -1;
@@ -26,6 +25,7 @@ public final class LocalViewportBridge {
     private static boolean layoutConfirmed;
     private static boolean layoutFailureReported;
     private static boolean characterDesignSafeAreaLogged;
+    private static int characterDesignOriginalHostY = Integer.MIN_VALUE;
 
     private LocalViewportBridge() {}
 
@@ -120,12 +120,14 @@ public final class LocalViewportBridge {
 
     /**
      * Keep the Tutorial Island character designer above the resizable chatbox.
-     * This is intentionally interface-specific: normal game modals keep the
-     * original 2009 layout, and the chatbox remains visible for tutorial text.
+     * The previous Build 28 attempt only re-laid out interface 771 inside its
+     * existing host, leaving the host itself centered across the chat panel.
+     * Move the host instead: rendering and hit-testing both inherit this origin,
+     * so buttons remain visually and physically aligned.
      */
     private static void applyMobileModalSafeArea(int width, int height) {
         if (client.gameState != 30 || InterfaceList.topLevelInterface != RESIZABLE_ROOT) {
-            characterDesignSafeAreaLogged = false;
+            restoreCharacterDesignHost();
             return;
         }
 
@@ -133,31 +135,47 @@ public final class LocalViewportBridge {
         ComponentPointer pointer =
                 (ComponentPointer) InterfaceList.openInterfaces.get(hostId);
         if (pointer == null || pointer.interfaceId != CHARACTER_DESIGN_INTERFACE) {
-            characterDesignSafeAreaLogged = false;
+            restoreCharacterDesignHost();
             return;
         }
 
         Component host = InterfaceList.getComponent(hostId);
-        int hostWidth = host != null && host.width > 0 ? host.width : width;
-        int safeHeight = Math.max(300, height - CHATBOX_RESERVED_HEIGHT);
-        if (host != null && host.height > 0) {
-            safeHeight = Math.min(safeHeight, host.height);
+        if (host == null || host.height <= 0) return;
+
+        if (characterDesignOriginalHostY == Integer.MIN_VALUE) {
+            characterDesignOriginalHostY = host.y;
         }
 
-        // Re-layout only the embedded interface. Component coordinates are what
-        // rendering and hit-testing both consume, so visual and touch positions
-        // stay aligned. false avoids firing resize scripts every client tick.
-        InterfaceList.method4017(
-                safeHeight, false, CHARACTER_DESIGN_INTERFACE, hostWidth);
-        GameShell.fullRedraw = true;
+        int safeBottom = Math.max(0, height - CHATBOX_RESERVED_HEIGHT);
+        int targetY = Math.max(0, safeBottom - host.height);
+        if (host.y != targetY) {
+            host.y = targetY;
+            GameShell.fullRedraw = true;
+        }
 
         if (!characterDesignSafeAreaLogged) {
             characterDesignSafeAreaLogged = true;
             System.out.println(
                     "SINGLEPLAYER_UI: CHAT_SAFE_MODAL interface="
                             + CHARACTER_DESIGN_INTERFACE
-                            + " area=" + hostWidth + "x" + safeHeight);
+                            + " host=" + host.width + "x" + host.height
+                            + " y=" + host.y
+                            + " safeBottom=" + safeBottom
+                            + " renderer=" + (GlRenderer.enabled ? "GL" : "software"));
         }
+    }
+
+    private static void restoreCharacterDesignHost() {
+        if (characterDesignOriginalHostY != Integer.MIN_VALUE) {
+            int hostId = (RESIZABLE_ROOT << 16) | DEFAULT_MODAL_CHILD;
+            Component host = InterfaceList.getComponent(hostId);
+            if (host != null && host.y != characterDesignOriginalHostY) {
+                host.y = characterDesignOriginalHostY;
+                GameShell.fullRedraw = true;
+            }
+        }
+        characterDesignOriginalHostY = Integer.MIN_VALUE;
+        characterDesignSafeAreaLogged = false;
     }
 
     /** Layout mode is independent of the retained software/GL renderer choice. */
