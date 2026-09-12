@@ -1,6 +1,11 @@
 LOCAL_PATH := $(call my-dir)
 HERE_PATH := $(LOCAL_PATH)
 
+# Android 15+ devices may use 16 KiB pages. These linker flags make every
+# native library we build from source compatible while legacy prebuilts and the
+# embedded 2021 JRE remain covered by Android 16 pageSizeCompat mode.
+PAGE_SIZE_LDFLAGS := -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384
+
 # include $(HERE_PATH)/crash_dump/libbase/Android.mk
 # include $(HERE_PATH)/crash_dump/libbacktrace/Android.mk
 # include $(HERE_PATH)/crash_dump/debuggerd/Android.mk
@@ -18,10 +23,11 @@ LOCAL_MODULE := tinywrapper
 LOCAL_SHARED_LIBRARIES := angle_gles2
 LOCAL_SRC_FILES := tinywrapper/main.c tinywrapper/string_utils.c
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/tinywrapper
+LOCAL_LDFLAGS += $(PAGE_SIZE_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
-LOCAL_MODULE     := xhook
+LOCAL_MODULE := xhook
         LOCAL_SRC_FILES  := xhook/xhook.c \
                     xhook/xh_core.c \
                     xhook/xh_elf.c \
@@ -33,6 +39,7 @@ LOCAL_MODULE     := xhook
 LOCAL_CFLAGS     := -Wall -Wextra -Werror -fvisibility=hidden
 LOCAL_CONLYFLAGS := -std=c11
 LOCAL_LDLIBS     := -llog
+LOCAL_LDFLAGS += $(PAGE_SIZE_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -52,6 +59,7 @@ LOCAL_SRC_FILES := \
     input_bridge_v3.c \
     jre_launcher.c \
     utils.c
+LOCAL_LDFLAGS += $(PAGE_SIZE_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -60,12 +68,14 @@ LOCAL_SHARED_LIBRARIES := xhook
 LOCAL_SRC_FILES := \
     stdio_is.c
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/xhook
+LOCAL_LDFLAGS += $(PAGE_SIZE_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := pojavexec_awt
 LOCAL_SRC_FILES := \
     awt_bridge.c
+LOCAL_LDFLAGS += $(PAGE_SIZE_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 # Helper to get current thread
@@ -77,6 +87,7 @@ include $(BUILD_SHARED_LIBRARY)
 # fake lib for linker
 include $(CLEAR_VARS)
 LOCAL_MODULE := awt_headless
+LOCAL_LDFLAGS += $(PAGE_SIZE_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 # libawt_xawt without X11, used to get Caciocavallo working
@@ -87,6 +98,7 @@ LOCAL_MODULE := awt_xawt
 LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)
 LOCAL_SHARED_LIBRARIES := awt_headless
 LOCAL_SRC_FILES := xawt_fake.c
+LOCAL_LDFLAGS += $(PAGE_SIZE_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 # delete fake libs after linked
