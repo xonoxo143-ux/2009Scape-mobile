@@ -17,6 +17,7 @@ public final class TouchInputController implements View.OnTouchListener {
     public interface TapObserver {
         void onTap(int clientX, int clientY);
     }
+
     private enum State {
         IDLE,
         PRESS_PENDING,
@@ -26,6 +27,15 @@ public final class TouchInputController implements View.OnTouchListener {
     }
 
     private static final int INVALID_POINTER = -1;
+
+    // The Android keyboard observer is intentionally much smaller than the
+    // whole chat box. Only deliberate taps on the actual text-entry line are
+    // forwarded to it. Normal taps still reach RT4 everywhere, including the
+    // chat tabs and the League button immediately to the right.
+    private static final int CHAT_INPUT_MIN_X = 8;
+    private static final int CHAT_INPUT_MAX_X = 400;
+    private static final int CHAT_INPUT_TOP_FROM_BOTTOM = 45;
+    private static final int CHAT_INPUT_BOTTOM_FROM_BOTTOM = 25;
 
     private final AWTCanvasView canvas;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -242,7 +252,7 @@ public final class TouchInputController implements View.OnTouchListener {
                     clientY,
                     0,
                     0);
-            if (tapObserver != null) {
+            if (tapObserver != null && isChatInputTap(clientX, clientY)) {
                 tapObserver.onTap(clientX, clientY);
             }
         } else if (state == State.DRAG) {
@@ -257,6 +267,14 @@ public final class TouchInputController implements View.OnTouchListener {
         // context menu remains open for a subsequent normal tap.
 
         reset();
+    }
+
+    private static boolean isChatInputTap(int clientX, int clientY) {
+        int height = AWTCanvasView.AWT_CANVAS_HEIGHT;
+        return clientX >= CHAT_INPUT_MIN_X
+                && clientX <= CHAT_INPUT_MAX_X
+                && clientY >= height - CHAT_INPUT_TOP_FROM_BOTTOM
+                && clientY <= height - CHAT_INPUT_BOTTOM_FROM_BOTTOM;
     }
 
     private void cancelGesture() {
