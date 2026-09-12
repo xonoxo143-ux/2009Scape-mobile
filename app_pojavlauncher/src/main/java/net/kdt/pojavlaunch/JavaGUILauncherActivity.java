@@ -6,6 +6,7 @@ import android.content.ClipboardManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
@@ -34,8 +35,8 @@ import java.util.List;
 public class JavaGUILauncherActivity extends BaseActivity {
 
     private static final int CHAT_KEYBOARD_MAX_X = 520;
-    private static final int CHAT_KEYBOARD_MIN_Y = 448;
-    private static final int CHAT_KEYBOARD_MAX_Y = 478;
+    private static final int CHAT_KEYBOARD_TOP_FROM_BOTTOM = 55;
+    private static final int CHAT_KEYBOARD_BOTTOM_FROM_BOTTOM = 25;
     private static final long EXIT_BACK_WINDOW_MS = 1500L;
     private static final long STARTUP_STALL_LOG_MS = 45000L;
 
@@ -102,14 +103,22 @@ public class JavaGUILauncherActivity extends BaseActivity {
                 new TouchInputController(mTextureView, this::onClientTap);
         mTextureView.setOnTouchListener(mTouchInputController);
 
-        // Deliberately match the first known-good one-JVM startup path. The
-        // Android surface can finish measuring independently; neither layout nor
-        // TextureView callbacks are allowed to gate the JVM/world launch.
+        // Geometry is resolved synchronously before JVM creation. Nothing in the
+        // TextureView/layout lifecycle is allowed to gate or mutate startup.
+        DisplayMetrics display = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(display);
+        AWTCanvasView.freezeLogicalViewport(display.widthPixels, display.heightPixels);
+        mTextureView.applyFrozenViewport();
         Logger.appendToLog(
-                "SINGLEPLAYER_STARTUP: BOOTSTRAP_VIEWPORT "
+                "SINGLEPLAYER_STARTUP: VIEWPORT_FROZEN "
                         + AWTCanvasView.AWT_CANVAS_WIDTH
                         + "x"
-                        + AWTCanvasView.AWT_CANVAS_HEIGHT);
+                        + AWTCanvasView.AWT_CANVAS_HEIGHT
+                        + " source="
+                        + display.widthPixels
+                        + "x"
+                        + display.heightPixels);
+
         installBackHandling();
         launchCombinedRuntime();
     }
@@ -140,9 +149,10 @@ public class JavaGUILauncherActivity extends BaseActivity {
     }
 
     private void onClientTap(int clientX, int clientY) {
+        int height = AWTCanvasView.AWT_CANVAS_HEIGHT;
         if (clientX <= CHAT_KEYBOARD_MAX_X
-                && clientY >= CHAT_KEYBOARD_MIN_Y
-                && clientY <= CHAT_KEYBOARD_MAX_Y
+                && clientY >= height - CHAT_KEYBOARD_TOP_FROM_BOTTOM
+                && clientY <= height - CHAT_KEYBOARD_BOTTOM_FROM_BOTTOM
                 && !TouchCharInput.softKeyboardIsActive) {
             mTouchCharInput.switchKeyboardState();
         }
@@ -327,6 +337,10 @@ public class JavaGUILauncherActivity extends BaseActivity {
                     "-DsinglePlayerName="
                             + SinglePlayerManager.getProfileName(this));
             javaArgList.add("-Dsingleplayer=true");
+            javaArgList.add(
+                    "-Dsingleplayer.viewportWidth=" + AWTCanvasView.AWT_CANVAS_WIDTH);
+            javaArgList.add(
+                    "-Dsingleplayer.viewportHeight=" + AWTCanvasView.AWT_CANVAS_HEIGHT);
             javaArgList.add(
                     "-Dorg.sqlite.lib.path="
                             + getApplicationInfo().nativeLibraryDir);
