@@ -35,6 +35,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     public AWTCanvasView(Context ctx, AttributeSet attrs) {
         super(ctx, attrs);
         setSurfaceTextureListener(this);
+        // Establish the logical size before the TextureView can start its render
+        // thread. The posted pass then refines it using measured view dimensions.
+        configureForCurrentView();
         post(this::configureForCurrentView);
     }
 
