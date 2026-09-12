@@ -12,8 +12,17 @@ import net.kdt.pojavlaunch.Tools;
 import net.kdt.pojavlaunch.utils.*;
 
 public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener, Runnable {
-    public static final int AWT_CANVAS_WIDTH = 765;
-    public static final int AWT_CANVAS_HEIGHT = 503;
+    private static final int BASE_CANVAS_WIDTH = 765;
+    private static final int BASE_CANVAS_HEIGHT = 503;
+
+    /**
+     * RT4's fixed-mode dimensions remain our minimum logical viewport. On wide
+     * mobile displays we expand the logical canvas instead of aspect-fitting the
+     * old 765x503 image into black bars or stretching it.
+     */
+    public static volatile int AWT_CANVAS_WIDTH = BASE_CANVAS_WIDTH;
+    public static volatile int AWT_CANVAS_HEIGHT = BASE_CANVAS_HEIGHT;
+
     private static final double NANOS = 1000000000.0;
     private volatile boolean mIsDestroyed = false;
     private volatile boolean mRenderingPaused = false;
@@ -26,12 +35,47 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     public AWTCanvasView(Context ctx, AttributeSet attrs) {
         super(ctx, attrs);
         setSurfaceTextureListener(this);
-        post(this::refreshSize);
+        post(this::configureForCurrentView);
+    }
+
+    /**
+     * Choose a logical RT4 viewport with the same aspect ratio as the Android
+     * game surface while never shrinking below the historical 765x503 canvas.
+     * This reveals more world on the extra axis rather than distorting pixels.
+     */
+    public void configureForCurrentView() {
+        int viewWidth = getWidth();
+        int viewHeight = getHeight();
+        if (viewWidth <= 0 || viewHeight <= 0) {
+            DisplayMetrics metrics = getResources().getDisplayMetrics();
+            viewWidth = Math.max(1, metrics.widthPixels);
+            viewHeight = Math.max(1, metrics.heightPixels);
+        }
+
+        float aspect = (float) viewWidth / (float) Math.max(1, viewHeight);
+        float baseAspect = (float) BASE_CANVAS_WIDTH / (float) BASE_CANVAS_HEIGHT;
+        if (aspect >= baseAspect) {
+            AWT_CANVAS_HEIGHT = BASE_CANVAS_HEIGHT;
+            AWT_CANVAS_WIDTH = Math.max(
+                    BASE_CANVAS_WIDTH,
+                    Math.round(BASE_CANVAS_HEIGHT * aspect));
+        } else {
+            AWT_CANVAS_WIDTH = BASE_CANVAS_WIDTH;
+            AWT_CANVAS_HEIGHT = Math.max(
+                    BASE_CANVAS_HEIGHT,
+                    Math.round(BASE_CANVAS_WIDTH / Math.max(0.01f, aspect)));
+        }
+
+        refreshSize();
+        SurfaceTexture texture = getSurfaceTexture();
+        if (texture != null) {
+            texture.setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        }
     }
 
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture texture, int w, int h) {
-        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        texture.setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
         mIsDestroyed = false;
         new Thread(this, "AndroidAWTRenderer").start();
     }
@@ -44,19 +88,21 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
     @Override
     public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int w, int h) {
-        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        texture.setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
     }
 
     @Override
     public void onSurfaceTextureUpdated(SurfaceTexture texture) {
-        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        texture.setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
     }
 
     @Override
     public void run() {
+        final int canvasWidth = AWT_CANVAS_WIDTH;
+        final int canvasHeight = AWT_CANVAS_HEIGHT;
         Canvas canvas;
         Surface surface = new Surface(getSurfaceTexture());
-        Bitmap rgbArrayBitmap = Bitmap.createBitmap(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT, Bitmap.Config.ARGB_8888);
+        Bitmap rgbArrayBitmap = Bitmap.createBitmap(canvasWidth, canvasHeight, Bitmap.Config.ARGB_8888);
         Paint paint = new Paint();
         paint.setAntiAlias(false);
         paint.setDither(false);
@@ -66,9 +112,8 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         long sleepTime;
         long sleepMillis;
         int sleepNanos;
-        final int[] rgbArray = new int[AWT_CANVAS_WIDTH * AWT_CANVAS_HEIGHT];
-        // define the frame rate limit
-        final long frameTimeNanos = (long)(NANOS / 60); // Targeting 60 FPS
+        final int[] rgbArray = new int[canvasWidth * canvasHeight];
+        final long frameTimeNanos = (long)(NANOS / 60);
         long frameDuration;
 
         try {
@@ -94,18 +139,17 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                     rgbArrayBitmap.setPixels(
                             rgbArray,
                             0,
-                            AWT_CANVAS_WIDTH,
+                            canvasWidth,
                             0,
                             0,
-                            AWT_CANVAS_WIDTH,
-                            AWT_CANVAS_HEIGHT);
+                            canvasWidth,
+                            canvasHeight);
                     canvas.drawBitmap(rgbArrayBitmap, 0, 0, paint);
                 } else {
                     canvas.drawRGB(0, 0, 0);
                 }
                 surface.unlockCanvasAndPost(canvas);
 
-                // frame rate limiting
                 frameEndNanos = System.nanoTime();
                 frameDuration = frameEndNanos - frameStartNanos;
                 if (frameDuration < frameTimeNanos) {
@@ -135,19 +179,12 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         }
     }
 
-    /** Make the view fit the proper aspect ratio of the surface */
+    /** Keep the renderer surface full-screen; the logical buffer now matches it. */
     private void refreshSize(){
         ViewGroup.LayoutParams layoutParams = getLayoutParams();
-
-
-        /** Note: In the future this is a good way to stretch the aspect ratio too. Like for
-         * 16:9 widescreen in SD mode like mudkip osrs videos */
-        if(getHeight() < getWidth()){
-            layoutParams.width = AWT_CANVAS_WIDTH * getHeight() / AWT_CANVAS_HEIGHT;
-        }else{
-            layoutParams.height = AWT_CANVAS_HEIGHT * getWidth() / AWT_CANVAS_WIDTH;
-        }
-
+        if (layoutParams == null) return;
+        layoutParams.width = ViewGroup.LayoutParams.MATCH_PARENT;
+        layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT;
         setLayoutParams(layoutParams);
     }
 
