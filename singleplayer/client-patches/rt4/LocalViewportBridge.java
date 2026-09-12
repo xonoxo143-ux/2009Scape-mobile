@@ -9,6 +9,14 @@ import java.util.Arrays;
  * bridge changes the actual RT4 software canvas before Android reveals the game.
  */
 public final class LocalViewportBridge {
+    private static final int RESIZABLE_ROOT = 746;
+    private static final int DEFAULT_MODAL_CHILD = 6;
+    private static final int CHARACTER_DESIGN_INTERFACE = 771;
+    // The resizable chat history plus its tab row occupy roughly the bottom
+    // 165 logical pixels. Character design is a setup modal rather than HUD, so
+    // lay that one interface out in the unobscured region above the chatbox.
+    private static final int CHATBOX_RESERVED_HEIGHT = 165;
+
     private static int appliedWidth = -1;
     private static int appliedHeight = -1;
     private static int notifiedWidth = -1;
@@ -17,6 +25,7 @@ public final class LocalViewportBridge {
     private static long nextLayoutAttemptMs;
     private static boolean layoutConfirmed;
     private static boolean layoutFailureReported;
+    private static boolean characterDesignSafeAreaLogged;
 
     private LocalViewportBridge() {}
 
@@ -46,6 +55,7 @@ public final class LocalViewportBridge {
                 && GameShell.canvas.getX() == GameShell.frame.getInsets().left
                 && GameShell.canvas.getY() == GameShell.frame.getInsets().top) {
             synchronizeWorldLayout(width, height);
+            applyMobileModalSafeArea(width, height);
             prepareSoftwareInterfaceRedraw();
             return true;
         }
@@ -87,6 +97,7 @@ public final class LocalViewportBridge {
                     "SINGLEPLAYER_VIEWPORT: RT4_SOFTWARE_READY " + width + "x" + height
                             + " frameOrigin=" + GameShell.frame.getX() + "," + GameShell.frame.getY());
             synchronizeWorldLayout(width, height);
+            applyMobileModalSafeArea(width, height);
             prepareSoftwareInterfaceRedraw();
             return true;
         } catch (Throwable failure) {
@@ -98,13 +109,55 @@ public final class LocalViewportBridge {
     private static void prepareSoftwareInterfaceRedraw() {
         if (client.gameState != 30 || GlRenderer.enabled
                 || presentationWindowMode(0) != 2
-                || InterfaceList.topLevelInterface != 746) return;
+                || InterfaceList.topLevelInterface != RESIZABLE_ROOT) return;
 
         // The resizable root overlays HUD components on the world. Its world
         // rectangle is repainted every frame, erasing any unchanged software HUD
         // pixels. Match the retained GL path's interface invalidation without
         // selecting GL: LoginManager propagates these flags before rendering.
         Arrays.fill(InterfaceList.aBooleanArray100, true);
+    }
+
+    /**
+     * Keep the Tutorial Island character designer above the resizable chatbox.
+     * This is intentionally interface-specific: normal game modals keep the
+     * original 2009 layout, and the chatbox remains visible for tutorial text.
+     */
+    private static void applyMobileModalSafeArea(int width, int height) {
+        if (client.gameState != 30 || InterfaceList.topLevelInterface != RESIZABLE_ROOT) {
+            characterDesignSafeAreaLogged = false;
+            return;
+        }
+
+        int hostId = (RESIZABLE_ROOT << 16) | DEFAULT_MODAL_CHILD;
+        ComponentPointer pointer =
+                (ComponentPointer) InterfaceList.openInterfaces.get(hostId);
+        if (pointer == null || pointer.interfaceId != CHARACTER_DESIGN_INTERFACE) {
+            characterDesignSafeAreaLogged = false;
+            return;
+        }
+
+        Component host = InterfaceList.getComponent(hostId);
+        int hostWidth = host != null && host.width > 0 ? host.width : width;
+        int safeHeight = Math.max(300, height - CHATBOX_RESERVED_HEIGHT);
+        if (host != null && host.height > 0) {
+            safeHeight = Math.min(safeHeight, host.height);
+        }
+
+        // Re-layout only the embedded interface. Component coordinates are what
+        // rendering and hit-testing both consume, so visual and touch positions
+        // stay aligned. false avoids firing resize scripts every client tick.
+        InterfaceList.method4017(
+                safeHeight, false, CHARACTER_DESIGN_INTERFACE, hostWidth);
+        GameShell.fullRedraw = true;
+
+        if (!characterDesignSafeAreaLogged) {
+            characterDesignSafeAreaLogged = true;
+            System.out.println(
+                    "SINGLEPLAYER_UI: CHAT_SAFE_MODAL interface="
+                            + CHARACTER_DESIGN_INTERFACE
+                            + " area=" + hostWidth + "x" + safeHeight);
+        }
     }
 
     /** Layout mode is independent of the retained software/GL renderer choice. */
@@ -121,7 +174,7 @@ public final class LocalViewportBridge {
         if (client.gameState != 30 || presentationWindowMode(0) != 2) return;
 
         int root = InterfaceList.topLevelInterface;
-        if (root == 746 && notifiedWidth == width && notifiedHeight == height) {
+        if (root == RESIZABLE_ROOT && notifiedWidth == width && notifiedHeight == height) {
             if (!layoutConfirmed) {
                 layoutConfirmed = true;
                 layoutAttempts = 0;
@@ -140,7 +193,7 @@ public final class LocalViewportBridge {
 
         layoutConfirmed = false;
         // Preserve other top-level interfaces, such as a cutscene or full-screen UI.
-        if (root != 548 && root != 746) return;
+        if (root != 548 && root != RESIZABLE_ROOT) return;
         long now = System.currentTimeMillis();
         if (now < nextLayoutAttemptMs) return;
         if (layoutAttempts >= 3) {
