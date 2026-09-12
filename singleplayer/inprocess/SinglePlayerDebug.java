@@ -27,6 +27,7 @@ public final class SinglePlayerDebug {
 
     private static volatile boolean installed;
     private static volatile boolean watchdogRunning;
+    private static volatile boolean coldCacheMissAnnounced;
     private static volatile String stage = "bootstrap not started";
     private static volatile long stageStartedMs = PROCESS_START_MS;
     private static volatile Thread watchdog;
@@ -128,6 +129,24 @@ public final class SinglePlayerDebug {
 
     public static void log(String category, String message) {
         install();
+
+        // A null archive index in RT4's disk master cache is the normal state on
+        // a fresh install. The next branch immediately serves that same index
+        // from LocalJs5Socket. Emit one useful marker instead of ~28 scary
+        // JS5_INDEX_FAIL lines; CRC/version/parse failures remain untouched.
+        if (Boolean.getBoolean("singleplayer")
+                && "JS5_INDEX_FAIL".equals(category)
+                && message != null
+                && message.contains("source=cache")
+                && message.contains("kind=NULL")) {
+            synchronized (INSTALL_LOCK) {
+                if (coldCacheMissAnnounced) return;
+                coldCacheMissAnnounced = true;
+            }
+            category = "JS5_COLD_CACHE";
+            message = "disk index cache empty; falling back to packaged local JS5";
+        }
+
         long now = System.currentTimeMillis();
         long elapsed = now - PROCESS_START_MS;
         String thread = Thread.currentThread().getName();
