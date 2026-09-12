@@ -15,10 +15,18 @@ public final class AudioThread implements Runnable {
         workerThread = Thread.currentThread();
         workerThread.setName("RT4 Audio");
         isRunning = true;
+        boolean wasPaused = false;
         try {
             while (!shouldStop) {
-                if (MobileLifecycleBridge.isAppPaused()) {
-                    ThreadUtils.sleep(250L);
+                boolean paused = MobileLifecycleBridge.isAppPaused();
+                if (paused != wasPaused) {
+                    applyLifecyclePause(paused);
+                    wasPaused = paused;
+                    System.out.println(
+                            "SINGLEPLAYER_AUDIO: " + (paused ? "PAUSED" : "RESUMED"));
+                }
+                if (paused) {
+                    ThreadUtils.sleep(100L);
                     continue;
                 }
                 for (int i = 0; i < audioChannels.length; i++) {
@@ -34,8 +42,20 @@ public final class AudioThread implements Runnable {
             ex.printStackTrace();
             TracingException.report(null, ex);
         } finally {
+            // Never leave native audio sources paused if RT4 tears the worker
+            // down during a foreground transition.
+            if (wasPaused) applyLifecyclePause(false);
             workerThread = null;
             isRunning = false;
+        }
+    }
+
+    private void applyLifecyclePause(boolean paused) {
+        for (int i = 0; i < audioChannels.length; i++) {
+            AudioChannel channel = audioChannels[i];
+            if (channel instanceof OpenALAudioChannel) {
+                ((OpenALAudioChannel) channel).setLifecyclePaused(paused);
+            }
         }
     }
 }
