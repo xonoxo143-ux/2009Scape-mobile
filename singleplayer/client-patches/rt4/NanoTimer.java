@@ -25,7 +25,7 @@ public final class NanoTimer extends Timer {
             ThreadUtils.sleep(250L);
             return 0;
         }
-        LocalLoginBridge.tickAutoLogin();
+        driveLocalRuntime();
         long minimumDelayNs = (long) minimumDelayMs * 1_000_000L;
         long delayNs = nextTick - System.nanoTime();
         if (minimumDelayNs > delayNs) {
@@ -45,8 +45,18 @@ public final class NanoTimer extends Timer {
             ThreadUtils.sleep(250L);
             return 0;
         }
-        LocalLoginBridge.tickAutoLogin();
+        driveLocalRuntime();
         return advance(tickMs);
+    }
+
+    private static void driveLocalRuntime() {
+        LocalLoginBridge.tickAutoLogin();
+        // Presentation expansion is deliberately downstream of the playable
+        // game state. Its bridge is one-shot and cannot gate local login/world
+        // readiness even if a device/Cacio variant refuses the resize.
+        if (client.gameState == 30) {
+            LocalWidescreenBridge.scheduleAfterGameReady();
+        }
     }
 
     private int advance(int tickMs) {
