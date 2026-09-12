@@ -20,10 +20,10 @@ public final class Packet extends Buffer {
     private int bitOffset;
 
     /*
-     * Transitional single-player packet boundary. These fields only describe
-     * the most recently opened outbound gameplay packet. The encrypted opcode
-     * byte remains in the retained RT4 buffer until the existing 2009Scape
-     * decoder confirms that the packet has been accepted in memory.
+     * Compatibility boundary for the handful of retained call sites that still
+     * describe their semantic action with the old 530 payload layout. The bytes
+     * are consumed in-process and are never permitted to reach BufferedSocket.
+     * New/ordinary interactions should use LocalClientCommands directly.
      */
     private int localPacketStart = -1;
     private int localPayloadStart = -1;
@@ -35,13 +35,14 @@ public final class Packet extends Buffer {
      * migration, but consume these packets before the compatibility decoder.
      *
      * 20/110  map rebuild acknowledgements: server NoProcess
-     * 21      camera telemetry: server TODO/no-op
-     * 22      focus telemetry: server no-op
-     * 75/123  mouse telemetry: server TODO/unhandled
-     * 93      remote keepalive: local session cannot time out
-     * 98      player preference telemetry: server TODO/no-op
+     * 21      camera telemetry
+     * 22      focus telemetry
+     * 75/123  mouse telemetry
+     * 93      remote keepalive
+     * 98      player preference telemetry
      * 99      hosted abuse-report/moderation transport
-     * 245     remote AFK logout: Android lifecycle pauses locally instead
+     * 177     remote packet-count verification
+     * 245     remote AFK logout
      */
     private static final boolean[] localDiscardAnnounced = new boolean[256];
 
@@ -98,16 +99,17 @@ public final class Packet extends Buffer {
 
     private static boolean isTransportOnlySinglePlayerSignal(int opcode) {
         switch (opcode) {
-            case 20:  // map rebuild started
-            case 21:  // camera tracking
-            case 22:  // applet focus tracking
-            case 75:  // mouse click tracking
-            case 93:  // remote keepalive
-            case 98:  // player preference telemetry
-            case 99:  // hosted abuse report
-            case 110: // map rebuild finished
-            case 123: // mouse movement tracking / unsupported in retained decoder
-            case 245: // remote AFK logout
+            case 20:
+            case 21:
+            case 22:
+            case 75:
+            case 93:
+            case 98:
+            case 99:
+            case 110:
+            case 123:
+            case 177:
+            case 245:
                 return true;
             default:
                 return false;
@@ -126,10 +128,11 @@ public final class Packet extends Buffer {
     }
 
     /**
-     * Finish the current retained outbound packet, routing it through the
-     * existing 2009Scape decoder in memory when possible. A successful local
-     * route rewinds only this packet, preserving any earlier unsupported packet
-     * bytes that still need the compatibility socket.
+     * Finish the current retained outbound action. Every in-world action is
+     * consumed here: either by the typed local command path, by the in-memory
+     * compatibility decoder, or as obsolete transport-only bookkeeping. The
+     * packet is always rewound, so the local RT4 presentation stream can never
+     * become a client->server gameplay transport again.
      */
     public final void finishLocalPacket() {
         if (this.localOpcode < 0) {
@@ -146,27 +149,36 @@ public final class Packet extends Buffer {
         this.localOpcode = -1;
 
         // Login/reconnect/world-list protocol remains byte-for-byte legacy until
-        // that state machine is intentionally removed. Merely seeing p1isaac is
-        // not enough to classify a packet as an in-world command.
+        // that state machine is intentionally removed. Only in-world gameplay is
+        // subject to the no-transport invariant.
         if (!localGameplayReady() || this != Protocol.outboundBuffer) {
             return;
         }
         if (packetStart < 0 || payloadStart != packetStart + 1
                 || payloadStart > end || end > this.data.length) {
+            System.err.println(
+                    "SINGLEPLAYER_LOCAL_PACKET: INVALID_BOUNDARY opcode=" + opcode);
+            if (packetStart >= 0 && packetStart <= this.offset) this.offset = packetStart;
             return;
         }
 
         byte[] wirePayload = Arrays.copyOfRange(this.data, payloadStart, end);
-
+        boolean consumed;
         if (isTransportOnlySinglePlayerSignal(opcode)) {
             announceDiscard(opcode, wirePayload.length);
-            this.offset = packetStart;
-            return;
+            consumed = true;
+        } else {
+            consumed = LocalClientCommands.routeEncodedPacket(opcode, wirePayload);
+            if (!consumed) {
+                System.err.println(
+                        "SINGLEPLAYER_LOCAL_PACKET: UNMIGRATED_DROPPED opcode=" + opcode
+                                + " payloadBytes=" + wirePayload.length);
+            }
         }
 
-        if (LocalClientCommands.routeEncodedPacket(opcode, wirePayload)) {
-            this.offset = packetStart;
-        }
+        // Critical invariant: regardless of semantic outcome, no in-world client
+        // packet survives to BufferedSocket.write().
+        this.offset = packetStart;
     }
 
     @OriginalMember(owner = "client!i", name = "r", descriptor = "(II)V")
