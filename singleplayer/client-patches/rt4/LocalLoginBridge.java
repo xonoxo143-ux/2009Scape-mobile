@@ -48,6 +48,17 @@ public final class LocalLoginBridge {
         if (!Boolean.getBoolean("singleplayer")) return;
 
         if (client.gameState == 30) {
+            // Do not reveal a stretched/fixed 765x503 client inside a wider
+            // Android surface. Cacio is already wide; resize RT4's own software
+            // framebuffer first, then let the normal ready marker remove the
+            // Android loading overlay. Keep ensuring it afterwards so a legacy
+            // display-mode callback cannot silently collapse the canvas again.
+            boolean viewportReady = LocalViewportBridge.ensureConfiguredViewport();
+            if (!viewportReady && !readyAnnounced) {
+                writeStage("Preparing display...");
+                return;
+            }
+
             // RT4/world readiness owns game visibility. League attachment is an
             // optional extension and must never be able to strand Android on the
             // loading overlay. Attach it independently and keep retrying after
