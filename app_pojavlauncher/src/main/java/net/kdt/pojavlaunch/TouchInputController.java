@@ -142,7 +142,7 @@ public final class TouchInputController implements View.OnTouchListener {
                     float centerX = (event.getX(0) + event.getX(1)) * 0.5f;
                     float centerY = (event.getY(0) + event.getY(1)) * 0.5f;
                     int scaledSpanDelta = Math.round(
-                            spanDelta * AWTCanvasView.AWT_CANVAS_WIDTH
+                            spanDelta * canvas.getLogicalWidth()
                                     / Math.max(1f, canvas.getWidth()));
                     if (scaledSpanDelta != 0) {
                         send(
@@ -294,30 +294,30 @@ public final class TouchInputController implements View.OnTouchListener {
     }
 
     private int toClientX(float x) {
+        int logicalWidth = canvas.getLogicalWidth();
         return clamp(
-                Math.round(x * AWTCanvasView.AWT_CANVAS_WIDTH
-                        / Math.max(1f, canvas.getWidth())),
+                Math.round(x * logicalWidth / Math.max(1f, canvas.getWidth())),
                 0,
-                AWTCanvasView.AWT_CANVAS_WIDTH - 1);
+                logicalWidth - 1);
     }
 
     private int toClientY(float y) {
+        int logicalHeight = canvas.getLogicalHeight();
         return clamp(
-                Math.round(y * AWTCanvasView.AWT_CANVAS_HEIGHT
-                        / Math.max(1f, canvas.getHeight())),
+                Math.round(y * logicalHeight / Math.max(1f, canvas.getHeight())),
                 0,
-                AWTCanvasView.AWT_CANVAS_HEIGHT - 1);
+                logicalHeight - 1);
     }
 
     private int toClientDeltaX(float dx) {
         return Math.round(
-                dx * AWTCanvasView.AWT_CANVAS_WIDTH
+                dx * canvas.getLogicalWidth()
                         / Math.max(1f, canvas.getWidth()));
     }
 
     private int toClientDeltaY(float dy) {
         return Math.round(
-                dy * AWTCanvasView.AWT_CANVAS_HEIGHT
+                dy * canvas.getLogicalHeight()
                         / Math.max(1f, canvas.getHeight()));
     }
 
