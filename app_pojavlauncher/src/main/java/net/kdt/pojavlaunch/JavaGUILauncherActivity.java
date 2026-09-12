@@ -34,8 +34,8 @@ import java.util.List;
 public class JavaGUILauncherActivity extends BaseActivity {
 
     private static final int CHAT_KEYBOARD_MAX_X = 520;
-    private static final int CHAT_KEYBOARD_MIN_Y = 448;
-    private static final int CHAT_KEYBOARD_MAX_Y = 478;
+    private static final int CHAT_KEYBOARD_TOP_FROM_BOTTOM = 55;
+    private static final int CHAT_KEYBOARD_BOTTOM_FROM_BOTTOM = 25;
     private static final long EXIT_BACK_WINDOW_MS = 1500L;
 
     private AWTCanvasView mTextureView;
@@ -98,7 +98,19 @@ public class JavaGUILauncherActivity extends BaseActivity {
         mTextureView.setOnTouchListener(mTouchInputController);
 
         installBackHandling();
-        launchCombinedRuntime();
+
+        // Let Android finish measuring the game surface, then make the Cacio AWT
+        // screen and RT4's GLFW canvas agree on that same logical widescreen
+        // viewport before the child JVM starts.
+        mTextureView.post(() -> {
+            mTextureView.configureForCurrentView();
+            Logger.appendToLog(
+                    "SINGLEPLAYER_UI: LOGICAL_VIEWPORT "
+                            + AWTCanvasView.AWT_CANVAS_WIDTH
+                            + "x"
+                            + AWTCanvasView.AWT_CANVAS_HEIGHT);
+            launchCombinedRuntime();
+        });
     }
 
     private void launchCombinedRuntime() {
@@ -124,14 +136,18 @@ public class JavaGUILauncherActivity extends BaseActivity {
     }
 
     private void onClientTap(int clientX, int clientY) {
-        // In fixed-mode RT4 the chat entry area occupies the lower-left portion
-        // of the canvas. Tapping it should behave like a native mobile text box.
-        // Other text prompts continue to receive hardware-key input normally;
-        // additional prompt-specific keyboard requests can be added without
-        // reintroducing a permanent keyboard control.
+        // The chat entry stays anchored to the lower-left of RT4's resizable
+        // canvas. Keep the historical 503px offsets relative to the bottom so
+        // the mobile keyboard trigger follows the expanded viewport.
+        int chatMinY = Math.max(
+                0,
+                AWTCanvasView.AWT_CANVAS_HEIGHT - CHAT_KEYBOARD_TOP_FROM_BOTTOM);
+        int chatMaxY = Math.max(
+                chatMinY,
+                AWTCanvasView.AWT_CANVAS_HEIGHT - CHAT_KEYBOARD_BOTTOM_FROM_BOTTOM);
         if (clientX <= CHAT_KEYBOARD_MAX_X
-                && clientY >= CHAT_KEYBOARD_MIN_Y
-                && clientY <= CHAT_KEYBOARD_MAX_Y
+                && clientY >= chatMinY
+                && clientY <= chatMaxY
                 && !TouchCharInput.softKeyboardIsActive) {
             mTouchCharInput.switchKeyboardState();
         }
@@ -295,6 +311,10 @@ public class JavaGUILauncherActivity extends BaseActivity {
                     "-DsinglePlayerName="
                             + SinglePlayerManager.getProfileName(this));
             javaArgList.add("-Dsingleplayer=true");
+            javaArgList.add(
+                    "-DglfwWidth=" + AWTCanvasView.AWT_CANVAS_WIDTH);
+            javaArgList.add(
+                    "-DglfwHeight=" + AWTCanvasView.AWT_CANVAS_HEIGHT);
             javaArgList.add(
                     "-Dorg.sqlite.lib.path="
                             + getApplicationInfo().nativeLibraryDir);
