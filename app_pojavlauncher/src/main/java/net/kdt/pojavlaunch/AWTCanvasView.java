@@ -12,12 +12,15 @@ import net.kdt.pojavlaunch.Tools;
 import net.kdt.pojavlaunch.utils.*;
 
 public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener, Runnable {
-    // Known-good RT4/Cacio bootstrap geometry. Keep this fixed while the Android
-    // 16 migration is validated; widening the managed framebuffer is isolated
-    // from startup so it cannot strand world initialization again.
+    // These are deliberately the immutable Cacio/JVM bootstrap dimensions.
+    // Runtime presentation can expand after GAME_READY without changing them.
     public static final int AWT_CANVAS_WIDTH = 765;
     public static final int AWT_CANVAS_HEIGHT = 503;
     private static final double NANOS = 1000000000.0;
+
+    private volatile int mLogicalWidth = AWT_CANVAS_WIDTH;
+    private volatile int mLogicalHeight = AWT_CANVAS_HEIGHT;
+    private volatile boolean mRuntimeViewportApplied = false;
     private volatile boolean mIsDestroyed = false;
     private volatile boolean mRenderingPaused = false;
     private final Object mRenderPauseLock = new Object();
@@ -32,9 +35,38 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         post(this::refreshSize);
     }
 
+    public int getLogicalWidth() {
+        return mLogicalWidth;
+    }
+
+    public int getLogicalHeight() {
+        return mLogicalHeight;
+    }
+
+    /**
+     * Called only after the embedded JVM confirms that Cacio and RT4 have both
+     * expanded their backing stores. Bootstrap remains 765x503 regardless of
+     * the target passed here.
+     */
+    public void applyRuntimeViewport(int width, int height) {
+        width = Math.max(AWT_CANVAS_WIDTH, width);
+        height = Math.max(AWT_CANVAS_HEIGHT, height);
+        mLogicalWidth = width;
+        mLogicalHeight = height;
+        mRuntimeViewportApplied = true;
+        refreshSize();
+
+        SurfaceTexture texture = getSurfaceTexture();
+        if (texture != null) {
+            texture.setDefaultBufferSize(width, height);
+        }
+        requestLayout();
+        invalidate();
+    }
+
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture texture, int w, int h) {
-        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        texture.setDefaultBufferSize(mLogicalWidth, mLogicalHeight);
         mIsDestroyed = false;
         new Thread(this, "AndroidAWTRenderer").start();
     }
@@ -47,19 +79,23 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
     @Override
     public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int w, int h) {
-        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        texture.setDefaultBufferSize(mLogicalWidth, mLogicalHeight);
     }
 
     @Override
     public void onSurfaceTextureUpdated(SurfaceTexture texture) {
-        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        // No sizing work here. This callback fires for every presented frame.
     }
 
     @Override
     public void run() {
         Canvas canvas;
         Surface surface = new Surface(getSurfaceTexture());
-        Bitmap rgbArrayBitmap = Bitmap.createBitmap(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT, Bitmap.Config.ARGB_8888);
+        Bitmap rgbArrayBitmap = null;
+        int[] rgbArray = null;
+        int activeWidth = -1;
+        int activeHeight = -1;
+
         Paint paint = new Paint();
         paint.setAntiAlias(false);
         paint.setDither(false);
@@ -69,7 +105,6 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         long sleepTime;
         long sleepMillis;
         int sleepNanos;
-        final int[] rgbArray = new int[AWT_CANVAS_WIDTH * AWT_CANVAS_HEIGHT];
         final long frameTimeNanos = (long)(NANOS / 60);
         long frameDuration;
 
@@ -90,22 +125,44 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                     continue;
                 }
 
+                int width = mLogicalWidth;
+                int height = mLogicalHeight;
+                if (width != activeWidth || height != activeHeight) {
+                    if (rgbArrayBitmap != null) {
+                        rgbArrayBitmap.recycle();
+                    }
+                    activeWidth = width;
+                    activeHeight = height;
+                    rgbArrayBitmap = Bitmap.createBitmap(
+                            activeWidth,
+                            activeHeight,
+                            Bitmap.Config.ARGB_8888);
+                    rgbArray = new int[activeWidth * activeHeight];
+                }
+
                 frameStartNanos = System.nanoTime();
                 canvas = surface.lockCanvas(null);
-                if (JREUtils.renderAWTScreenFrameInto(rgbArray)) {
-                    rgbArrayBitmap.setPixels(
-                            rgbArray,
-                            0,
-                            AWT_CANVAS_WIDTH,
-                            0,
-                            0,
-                            AWT_CANVAS_WIDTH,
-                            AWT_CANVAS_HEIGHT);
-                    canvas.drawBitmap(rgbArrayBitmap, 0, 0, paint);
-                } else {
-                    canvas.drawRGB(0, 0, 0);
+                if (canvas == null) {
+                    Thread.yield();
+                    continue;
                 }
-                surface.unlockCanvasAndPost(canvas);
+                try {
+                    if (JREUtils.renderAWTScreenFrameInto(rgbArray)) {
+                        rgbArrayBitmap.setPixels(
+                                rgbArray,
+                                0,
+                                activeWidth,
+                                0,
+                                0,
+                                activeWidth,
+                                activeHeight);
+                        canvas.drawBitmap(rgbArrayBitmap, 0, 0, paint);
+                    } else {
+                        canvas.drawRGB(0, 0, 0);
+                    }
+                } finally {
+                    surface.unlockCanvasAndPost(canvas);
+                }
 
                 frameEndNanos = System.nanoTime();
                 frameDuration = frameEndNanos - frameStartNanos;
@@ -123,7 +180,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         } catch (Throwable throwable) {
             Tools.showError(getContext(), throwable);
         }
-        rgbArrayBitmap.recycle();
+        if (rgbArrayBitmap != null) {
+            rgbArrayBitmap.recycle();
+        }
         surface.release();
     }
 
@@ -136,12 +195,19 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         }
     }
 
-    /** Known-good aspect fit used by the first playable one-JVM builds. */
+    /**
+     * Before GAME_READY, preserve the exact known-good 765x503 aspect-fit path.
+     * After the JVM confirms its backing store has expanded, fill Android's
+     * content area because the logical framebuffer now has the same aspect.
+     */
     private void refreshSize(){
         ViewGroup.LayoutParams layoutParams = getLayoutParams();
         if (layoutParams == null) return;
 
-        if(getHeight() < getWidth()){
+        if (mRuntimeViewportApplied) {
+            layoutParams.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        } else if(getHeight() < getWidth()){
             layoutParams.width = AWT_CANVAS_WIDTH * getHeight() / AWT_CANVAS_HEIGHT;
         }else{
             layoutParams.height = AWT_CANVAS_HEIGHT * getWidth() / AWT_CANVAS_WIDTH;
