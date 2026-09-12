@@ -201,3 +201,24 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.5.0'
 }
+
+// RT4's Java side sees Android as Linux/aarch64 and therefore verifies the
+// Linux/arm64 LWJGL fingerprint resource names. We intentionally ship custom
+// Android ARM64 natives, so align those resources with the exact binaries that
+// will be packaged instead of accepting a noisy false version-mismatch warning.
+def alignSinglePlayerLwjglFingerprints = tasks.register(
+        'alignSinglePlayerLwjglFingerprints', Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'python3',
+            'scripts/singleplayer/align_lwjgl_android_fingerprints.py',
+            '--rt4-jar', 'app_pojavlauncher/src/main/assets/rt4.jar',
+            '--native-dir', 'app_pojavlauncher/src/main/jniLibs/arm64-v8a'
+    inputs.file 'src/main/assets/rt4.jar'
+    inputs.files 'src/main/jniLibs/arm64-v8a/liblwjgl.so',
+            'src/main/jniLibs/arm64-v8a/libopenal.so'
+    outputs.file 'src/main/assets/rt4.jar'
+}
+
+tasks.named('preBuild').configure {
+    dependsOn alignSinglePlayerLwjglFingerprints
+}
