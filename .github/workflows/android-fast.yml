@@ -29,16 +29,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up JDK 8 for launcher support
+      - name: Install JDK 8 toolchain for launcher support
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '8'
 
-      - name: Set up Gradle
+      - name: Set up JDK 17 for Gradle and single-player build
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 7.6.1
+          gradle-version: 8.11.1
           cache-cleanup: on-success
 
       - name: Build launcher support JARs
@@ -46,13 +52,7 @@ jobs:
           set -euxo pipefail
           ./scripts/languagelist_updater.sh
           mkdir -p out build/ci-cache build/download-cache
-          gradle :jre_lwjgl3glfw:build --no-daemon
-
-      - name: Set up JDK 17 for single-player build
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
+          ./gradlew :jre_lwjgl3glfw:build --no-daemon
 
       - name: Restore patched world engine bundle
         id: engine-cache
@@ -310,7 +310,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p out
-          gradle :app_pojavlauncher:assembleDebug --no-daemon \
+          ./gradlew :app_pojavlauncher:assembleDebug --no-daemon \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
           cp app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/2009scape-mobile.apk
           sha256sum out/2009scape-mobile.apk > out/2009scape-mobile.apk.sha256
