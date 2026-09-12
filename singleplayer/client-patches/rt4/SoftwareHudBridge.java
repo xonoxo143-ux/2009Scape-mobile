@@ -10,15 +10,22 @@ public final class SoftwareHudBridge {
     private SoftwareHudBridge() {}
 
     /**
-     * RT4's software path rebuilds the resizable rectangle list while drawing a
-     * frame. Marking the previous frame's pending-invalidations is not enough:
-     * the newly rebuilt HUD rectangle indexes can then miss the final AWT blit,
-     * which presents a world-only frame and makes every HUD element flicker.
+     * RT4's software path uses two different dirty-state stages:
      *
-     * rectangleRedraw survives that rectangle-list rebuild and is consumed only
-     * after the current frame has been fully composed. Arming the whole fixed
-     * 100-slot table therefore makes the current frame's actual rectangles blit
-     * from the final framebuffer, without changing viewport dimensions or GL.
+     * 1. aBooleanArray116 decides whether ordinary interface components are
+     *    actually rendered into the software framebuffer this frame.
+     * 2. rectangleRedraw decides which completed framebuffer rectangles are
+     *    copied to the AWT canvas at the end of the frame.
+     *
+     * The resizable root rebuilds its rectangle list while rendering. The list
+     * can therefore contain more/different rectangle indexes than the preceding
+     * frame. Dirtying only the previous pending list (or only the final blit
+     * list) leaves newly allocated HUD rectangles with a false render gate. The
+     * world is then rendered underneath them and a one-frame UI dropout appears.
+     *
+     * Arm all three 100-slot tables before the frame. LoginManager may rewrite
+     * the indexes that existed last frame, but newly allocated indexes remain
+     * true, so every current HUD rectangle is both rendered and presented.
      */
     public static void prepareFrameBlit() {
         if (!Boolean.getBoolean("singleplayer")
@@ -29,10 +36,12 @@ public final class SoftwareHudBridge {
             return;
         }
 
+        Arrays.fill(InterfaceList.aBooleanArray100, true);
+        Arrays.fill(InterfaceList.aBooleanArray116, true);
         Arrays.fill(InterfaceList.rectangleRedraw, true);
         if (!announced) {
             announced = true;
-            System.out.println("SINGLEPLAYER_HUD: FULL_SOFTWARE_FRAME_BLIT_ARMED");
+            System.out.println("SINGLEPLAYER_HUD: FULL_SOFTWARE_RENDER_AND_BLIT_ARMED");
         }
     }
 }
