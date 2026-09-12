@@ -166,7 +166,9 @@ public final class LocalLeagueUiBridge {
                     "SINGLEPLAYER_LEAGUE_UI: DRAW " + layout.width + "x" + layout.height);
         }
 
-        API.FillRect(0, 0, GameShell.canvasWidth, GameShell.canvasHeight, COLOR_DIM, 150);
+        // Keep the game readable behind the modal. The League window should feel
+        // like a compact in-game panel, not a second full-screen scene.
+        API.FillRect(0, 0, GameShell.canvasWidth, GameShell.canvasHeight, COLOR_DIM, 68);
 
         API.FillRect(layout.x, layout.y, layout.width, layout.height, COLOR_BG, 0);
         API.DrawRect(layout.x, layout.y, layout.width, layout.height, COLOR_FRAME);
@@ -207,7 +209,8 @@ public final class LocalLeagueUiBridge {
                     i == activeTab ? COLOR_TAB_ACTIVE : COLOR_TAB,
                     0);
             API.DrawRect(tx, layout.tabsY, layout.tabW, layout.tabH, COLOR_FRAME);
-            textLarge(names[i], tx + 12, layout.tabsY + 20, i == activeTab ? COLOR_GOLD : COLOR_TEXT);
+            int textX = tx + Math.max(8, (layout.tabW - Fonts.p12Full.getStringWidth(JagString.of(names[i]))) / 2);
+            textLarge(names[i], textX, layout.tabsY + 20, i == activeTab ? COLOR_GOLD : COLOR_TEXT);
         }
     }
 
@@ -219,15 +222,16 @@ public final class LocalLeagueUiBridge {
         API.FillRect(layout.summaryX, layout.summaryY, layout.summaryW, layout.summaryH, 0x1d1914, 0);
         API.DrawRect(layout.summaryX, layout.summaryY, layout.summaryW, layout.summaryH, 0x5d4f39);
         textLarge("League points: " + points, layout.summaryX + 10, layout.summaryY + 20, COLOR_GOLD);
+        int statsX = layout.summaryX + Math.min(190, Math.max(165, layout.summaryW / 2));
         textSmall(
-                "Completed tasks: " + tasks + "    Unlocked relics: " + relics,
-                layout.summaryX + 215,
+                "Tasks: " + tasks + "    Relics: " + relics,
+                statsX,
                 layout.summaryY + 19,
                 COLOR_MUTED);
     }
 
     private static void drawTasks(Layout layout) {
-        int sidebarW = Math.min(174, layout.contentW / 3);
+        int sidebarW = Math.min(150, Math.max(128, layout.contentW / 3));
         int gap = 8;
         int listX = layout.contentX + sidebarW + gap;
         int listW = layout.contentW - sidebarW - gap;
@@ -241,7 +245,7 @@ public final class LocalLeagueUiBridge {
         drawStaticSelector(layout.contentX + 10, layout.contentY + 98, sidebarW - 20, "All");
         textSmall("Type", layout.contentX + 10, layout.contentY + 138, COLOR_MUTED);
         drawStaticSelector(layout.contentX + 10, layout.contentY + 144, sidebarW - 20, "All");
-        textSmall("Drag the list to scroll.", layout.contentX + 10, layout.contentY + layout.contentH - 18, COLOR_MUTED);
+        textSmall("Drag to scroll.", layout.contentX + 10, layout.contentY + layout.contentH - 18, COLOR_MUTED);
 
         API.FillRect(listX, layout.contentY, listW, layout.contentH, COLOR_PANEL, 0);
         API.DrawRect(listX, layout.contentY, listW, layout.contentH, 0x5d4f39);
@@ -258,7 +262,7 @@ public final class LocalLeagueUiBridge {
         if (tasks.isEmpty()) {
             textLarge("No League tasks completed yet.", listX + 16, rowsTop + 34, COLOR_TEXT);
             textSmall(
-                    "The task catalogue will populate as the League ruleset is installed.",
+                    "Completed tasks will appear here.",
                     listX + 16,
                     rowsTop + 56,
                     COLOR_MUTED);
@@ -278,7 +282,7 @@ public final class LocalLeagueUiBridge {
     }
 
     private static void drawRelics(Layout layout) {
-        int passiveW = Math.min(205, layout.contentW / 3);
+        int passiveW = Math.min(180, Math.max(145, layout.contentW / 3));
         int gap = 8;
         int leftW = layout.contentW - passiveW - gap;
         int passiveX = layout.contentX + leftW + gap;
@@ -297,7 +301,7 @@ public final class LocalLeagueUiBridge {
         if (relics.isEmpty()) {
             textLarge("No relics unlocked yet.", layout.contentX + 16, rowsTop + 34, COLOR_TEXT);
             textSmall(
-                    "Unlocked relics will appear here as the League rules become active.",
+                    "Unlocked relics will appear here.",
                     layout.contentX + 16,
                     rowsTop + 56,
                     COLOR_MUTED);
@@ -316,26 +320,26 @@ public final class LocalLeagueUiBridge {
         API.FillRect(passiveX, layout.contentY, passiveW, layout.contentH, 0x272119, 0);
         API.DrawRect(passiveX, layout.contentY, passiveW, layout.contentH, 0x5d4f39);
         textLarge("Passive effects", passiveX + 10, layout.contentY + 21, COLOR_GOLD);
-        textSmall("Tier-wide bonuses live here.", passiveX + 10, layout.contentY + 49, COLOR_TEXT);
-        textSmall("They are kept separate from", passiveX + 10, layout.contentY + 66, COLOR_MUTED);
-        textSmall("the selected relic's effects.", passiveX + 10, layout.contentY + 82, COLOR_MUTED);
-        textSmall("The ruleset will supply the", passiveX + 10, layout.contentY + 112, COLOR_MUTED);
-        textSmall("actual tier effect text.", passiveX + 10, layout.contentY + 128, COLOR_MUTED);
+        textSmall("Tier-wide bonuses", passiveX + 10, layout.contentY + 49, COLOR_TEXT);
+        textSmall("stay separate from", passiveX + 10, layout.contentY + 66, COLOR_MUTED);
+        textSmall("selected relic effects.", passiveX + 10, layout.contentY + 82, COLOR_MUTED);
+        textSmall("The ruleset supplies", passiveX + 10, layout.contentY + 112, COLOR_MUTED);
+        textSmall("the actual effect text.", passiveX + 10, layout.contentY + 128, COLOR_MUTED);
     }
 
     private static void drawBlessings(Layout layout) {
         API.FillRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, COLOR_PANEL, 0);
         API.DrawRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, 0x5d4f39);
         textLarge("Blessings", layout.contentX + 12, layout.contentY + 22, COLOR_GOLD);
-        textLarge("Blessing state is the next authoritative runtime seam.",
+        textLarge("Blessing state is not wired yet.",
                 layout.contentX + 18, layout.contentY + 62, COLOR_TEXT);
         textSmall(
-                "This page is already touch-modal and scroll-ready; choices, task progress and resets",
+                "This page is touch-modal and ready for authoritative choices, progress and resets.",
                 layout.contentX + 18,
                 layout.contentY + 88,
                 COLOR_MUTED);
         textSmall(
-                "will be populated from the retained world rather than stored in the client.",
+                "Nothing fake is stored in the client while that runtime seam is unfinished.",
                 layout.contentX + 18,
                 layout.contentY + 105,
                 COLOR_MUTED);
@@ -343,8 +347,8 @@ public final class LocalLeagueUiBridge {
         int sampleY = layout.contentY + 145 - blessingsScroll;
         API.FillRect(layout.contentX + 18, sampleY, layout.contentW - 36, 54, COLOR_PANEL_ALT, 0);
         API.DrawRect(layout.contentX + 18, sampleY, layout.contentW - 36, 54, 0x5d4f39);
-        textLarge("No blessing choices have been installed yet.", layout.contentX + 30, sampleY + 23, COLOR_TEXT);
-        textSmall("No fake client-side state is being shown.", layout.contentX + 30, sampleY + 42, COLOR_MUTED);
+        textLarge("No blessing choices installed yet.", layout.contentX + 30, sampleY + 23, COLOR_TEXT);
+        textSmall("Awaiting authoritative world state.", layout.contentX + 30, sampleY + 42, COLOR_MUTED);
     }
 
     private static void drawStaticSelector(int x, int y, int width, String value) {
@@ -389,8 +393,13 @@ public final class LocalLeagueUiBridge {
         int canvasW = GameShell.canvasWidth;
         int canvasH = GameShell.canvasHeight;
 
-        int width = Math.min(700, Math.max(420, canvasW - 30));
-        int height = Math.min(455, Math.max(300, canvasH - 24));
+        // Keep the modal materially smaller than the world view. Wide phones get
+        // a little more horizontal room; taller/foldable layouts retain more game
+        // above and below the window.
+        int width = clamp(canvasW * 58 / 100, 500, 650);
+        int height = clamp(canvasH * 68 / 100, 320, 370);
+        width = Math.min(width, Math.max(420, canvasW - 32));
+        height = Math.min(height, Math.max(300, canvasH - 28));
         int x = Math.max(0, (canvasW - width) / 2);
         int y = Math.max(0, (canvasH - height) / 2);
 
@@ -403,9 +412,10 @@ public final class LocalLeagueUiBridge {
         l.closeH = 20;
         l.closeX = x + width - l.closeW - 7;
         l.closeY = y + 5;
-        l.tabsX = x + 12;
+        l.tabW = Math.min(140, Math.max(104, (width - 32) / 3));
+        int tabsTotal = l.tabW * 3 + 8;
+        l.tabsX = x + Math.max(12, (width - tabsTotal) / 2);
         l.tabsY = y + 34;
-        l.tabW = Math.min(116, (width - 40) / 4);
         l.tabH = 27;
         l.summaryX = x + 12;
         l.summaryY = y + 67;
