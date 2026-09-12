@@ -27,6 +27,10 @@ def main():
 
     java_args = [
         '-Djava.awt.headless=false',
+        # Desktop font-cache creation formats a timestamp while Cacio's custom
+        # system loader is still being constructed. COMPAT avoids CLDR service
+        # discovery re-entering that loader. This is only the CI probe JVM.
+        '-Djava.locale.providers=COMPAT',
         '-Dcacio.managed.screensize=1289x503',
         '-Dcacio.font.fontmanager=sun.awt.X11FontManager',
         '-Dcacio.font.fontscaler=sun.font.FreetypeFontScaler',
