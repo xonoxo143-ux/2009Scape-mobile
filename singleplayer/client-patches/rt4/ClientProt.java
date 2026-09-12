@@ -346,7 +346,7 @@ public final class ClientProt {
     @OriginalMember(owner = "client!ej", name = "i", descriptor = "(I)V")
     public static void sendWindowDetails() {
         if (LocalClientCommands.trackingDisplay(
-                DisplayMode.getWindowMode(),
+                LocalViewportBridge.presentationWindowMode(DisplayMode.getWindowMode()),
                 GameShell.canvasWidth,
                 GameShell.canvasHeight,
                 Preferences.antiAliasingMode)) {

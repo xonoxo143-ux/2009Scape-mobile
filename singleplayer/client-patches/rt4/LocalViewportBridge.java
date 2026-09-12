@@ -10,6 +10,12 @@ import java.awt.Insets;
 public final class LocalViewportBridge {
     private static int appliedWidth = -1;
     private static int appliedHeight = -1;
+    private static int notifiedWidth = -1;
+    private static int notifiedHeight = -1;
+    private static int layoutAttempts;
+    private static long nextLayoutAttemptMs;
+    private static boolean layoutConfirmed;
+    private static boolean layoutFailureReported;
 
     private LocalViewportBridge() {}
 
@@ -27,7 +33,12 @@ public final class LocalViewportBridge {
         if (appliedWidth == width
                 && appliedHeight == height
                 && GameShell.canvasWidth == width
-                && GameShell.canvasHeight == height) {
+                && GameShell.canvasHeight == height
+                && GameShell.canvas.getWidth() == width
+                && GameShell.canvas.getHeight() == height
+                && GameShell.canvas.getX() == GameShell.frame.getInsets().left
+                && GameShell.canvas.getY() == GameShell.frame.getInsets().top) {
+            synchronizeWorldLayout(width, height);
             return true;
         }
 
@@ -57,12 +68,77 @@ public final class LocalViewportBridge {
             GameShell.fullRedraw = true;
             appliedWidth = width;
             appliedHeight = height;
+            layoutAttempts = 0;
+            nextLayoutAttemptMs = 0L;
+            layoutConfirmed = false;
+            layoutFailureReported = false;
             System.out.println(
                     "SINGLEPLAYER_VIEWPORT: RT4_SOFTWARE_READY " + width + "x" + height);
+            synchronizeWorldLayout(width, height);
             return true;
         } catch (Throwable failure) {
             System.err.println("SINGLEPLAYER_VIEWPORT: APPLY_FAILED " + failure);
             return false;
         }
+    }
+
+    /** Layout mode is independent of the retained software/GL renderer choice. */
+    public static int presentationWindowMode(int rendererWindowMode) {
+        if (Boolean.getBoolean("singleplayer")
+                && appliedWidth >= 765 && appliedHeight >= 503
+                && (appliedWidth > 765 || appliedHeight > 503)) {
+            return 2;
+        }
+        return rendererWindowMode;
+    }
+
+    private static void synchronizeWorldLayout(int width, int height) {
+        if (client.gameState != 30 || presentationWindowMode(0) != 2) return;
+
+        int root = InterfaceList.topLevelInterface;
+        if (root == 746 && notifiedWidth == width && notifiedHeight == height) {
+            if (!layoutConfirmed) {
+                layoutConfirmed = true;
+                layoutAttempts = 0;
+                nextLayoutAttemptMs = 0L;
+                layoutFailureReported = false;
+                GameShell.fullRedraw = true;
+                System.out.println("SINGLEPLAYER_WIDESCREEN: READY " + width + "x" + height
+                        + " root=" + root
+                        + " canvas=" + GameShell.canvas.getWidth() + "x" + GameShell.canvas.getHeight()
+                        + " origin=" + GameShell.leftMargin + "," + GameShell.topMargin
+                        + " renderer=" + (GlRenderer.enabled ? "GL" : "software"));
+            }
+            return;
+        }
+
+        layoutConfirmed = false;
+        // Preserve other top-level interfaces, such as a cutscene or full-screen UI.
+        if (root != 548 && root != 746) return;
+        long now = System.currentTimeMillis();
+        if (now < nextLayoutAttemptMs) return;
+        if (layoutAttempts >= 3) {
+            if (!layoutFailureReported) {
+                layoutFailureReported = true;
+                System.err.println("SINGLEPLAYER_WIDESCREEN: LAYOUT_UNCONFIRMED root=" + root);
+            }
+            return;
+        }
+        nextLayoutAttemptMs = now + 2000L;
+        layoutAttempts++;
+
+        // Growing pixels does not switch interface 548 to the resizable 746.
+        // Use the retained world command so tabs, overlays and interface slots
+        // move together. Queue failure must never gate GAME_READY or local login.
+        boolean queued = LocalClientCommands.trackingDisplay(
+                2, width, height, Preferences.antiAliasingMode);
+        if (queued) {
+            notifiedWidth = width;
+            notifiedHeight = height;
+        }
+        System.out.println("SINGLEPLAYER_WIDESCREEN: LAYOUT_REQUEST " + width + "x" + height
+                + " root=" + root + " queued=" + queued
+                + " attempt=" + layoutAttempts
+                + " renderer=" + (GlRenderer.enabled ? "GL" : "software"));
     }
 }

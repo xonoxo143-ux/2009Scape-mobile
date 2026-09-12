@@ -60,3 +60,15 @@ Install Build 27 over the existing app and check:
 2. After login, does the viewport expand correctly, with touch positions matching the game?
 
 Keep these as separate outcomes. Build success does not settle the startup-source discrepancy or prove widescreen behavior on the phone.
+
+## September 12: Build 27 phone result and software-layout correction
+
+The user confirmed Build 27 reaches the playable world, but widescreen does not work. It is now the latest device-proven world-entry checkpoint. Their screen recording shows the fixed interface centered between black bars; their debug log reports RT4_SOFTWARE_READY 1289x503, CLIENT_ATTACHED and LOGGED_IN, with no widescreen layout transition.
+
+Root cause: LocalViewportBridge enlarged the software framebuffer but never submitted TrackingDisplayUpdate to the local world. The world retained fixed root interface 548 instead of resizable root 746. Later ClientProt window notifications also derived layout solely from DisplayMode.getWindowMode(), which reports 0 for software rendering.
+
+The correction keeps the existing Android/Cacio startup path and frozen input/render dimensions. LocalViewportBridge requests the retained world layout transition after reaching gameState 30, confirms root 746, and logs SINGLEPLAYER_WIDESCREEN: READY with actual canvas dimensions. It preserves unrelated full-screen interfaces, bounds failed retries, and never makes the layout notification a login readiness gate. ClientProt preserves resizable presentation in later local display notifications without enabling the GL renderer.
+
+Validation: compile against the actual Build 27 RT4/bootstrap JARs. The new regression probe fails on unmodified Build 27 with "Wide software display sent fixed layout" and passes on the corrected classes. It also checks no layout dispatch during map loading, no repeated dispatch after confirmation, preserving unrelated roots and renderer selection, and bounded failed retries. The existing bootstrap-only publisher runs this probe before activating the update.
+
+Delivery: updateable bootstrap only; no Android APK change is required. Publication and phone confirmation remain separate gates. Next phone check: confirm root 746/wider world view and correct touches; inspect LAYOUT_REQUEST / READY / LAYOUT_UNCONFIRMED if it fails.

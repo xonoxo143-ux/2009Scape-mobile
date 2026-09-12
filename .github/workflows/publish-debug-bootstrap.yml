@@ -74,6 +74,18 @@ jobs:
           jar tf build/singleplayer-bootstrap.jar | grep -q '^rt4/Js5CachedResourceProvider.class$'
           jar tf build/singleplayer-bootstrap.jar | grep -q '^rt4/MiniMenu.class$'
 
+      - name: Check software widescreen layout regression
+        run: |
+          set -euxo pipefail
+          mkdir -p build/viewport-tests
+          javac --release 17 \
+            -cp build/singleplayer-bootstrap.jar:app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/viewport-tests \
+            singleplayer/native-refactor/tests/ViewportLayoutRegression.java
+          java -Djava.awt.headless=true \
+            -cp build/viewport-tests:build/singleplayer-bootstrap.jar:app_pojavlauncher/src/main/assets/rt4.jar \
+            rt4.ViewportLayoutRegression
+
       - name: Prepare bootstrap-only manifest update
         env:
           GH_TOKEN: ${{ github.token }}
