@@ -185,15 +185,31 @@ public final class LocalWidescreenBridge {
             GameShell.frame.validate();
         }
 
-        // Keep RT4's HD/resizable bookkeeping aligned with the new backing
-        // screen. configureFrame() handles the canvas and interface relayout.
+        // configureFrame() deliberately keeps a 765x503 canvas while RT4 still
+        // identifies itself as fixed mode. Build 22 widened the Cacio/frame
+        // backing store but left that fixed-mode bit unchanged, so Android began
+        // scaling touch into 1289-wide coordinates while RT4 was still listening
+        // on a 765-wide canvas. Mark the already-running HD renderer resizable
+        // before configureFrame() so RT4 itself adopts the same viewport.
+        DisplayMode.resizable = true;
         GlRenderer.canvasWidth = width;
         GlRenderer.canvasHeight = height;
         GameShell.configureFrame();
+
+        if (GameShell.canvasWidth != width || GameShell.canvasHeight != height) {
+            throw new IllegalStateException(
+                    "RT4 canvas refused widescreen target: requested="
+                            + width + "x" + height
+                            + " actual=" + GameShell.canvasWidth + "x" + GameShell.canvasHeight
+                            + " mode=" + DisplayMode.getWindowMode()
+                            + " gl=" + GlRenderer.enabled);
+        }
+
         System.out.println(
                 "SINGLEPLAYER_WIDESCREEN: RT4_FRAME_RESIZED frame="
                         + GameShell.frameWidth + "x" + GameShell.frameHeight
-                        + " canvas=" + GameShell.canvasWidth + "x" + GameShell.canvasHeight);
+                        + " canvas=" + GameShell.canvasWidth + "x" + GameShell.canvasHeight
+                        + " mode=" + DisplayMode.getWindowMode());
     }
 
     private static void resizeGlfwWindowBestEffort(int width, int height) {
