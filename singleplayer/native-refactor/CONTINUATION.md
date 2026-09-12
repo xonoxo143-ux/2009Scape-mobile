@@ -29,7 +29,7 @@ Inspection of the source at Build 26 and Build 27 found an existing mismatch wit
 - Tools.getCacioJavaArgs passes those dimensions to cacio.managed.screensize.
 - LocalWidescreenBridge still describes a 765x503 bootstrap and a resize after GAME_READY.
 
-The compile-only fix intentionally preserves this existing code. Do not describe Build 27 as device-proven or claim that its startup is guaranteed to be 765x503. Reconcile this discrepancy with device logs and the historical checkpoints before making another viewport change. STARTUP_CONTRACT.md currently describes the source's display-derived model, so it must not be mistaken for confirmation of the newer user-supplied handoff.
+The compile-only fix intentionally preserves this existing code. At that compile-only checkpoint, Build 27 had not yet been tested on a device. The later phone result below now confirms world entry, but does not establish a 765x503 startup. Reconcile this discrepancy with device logs and the historical checkpoints before making another viewport change. STARTUP_CONTRACT.md currently describes the source's display-derived model, so it must not be mistaken for confirmation of the newer user-supplied handoff.
 
 ## Ideas and constraints to carry forward
 
@@ -51,11 +51,11 @@ The compile-only fix intentionally preserves this existing code. Do not describe
 - APK size: 217065592 bytes.
 - APK SHA-256: c3c774a119ffa80ae9f7dc37bf3bb14c0e5be1fb8c2371c66cb1c92b7e821b14.
 - Verification: downloaded artifact digest matches GitHub; extracted APK digest matches the CI checksum; APK ZIP CRCs pass; world engine/data, ARM64 runtime, RT4 bootstrap, League plugin, and Android SQLite native payloads are present.
-- No device test has been performed for this build.
+- Subsequent device result: playable world confirmed; widescreen failed. See the September 12 correction below.
 
-## Next device feedback
+## Original Build 27 device questions (now answered below)
 
-Install Build 27 over the existing app and check:
+The user was asked to install Build 27 over the existing app and check:
 1. Does the app enter the playable world?
 2. After login, does the viewport expand correctly, with touch positions matching the game?
 
@@ -72,3 +72,13 @@ The correction keeps the existing Android/Cacio startup path and frozen input/re
 Validation: compile against the actual Build 27 RT4/bootstrap JARs. The new regression probe fails on unmodified Build 27 with "Wide software display sent fixed layout" and passes on the corrected classes. It also checks no layout dispatch during map loading, no repeated dispatch after confirmation, preserving unrelated roots and renderer selection, and bounded failed retries. The existing bootstrap-only publisher runs this probe before activating the update.
 
 Delivery: updateable bootstrap only; no Android APK change is required. Publication and phone confirmation remain separate gates. Next phone check: confirm root 746/wider world view and correct touches; inspect LAYOUT_REQUEST / READY / LAYOUT_UNCONFIRMED if it fails.
+
+## Published software-layout update
+
+- Source commit: 2f4be0652db5e46e879d0130715e480e98ea3be4.
+- Publisher run: https://github.com/xonoxo143-ux/2009Scape-mobile/actions/runs/34697834912
+- Publication succeeded September 12, 2026 at 13:57 UTC. Source generation, complete bootstrap compilation, the software-widescreen regression probe, upload and post-publication download/checksum verification all passed.
+- Active payload manifest version: 2f4be0652db5e46e879d0130715e480e98ea3be4.
+- Published bootstrap SHA-256: eb82afd5a4a7c7662aa842e039ba4352dfb4b104675dd6b97801856fad3ab8f0; size: 129276 bytes.
+- Delivery to the phone: use the existing in-app "Update from GitHub" and then start single-player again. Keep the installed Build 27 APK; this update replaces only the bootstrap JAR entry in the payload manifest.
+- Remaining gate: user must confirm actual post-login world/interface width and touch alignment. The READY marker observed in CI is from the regression probe, not a phone run. If the phone still fails, collect the new debug log and inspect LAYOUT_REQUEST / READY / LAYOUT_UNCONFIRMED, root interface, actual canvas size and margins before touching startup.
