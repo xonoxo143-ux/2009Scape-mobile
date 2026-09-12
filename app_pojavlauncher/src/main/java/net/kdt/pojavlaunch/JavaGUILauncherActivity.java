@@ -6,7 +6,6 @@ import android.content.ClipboardManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
@@ -35,8 +34,8 @@ import java.util.List;
 public class JavaGUILauncherActivity extends BaseActivity {
 
     private static final int CHAT_KEYBOARD_MAX_X = 520;
-    private static final int CHAT_KEYBOARD_TOP_FROM_BOTTOM = 55;
-    private static final int CHAT_KEYBOARD_BOTTOM_FROM_BOTTOM = 25;
+    private static final int CHAT_KEYBOARD_MIN_Y = 448;
+    private static final int CHAT_KEYBOARD_MAX_Y = 478;
     private static final long EXIT_BACK_WINDOW_MS = 1500L;
     private static final long STARTUP_STALL_LOG_MS = 45000L;
 
@@ -103,31 +102,14 @@ public class JavaGUILauncherActivity extends BaseActivity {
                 new TouchInputController(mTextureView, this::onClientTap);
         mTextureView.setOnTouchListener(mTouchInputController);
 
-        /*
-         * Startup ordering is intentional:
-         *   1. Read Android's display geometry synchronously.
-         *   2. Freeze one logical RT4/Cacio viewport for this process.
-         *   3. Apply that frozen size to the TextureView.
-         *   4. Start the JVM immediately, as the known-good launcher did.
-         *
-         * Surface/layout callbacks must never decide when the game starts or
-         * mutate the framebuffer after Cacio/RT4 have consumed its dimensions.
-         */
-        DisplayMetrics viewportMetrics = Tools.getDisplayMetrics(this);
-        AWTCanvasView.freezeLogicalViewport(
-                viewportMetrics.widthPixels,
-                viewportMetrics.heightPixels);
-        mTextureView.applyFrozenViewport();
+        // Deliberately match the first known-good one-JVM startup path. The
+        // Android surface can finish measuring independently; neither layout nor
+        // TextureView callbacks are allowed to gate the JVM/world launch.
         Logger.appendToLog(
-                "SINGLEPLAYER_STARTUP: VIEWPORT_FROZEN "
+                "SINGLEPLAYER_STARTUP: BOOTSTRAP_VIEWPORT "
                         + AWTCanvasView.AWT_CANVAS_WIDTH
                         + "x"
-                        + AWTCanvasView.AWT_CANVAS_HEIGHT
-                        + " source="
-                        + viewportMetrics.widthPixels
-                        + "x"
-                        + viewportMetrics.heightPixels);
-
+                        + AWTCanvasView.AWT_CANVAS_HEIGHT);
         installBackHandling();
         launchCombinedRuntime();
     }
@@ -158,18 +140,9 @@ public class JavaGUILauncherActivity extends BaseActivity {
     }
 
     private void onClientTap(int clientX, int clientY) {
-        // The chat entry stays anchored to the lower-left of RT4's resizable
-        // canvas. Keep the historical 503px offsets relative to the bottom so
-        // the mobile keyboard trigger follows the expanded viewport.
-        int chatMinY = Math.max(
-                0,
-                AWTCanvasView.AWT_CANVAS_HEIGHT - CHAT_KEYBOARD_TOP_FROM_BOTTOM);
-        int chatMaxY = Math.max(
-                chatMinY,
-                AWTCanvasView.AWT_CANVAS_HEIGHT - CHAT_KEYBOARD_BOTTOM_FROM_BOTTOM);
         if (clientX <= CHAT_KEYBOARD_MAX_X
-                && clientY >= chatMinY
-                && clientY <= chatMaxY
+                && clientY >= CHAT_KEYBOARD_MIN_Y
+                && clientY <= CHAT_KEYBOARD_MAX_Y
                 && !TouchCharInput.softKeyboardIsActive) {
             mTouchCharInput.switchKeyboardState();
         }
@@ -354,10 +327,6 @@ public class JavaGUILauncherActivity extends BaseActivity {
                     "-DsinglePlayerName="
                             + SinglePlayerManager.getProfileName(this));
             javaArgList.add("-Dsingleplayer=true");
-            javaArgList.add(
-                    "-DglfwWidth=" + AWTCanvasView.AWT_CANVAS_WIDTH);
-            javaArgList.add(
-                    "-DglfwHeight=" + AWTCanvasView.AWT_CANVAS_HEIGHT);
             javaArgList.add(
                     "-Dorg.sqlite.lib.path="
                             + getApplicationInfo().nativeLibraryDir);
