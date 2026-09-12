@@ -1,15 +1,17 @@
 package net.kdt.pojavlaunch;
 
-import android.content.*;
-import android.graphics.*;
-import android.text.*;
-import android.util.*;
-import android.view.*;
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.SurfaceTexture;
+import android.util.AttributeSet;
+import android.util.DisplayMetrics;
+import android.view.Surface;
+import android.view.TextureView;
+import android.view.ViewGroup;
 
-import java.util.*;
-
-import net.kdt.pojavlaunch.Tools;
-import net.kdt.pojavlaunch.utils.*;
+import net.kdt.pojavlaunch.utils.JREUtils;
 
 public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener, Runnable {
     private static final int BASE_CANVAS_WIDTH = 765;
@@ -19,9 +21,14 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
      * RT4's fixed-mode dimensions remain our minimum logical viewport. On wide
      * mobile displays we expand the logical canvas instead of aspect-fitting the
      * old 765x503 image into black bars or stretching it.
+     *
+     * These values are deliberately frozen exactly once before the child JVM is
+     * started. Cacio, RT4/GLFW, touch translation and this renderer must all see
+     * the same dimensions for the entire runtime.
      */
     public static volatile int AWT_CANVAS_WIDTH = BASE_CANVAS_WIDTH;
     public static volatile int AWT_CANVAS_HEIGHT = BASE_CANVAS_HEIGHT;
+    private static volatile boolean sViewportFrozen;
 
     private static final double NANOS = 1000000000.0;
     private volatile boolean mIsDestroyed = false;
@@ -35,28 +42,21 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     public AWTCanvasView(Context ctx, AttributeSet attrs) {
         super(ctx, attrs);
         setSurfaceTextureListener(this);
-        // Establish the logical size before the TextureView can start its render
-        // thread. The posted pass then refines it using measured view dimensions.
-        configureForCurrentView();
-        post(this::configureForCurrentView);
     }
 
     /**
-     * Choose a logical RT4 viewport with the same aspect ratio as the Android
-     * game surface while never shrinking below the historical 765x503 canvas.
-     * This reveals more world on the extra axis rather than distorting pixels.
+     * Freeze the logical RT4 viewport from an Android display/window size.
+     * First call wins for the lifetime of the process. Surface callbacks are
+     * consumers of this state; they are never allowed to resize the game later.
      */
-    public void configureForCurrentView() {
-        int viewWidth = getWidth();
-        int viewHeight = getHeight();
-        if (viewWidth <= 0 || viewHeight <= 0) {
-            DisplayMetrics metrics = getResources().getDisplayMetrics();
-            viewWidth = Math.max(1, metrics.widthPixels);
-            viewHeight = Math.max(1, metrics.heightPixels);
-        }
+    public static synchronized void freezeLogicalViewport(int viewWidth, int viewHeight) {
+        if (sViewportFrozen) return;
 
-        float aspect = (float) viewWidth / (float) Math.max(1, viewHeight);
+        viewWidth = Math.max(1, viewWidth);
+        viewHeight = Math.max(1, viewHeight);
+        float aspect = (float) viewWidth / (float) viewHeight;
         float baseAspect = (float) BASE_CANVAS_WIDTH / (float) BASE_CANVAS_HEIGHT;
+
         if (aspect >= baseAspect) {
             AWT_CANVAS_HEIGHT = BASE_CANVAS_HEIGHT;
             AWT_CANVAS_WIDTH = Math.max(
@@ -68,7 +68,23 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                     BASE_CANVAS_HEIGHT,
                     Math.round(BASE_CANVAS_WIDTH / Math.max(0.01f, aspect)));
         }
+        sViewportFrozen = true;
+    }
 
+    public static boolean isLogicalViewportFrozen() {
+        return sViewportFrozen;
+    }
+
+    /** Defensive fallback for a surface created outside the normal launcher path. */
+    private static void ensureLogicalViewportFrozen(Context context) {
+        if (sViewportFrozen) return;
+        DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+        freezeLogicalViewport(metrics.widthPixels, metrics.heightPixels);
+    }
+
+    /** Apply the already-frozen logical size to the Android TextureView. */
+    public void applyFrozenViewport() {
+        ensureLogicalViewportFrozen(getContext());
         refreshSize();
         SurfaceTexture texture = getSurfaceTexture();
         if (texture != null) {
@@ -78,6 +94,7 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture texture, int w, int h) {
+        ensureLogicalViewportFrozen(getContext());
         texture.setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
         mIsDestroyed = false;
         new Thread(this, "AndroidAWTRenderer").start();
@@ -91,22 +108,27 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
     @Override
     public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int w, int h) {
+        // Android may resize/re-layout the view, but the running Cacio/RT4
+        // framebuffer is immutable. Reapply the frozen buffer rather than
+        // deriving a new game size from this callback.
         texture.setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
     }
 
     @Override
     public void onSurfaceTextureUpdated(SurfaceTexture texture) {
-        // The logical buffer size is managed explicitly by configureForCurrentView.
+        // Intentionally no sizing work here. This callback fires continuously.
     }
 
     @Override
     public void run() {
+        ensureLogicalViewportFrozen(getContext());
+        final int canvasWidth = AWT_CANVAS_WIDTH;
+        final int canvasHeight = AWT_CANVAS_HEIGHT;
         Canvas canvas;
         Surface surface = new Surface(getSurfaceTexture());
-        Bitmap rgbArrayBitmap = null;
-        int[] rgbArray = null;
-        int canvasWidth = 0;
-        int canvasHeight = 0;
+        Bitmap rgbArrayBitmap = Bitmap.createBitmap(
+                canvasWidth, canvasHeight, Bitmap.Config.ARGB_8888);
+        int[] rgbArray = new int[canvasWidth * canvasHeight];
         Paint paint = new Paint();
         paint.setAntiAlias(false);
         paint.setDither(false);
@@ -116,7 +138,7 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         long sleepTime;
         long sleepMillis;
         int sleepNanos;
-        final long frameTimeNanos = (long)(NANOS / 60);
+        final long frameTimeNanos = (long) (NANOS / 60);
         long frameDuration;
 
         try {
@@ -134,25 +156,6 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                         }
                     }
                     continue;
-                }
-
-                int requestedWidth = AWT_CANVAS_WIDTH;
-                int requestedHeight = AWT_CANVAS_HEIGHT;
-                if (rgbArrayBitmap == null
-                        || requestedWidth != canvasWidth
-                        || requestedHeight != canvasHeight) {
-                    if (rgbArrayBitmap != null) {
-                        rgbArrayBitmap.recycle();
-                    }
-                    canvasWidth = requestedWidth;
-                    canvasHeight = requestedHeight;
-                    rgbArrayBitmap = Bitmap.createBitmap(
-                            canvasWidth, canvasHeight, Bitmap.Config.ARGB_8888);
-                    rgbArray = new int[canvasWidth * canvasHeight];
-                    SurfaceTexture texture = getSurfaceTexture();
-                    if (texture != null) {
-                        texture.setDefaultBufferSize(canvasWidth, canvasHeight);
-                    }
                 }
 
                 frameStartNanos = System.nanoTime();
@@ -177,7 +180,7 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                 if (frameDuration < frameTimeNanos) {
                     sleepTime = frameTimeNanos - frameDuration;
                     sleepMillis = sleepTime / 1000000;
-                    sleepNanos = (int)(sleepTime - sleepMillis * 1000000);
+                    sleepNanos = (int) (sleepTime - sleepMillis * 1000000);
                     try {
                         Thread.sleep(sleepMillis, sleepNanos);
                     } catch (InterruptedException e) {
@@ -188,9 +191,7 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         } catch (Throwable throwable) {
             Tools.showError(getContext(), throwable);
         }
-        if (rgbArrayBitmap != null) {
-            rgbArrayBitmap.recycle();
-        }
+        rgbArrayBitmap.recycle();
         surface.release();
     }
 
@@ -203,13 +204,12 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         }
     }
 
-    /** Keep the renderer surface full-screen; the logical buffer now matches it. */
-    private void refreshSize(){
+    /** Keep the renderer surface full-screen; the logical buffer matches it. */
+    private void refreshSize() {
         ViewGroup.LayoutParams layoutParams = getLayoutParams();
         if (layoutParams == null) return;
         layoutParams.width = ViewGroup.LayoutParams.MATCH_PARENT;
         layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT;
         setLayoutParams(layoutParams);
     }
-
 }
