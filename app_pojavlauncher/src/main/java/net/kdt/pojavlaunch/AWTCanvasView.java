@@ -96,16 +96,17 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
     @Override
     public void onSurfaceTextureUpdated(SurfaceTexture texture) {
-        texture.setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        // The logical buffer size is managed explicitly by configureForCurrentView.
     }
 
     @Override
     public void run() {
-        final int canvasWidth = AWT_CANVAS_WIDTH;
-        final int canvasHeight = AWT_CANVAS_HEIGHT;
         Canvas canvas;
         Surface surface = new Surface(getSurfaceTexture());
-        Bitmap rgbArrayBitmap = Bitmap.createBitmap(canvasWidth, canvasHeight, Bitmap.Config.ARGB_8888);
+        Bitmap rgbArrayBitmap = null;
+        int[] rgbArray = null;
+        int canvasWidth = 0;
+        int canvasHeight = 0;
         Paint paint = new Paint();
         paint.setAntiAlias(false);
         paint.setDither(false);
@@ -115,7 +116,6 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         long sleepTime;
         long sleepMillis;
         int sleepNanos;
-        final int[] rgbArray = new int[canvasWidth * canvasHeight];
         final long frameTimeNanos = (long)(NANOS / 60);
         long frameDuration;
 
@@ -134,6 +134,25 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                         }
                     }
                     continue;
+                }
+
+                int requestedWidth = AWT_CANVAS_WIDTH;
+                int requestedHeight = AWT_CANVAS_HEIGHT;
+                if (rgbArrayBitmap == null
+                        || requestedWidth != canvasWidth
+                        || requestedHeight != canvasHeight) {
+                    if (rgbArrayBitmap != null) {
+                        rgbArrayBitmap.recycle();
+                    }
+                    canvasWidth = requestedWidth;
+                    canvasHeight = requestedHeight;
+                    rgbArrayBitmap = Bitmap.createBitmap(
+                            canvasWidth, canvasHeight, Bitmap.Config.ARGB_8888);
+                    rgbArray = new int[canvasWidth * canvasHeight];
+                    SurfaceTexture texture = getSurfaceTexture();
+                    if (texture != null) {
+                        texture.setDefaultBufferSize(canvasWidth, canvasHeight);
+                    }
                 }
 
                 frameStartNanos = System.nanoTime();
@@ -169,7 +188,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         } catch (Throwable throwable) {
             Tools.showError(getContext(), throwable);
         }
-        rgbArrayBitmap.recycle();
+        if (rgbArrayBitmap != null) {
+            rgbArrayBitmap.recycle();
+        }
         surface.release();
     }
 
