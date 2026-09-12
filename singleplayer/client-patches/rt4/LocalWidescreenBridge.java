@@ -5,7 +5,9 @@ import java.awt.EventQueue;
 import java.awt.Graphics2D;
 import java.awt.Insets;
 import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -21,6 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class LocalWidescreenBridge {
     private static final int BOOTSTRAP_WIDTH = 765;
     private static final int BOOTSTRAP_HEIGHT = 503;
+    private static final int MAX_DIMENSION = 4096;
     private static final AtomicBoolean SCHEDULED = new AtomicBoolean();
 
     private LocalWidescreenBridge() {}
@@ -44,12 +47,9 @@ public final class LocalWidescreenBridge {
     }
 
     private static void applyRuntimeViewport() throws Exception {
-        int width = Math.max(
-                BOOTSTRAP_WIDTH,
-                Integer.getInteger("singleplayer.targetWidth", BOOTSTRAP_WIDTH));
-        int height = Math.max(
-                BOOTSTRAP_HEIGHT,
-                Integer.getInteger("singleplayer.targetHeight", BOOTSTRAP_HEIGHT));
+        int[] target = readTargetViewport();
+        int width = target[0];
+        int height = target[1];
 
         System.out.println(
                 "SINGLEPLAYER_WIDESCREEN: BEGIN old="
@@ -90,6 +90,42 @@ public final class LocalWidescreenBridge {
         System.out.println(
                 "SINGLEPLAYER_WIDESCREEN: READY "
                         + targetWidth + "x" + targetHeight);
+    }
+
+    private static int[] readTargetViewport() {
+        int propertyWidth = Integer.getInteger("singleplayer.targetWidth", 0);
+        int propertyHeight = Integer.getInteger("singleplayer.targetHeight", 0);
+        if (propertyWidth > 0 && propertyHeight > 0) {
+            return sanitizeTarget(propertyWidth, propertyHeight);
+        }
+
+        String home = System.getProperty("clientHomeOverride", "").trim();
+        if (!home.isEmpty()) {
+            File targetFile = new File(home, "singleplayer-widescreen-target.txt");
+            if (targetFile.isFile()) {
+                try (BufferedReader reader = new BufferedReader(new FileReader(targetFile))) {
+                    String line = reader.readLine();
+                    if (line != null) {
+                        String[] parts = line.trim().toLowerCase().split("x", 2);
+                        if (parts.length == 2) {
+                            return sanitizeTarget(
+                                    Integer.parseInt(parts[0].trim()),
+                                    Integer.parseInt(parts[1].trim()));
+                        }
+                    }
+                } catch (Exception failure) {
+                    System.err.println(
+                            "SINGLEPLAYER_WIDESCREEN: target read failed: " + failure);
+                }
+            }
+        }
+        return new int[] {BOOTSTRAP_WIDTH, BOOTSTRAP_HEIGHT};
+    }
+
+    private static int[] sanitizeTarget(int width, int height) {
+        width = Math.max(BOOTSTRAP_WIDTH, Math.min(MAX_DIMENSION, width));
+        height = Math.max(BOOTSTRAP_HEIGHT, Math.min(MAX_DIMENSION, height));
+        return new int[] {width, height};
     }
 
     private static void resizeCacioBackingStore(int width, int height) throws Exception {
