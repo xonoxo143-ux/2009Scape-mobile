@@ -1,5 +1,5 @@
 plugins {
-    id 'com.android.application' version '7.4.2'
+    id 'com.android.application' version '8.10.1'
 }
 
 static def getDate() { return new Date().format('yyyyMMdd') }
@@ -79,7 +79,7 @@ configurations {
 android {
     namespace 'net.kdt.pojavlaunch'
 
-    compileSdk = 33
+    compileSdk = 36
 
 
     signingConfigs {
@@ -100,7 +100,7 @@ android {
     defaultConfig {
         applicationId "net.kdt.pojavlaunch"
         minSdkVersion 21
-        targetSdkVersion 33
+        targetSdkVersion 36
         versionCode getDateSeconds()
         versionName getVersionName()
         multiDexEnabled true //important
@@ -164,7 +164,6 @@ android {
         }
     }
 
-    buildToolsVersion = '33.0.2'
     lint {
         abortOnError false
     }
