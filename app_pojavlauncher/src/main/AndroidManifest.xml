@@ -27,7 +27,7 @@
         android:icon="@mipmap/ic_launcher"
         android:isGame="true"
         android:label="@string/app_name"
-        android:pageSizeCompat="true"
+        android:pageSizeCompat="enabled"
         android:process=":launcher"
         android:resizeableActivity="true"
         android:roundIcon="@mipmap/ic_launcher_round"
