@@ -31,6 +31,7 @@ public final class OpenALAudioChannel extends AudioChannel {
     private int bufferSize;
     private int source;
     private boolean announcedFirstWrite;
+    private boolean lifecyclePaused;
 
     @Override
     public void init(Component component) {
@@ -108,7 +109,8 @@ public final class OpenALAudioChannel extends AudioChannel {
             AL10.alSourceQueueBuffers(source, buffer);
             checkError("alSourceQueueBuffers");
 
-            if (AL10.alGetSourcei(source, AL10.AL_SOURCE_STATE) != AL10.AL_PLAYING) {
+            if (!lifecyclePaused
+                    && AL10.alGetSourcei(source, AL10.AL_SOURCE_STATE) != AL10.AL_PLAYING) {
                 AL10.alSourcePlay(source);
                 checkError("alSourcePlay");
             }
@@ -137,6 +139,26 @@ public final class OpenALAudioChannel extends AudioChannel {
             // teardown. Keep the OpenAL source alive so later music/jingles or
             // effects can resume without requiring a separate reopen path.
             clearQueuedAudio(false);
+        }
+    }
+
+    /** Pause/resume already-queued OpenAL audio with the Android lifecycle. */
+    public void setLifecyclePaused(boolean paused) {
+        synchronized (OPENAL_LOCK) {
+            lifecyclePaused = paused;
+            if (source == 0 || sharedContext == 0L) return;
+            makeContextCurrent();
+            int state = AL10.alGetSourcei(source, AL10.AL_SOURCE_STATE);
+            if (paused) {
+                if (state == AL10.AL_PLAYING) {
+                    AL10.alSourcePause(source);
+                    checkError("alSourcePause");
+                }
+            } else if (state == AL10.AL_PAUSED
+                    && AL10.alGetSourcei(source, AL10.AL_BUFFERS_QUEUED) > 0) {
+                AL10.alSourcePlay(source);
+                checkError("alSourcePlay(resume)");
+            }
         }
     }
 
