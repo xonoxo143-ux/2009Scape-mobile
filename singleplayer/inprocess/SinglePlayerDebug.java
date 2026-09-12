@@ -81,6 +81,14 @@ public final class SinglePlayerDebug {
                         + System.getProperty("clientHomeOverride", ""));
                 log("SESSION", "processors=" + Runtime.getRuntime().availableProcessors());
                 logMemory("SESSION");
+
+                // Full phone builds now always arm the startup watchdog. This is
+                // intentionally part of the normal bootstrap rather than a
+                // separate diagnostic flavor: if startup ever stalls again, the
+                // same log contains the thread state instead of forcing another
+                // blind rebuild. The watchdog self-terminates once the client is
+                // playable, failed, or stopped.
+                startWatchdog();
             } catch (Throwable failure) {
                 originalErr.println("SINGLEPLAYER_DEBUG: unable to create debug log: " + failure);
                 failure.printStackTrace(originalErr);
@@ -106,7 +114,7 @@ public final class SinglePlayerDebug {
         if (!watchdogRunning) return;
         watchdogRunning = false;
         Thread running = watchdog;
-        if (running != null) running.interrupt();
+        if (running != null && running != Thread.currentThread()) running.interrupt();
         log("WATCHDOG", "startup watchdog stopped at stage=" + stage);
         logMemory("WATCHDOG");
     }
@@ -150,8 +158,20 @@ public final class SinglePlayerDebug {
             }
             if (!watchdogRunning) return;
 
+            LocalGameRuntime.State runtimeState = LocalGameRuntime.get().state();
+            if (runtimeState == LocalGameRuntime.State.RUNNING
+                    || runtimeState == LocalGameRuntime.State.PAUSED
+                    || runtimeState == LocalGameRuntime.State.FAILED
+                    || runtimeState == LocalGameRuntime.State.STOPPED) {
+                watchdogRunning = false;
+                log("WATCHDOG", "startup complete; state=" + runtimeState
+                        + "; watchdog exiting");
+                return;
+            }
+
             long now = System.currentTimeMillis();
-            log("WATCHDOG", "alive; stage=" + stage + "; stageAgeMs="
+            log("WATCHDOG", "alive; runtimeState=" + runtimeState
+                    + "; stage=" + stage + "; stageAgeMs="
                     + (now - stageStartedMs));
             logMemory("WATCHDOG");
 
