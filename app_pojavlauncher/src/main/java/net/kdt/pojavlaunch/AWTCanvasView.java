@@ -6,6 +6,7 @@ import android.text.*;
 import android.util.*;
 import android.view.*;
 
+import java.io.*;
 import java.util.*;
 
 import net.kdt.pojavlaunch.Tools;
@@ -16,6 +17,8 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     // Runtime presentation can expand after GAME_READY without changing them.
     public static final int AWT_CANVAS_WIDTH = 765;
     public static final int AWT_CANVAS_HEIGHT = 503;
+    private static final String WIDESCREEN_TARGET_FILE = "singleplayer-widescreen-target.txt";
+    private static final String WIDESCREEN_READY_FILE = "singleplayer-widescreen-ready.txt";
     private static final double NANOS = 1000000000.0;
 
     private volatile int mLogicalWidth = AWT_CANVAS_WIDTH;
@@ -25,6 +28,26 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     private volatile boolean mRenderingPaused = false;
     private final Object mRenderPauseLock = new Object();
 
+    private final Runnable mRuntimeViewportPoll = new Runnable() {
+        @Override
+        public void run() {
+            if (mRuntimeViewportApplied) return;
+            File ready = dataFile(WIDESCREEN_READY_FILE);
+            if (ready != null && ready.isFile()) {
+                int[] dimensions = readDimensions(ready);
+                if (dimensions != null) {
+                    applyRuntimeViewport(dimensions[0], dimensions[1]);
+                    Log.i(
+                            "SinglePlayerViewport",
+                            "Applied post-ready viewport "
+                                    + dimensions[0] + "x" + dimensions[1]);
+                    return;
+                }
+            }
+            postDelayed(this, 200L);
+        }
+    };
+
     public AWTCanvasView(Context ctx) {
         this(ctx, null);
     }
@@ -32,7 +55,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     public AWTCanvasView(Context ctx, AttributeSet attrs) {
         super(ctx, attrs);
         setSurfaceTextureListener(this);
+        prepareRuntimeViewportTarget();
         post(this::refreshSize);
+        postDelayed(mRuntimeViewportPoll, 200L);
     }
 
     public int getLogicalWidth() {
@@ -85,6 +110,12 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     @Override
     public void onSurfaceTextureUpdated(SurfaceTexture texture) {
         // No sizing work here. This callback fires for every presented frame.
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        removeCallbacks(mRuntimeViewportPoll);
+        super.onDetachedFromWindow();
     }
 
     @Override
@@ -214,5 +245,76 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         }
 
         setLayoutParams(layoutParams);
+    }
+
+    /**
+     * Publish a passive target for the JVM-side bridge. This file does not alter
+     * Cacio's startup screen and therefore cannot participate in world startup.
+     */
+    private void prepareRuntimeViewportTarget() {
+        try {
+            DisplayMetrics metrics = getResources().getDisplayMetrics();
+            int viewWidth = Math.max(1, metrics.widthPixels);
+            int viewHeight = Math.max(1, metrics.heightPixels);
+            float aspect = (float) viewWidth / (float) viewHeight;
+            float bootstrapAspect = (float) AWT_CANVAS_WIDTH / (float) AWT_CANVAS_HEIGHT;
+
+            int targetWidth;
+            int targetHeight;
+            if (aspect >= bootstrapAspect) {
+                targetHeight = AWT_CANVAS_HEIGHT;
+                targetWidth = Math.max(
+                        AWT_CANVAS_WIDTH,
+                        Math.round(targetHeight * aspect));
+            } else {
+                targetWidth = AWT_CANVAS_WIDTH;
+                targetHeight = Math.max(
+                        AWT_CANVAS_HEIGHT,
+                        Math.round(targetWidth / Math.max(0.01f, aspect)));
+            }
+
+            File ready = dataFile(WIDESCREEN_READY_FILE);
+            if (ready != null && ready.exists()) {
+                ready.delete();
+            }
+            File target = dataFile(WIDESCREEN_TARGET_FILE);
+            if (target != null) {
+                try (FileWriter writer = new FileWriter(target, false)) {
+                    writer.write(targetWidth + "x" + targetHeight);
+                    writer.write(System.lineSeparator());
+                }
+            }
+            Log.i(
+                    "SinglePlayerViewport",
+                    "Bootstrap 765x503; post-ready target "
+                            + targetWidth + "x" + targetHeight
+                            + " from Android " + viewWidth + "x" + viewHeight);
+        } catch (Throwable failure) {
+            Log.w("SinglePlayerViewport", "Unable to prepare widescreen target", failure);
+        }
+    }
+
+    private static File dataFile(String name) {
+        try {
+            if (Tools.DIR_DATA == null) return null;
+            return new File(Tools.DIR_DATA, name);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static int[] readDimensions(File file) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line = reader.readLine();
+            if (line == null) return null;
+            String[] parts = line.trim().toLowerCase(Locale.ROOT).split("x", 2);
+            if (parts.length != 2) return null;
+            int width = Integer.parseInt(parts[0].trim());
+            int height = Integer.parseInt(parts[1].trim());
+            if (width < AWT_CANVAS_WIDTH || height < AWT_CANVAS_HEIGHT) return null;
+            return new int[] {width, height};
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 }
