@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Align shaded LWJGL fingerprints with the exact Android natives we package.
+"""Make LWJGL native verification correct for the custom Android build.
 
-The retained RT4 client identifies Android as Linux/aarch64 from the embedded JVM,
-so LWJGL consults its Linux/arm64 SHA-1 resource names. Our launcher deliberately
-loads Android-built liblwjgl/libopenal binaries instead of upstream Linux ones.
-Without replacing those two fingerprints LWJGL emits an alarming native/Java
-version warning even when the intended Android binaries are loaded and working.
+The retained RT4 JAR identifies the embedded Android JVM as Linux/aarch64, so
+LWJGL looks for the stock Linux/arm64 SHA-1 resources. The APK deliberately
+packages Android-built liblwjgl/libopenal binaries produced by the launcher
+native build instead. Those binaries are not the upstream Linux artifacts and
+therefore can never legitimately match the stock Linux fingerprints.
+
+Do not disable LWJGL checks globally. Remove only the two inapplicable stock
+fingerprint resources. LWJGL's hash verifier explicitly treats an absent bundled
+fingerprint as "not applicable", while all of its other safety checks remain on.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
@@ -19,14 +22,6 @@ FINGERPRINTS = {
     "liblwjgl.so": "META-INF/linux/arm64/org/lwjgl/liblwjgl.so.sha1",
     "libopenal.so": "META-INF/linux/arm64/org/lwjgl/openal/libopenal.so.sha1",
 }
-
-
-def sha1(path: Path) -> str:
-    digest = hashlib.sha1()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def main() -> None:
@@ -40,18 +35,17 @@ def main() -> None:
     if not jar.is_file():
         raise SystemExit(f"Missing RT4 JAR: {jar}")
 
-    replacements: dict[str, bytes] = {}
-    for native_name, resource_name in FINGERPRINTS.items():
+    # Keep these as task inputs and sanity checks. Their bytes are custom Android
+    # binaries; intentionally do not claim that they are stock Linux natives.
+    for native_name in FINGERPRINTS:
         native = native_dir / native_name
         if not native.is_file():
-            raise SystemExit(f"Missing packaged Android native: {native}")
-        digest = sha1(native)
-        replacements[resource_name] = (digest + "\n").encode("ascii")
-        print(f"align: {native_name} -> {resource_name} = {digest}")
+            raise SystemExit(f"Missing packaged Android native source: {native}")
 
+    strip_names = set(FINGERPRINTS.values())
     temp = jar.with_suffix(jar.suffix + ".android-fingerprints")
     seen: set[str] = set()
-    replaced: set[str] = set()
+    stripped: set[str] = set()
     duplicates: set[str] = set()
 
     with ZipFile(jar, "r") as source, ZipFile(temp, "w", allowZip64=True) as target:
@@ -62,13 +56,11 @@ def main() -> None:
                 continue
             seen.add(name)
 
-            data = source.read(info)
-            if name in replacements:
-                data = replacements[name]
-                replaced.add(name)
+            if name in strip_names:
+                stripped.add(name)
+                continue
 
-            # Preserve entry metadata while allowing ZipFile to recompute size,
-            # CRC and compressed payload for the replaced bytes.
+            data = source.read(info)
             clone = ZipInfo(name, date_time=info.date_time)
             clone.comment = info.comment
             clone.extra = info.extra
@@ -81,26 +73,28 @@ def main() -> None:
             clone.compress_type = info.compress_type if info.compress_type >= 0 else ZIP_DEFLATED
             target.writestr(clone, data)
 
-    missing = set(replacements) - replaced
-    if missing:
-        temp.unlink(missing_ok=True)
-        raise SystemExit("RT4 JAR is missing LWJGL fingerprint resources: " + ", ".join(sorted(missing)))
-
     os.replace(temp, jar)
 
     with ZipFile(jar, "r") as check:
         names = check.namelist()
         if len(names) != len(set(names)):
-            raise SystemExit("Aligned RT4 JAR still contains duplicate entries")
+            raise SystemExit("RT4 JAR still contains duplicate entries")
         if "rt4/client.class" not in names:
-            raise SystemExit("Aligned RT4 JAR lost rt4/client.class")
-        for resource_name, expected in replacements.items():
-            if check.read(resource_name) != expected:
-                raise SystemExit(f"Fingerprint verification failed: {resource_name}")
+            raise SystemExit("RT4 JAR lost rt4/client.class")
+        remaining = strip_names.intersection(names)
+        if remaining:
+            raise SystemExit(
+                "Inapplicable Android LWJGL fingerprints remain: "
+                + ", ".join(sorted(remaining))
+            )
 
+    for name in sorted(stripped):
+        print(f"android-native: removed inapplicable stock fingerprint {name}")
+    if not stripped:
+        print("android-native: stock Linux fingerprints already absent")
     if duplicates:
-        print("align: removed duplicate ZIP entries:", ", ".join(sorted(duplicates)))
-    print("align: RT4 Android native fingerprints verified")
+        print("android-native: removed duplicate ZIP entries:", ", ".join(sorted(duplicates)))
+    print("android-native: LWJGL/OpenAL custom Android verification policy ready")
 
 
 if __name__ == "__main__":
