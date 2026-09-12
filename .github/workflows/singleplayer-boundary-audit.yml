@@ -5,13 +5,7 @@ on:
     branches:
       - singleplayer-native-refactor
     paths:
-      - 'singleplayer/native-refactor/**'
-      - 'singleplayer/server-patches/**'
-      - 'singleplayer/inprocess/**'
-      - 'singleplayer/client-patches/rt4/**'
-      - 'singleplayer/default.conf'
-      - 'scripts/singleplayer/audit_multiplayer_boundaries.py'
-      - '.github/workflows/singleplayer-boundary-audit.yml'
+      - '.github/boundary-audit-trigger'
   workflow_dispatch:
 
 concurrency:
