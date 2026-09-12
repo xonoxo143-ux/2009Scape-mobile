@@ -16,12 +16,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:name=".PojavApplication"
         android:allowBackup="true"
         android:allowNativeHeapPointerTagging="false"
         android:appCategory="game"
+        android:enableOnBackInvokedCallback="false"
         android:hasFragileUserData="true"
         android:icon="@mipmap/ic_launcher"
         android:isGame="true"
@@ -93,6 +95,8 @@
             </intent-filter>
         </provider>
 
-        <service android:name=".services.ProgressService" />
+        <service
+            android:name=".services.ProgressService"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
