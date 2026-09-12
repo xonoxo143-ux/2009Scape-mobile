@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Build and publish diagnostic bootstrap only
+    name: Build and publish viewport runtime update
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
@@ -86,7 +86,34 @@ jobs:
             -cp build/viewport-tests:build/singleplayer-bootstrap.jar:app_pojavlauncher/src/main/assets/rt4.jar \
             rt4.ViewportLayoutRegression
 
-      - name: Prepare bootstrap-only manifest update
+      - name: Check Cacio window placement and clipping
+        run: |
+          set -euxo pipefail
+          python3 scripts/singleplayer/check_viewport_geometry.py \
+            --bootstrap build/singleplayer-bootstrap.jar \
+            --rt4 app_pojavlauncher/src/main/assets/rt4.jar \
+            --cacio-dir app_pojavlauncher/src/main/assets/components/caciocavallo17
+
+      - name: Build and check touch controls and software HUD
+        run: |
+          set -euxo pipefail
+          mkdir -p build/touch-src/MobileTouchControls build/touch-classes
+          cp singleplayer/client-plugin/MobileTouchControls.java \
+            build/touch-src/MobileTouchControls/plugin.java
+          javac --release 17 \
+            -cp build/singleplayer-bootstrap.jar:app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/touch-classes build/touch-src/MobileTouchControls/plugin.java
+          jar --create --file build/MobileTouchControls.zip \
+            -C build/touch-classes MobileTouchControls
+          javac --release 17 \
+            -cp build/touch-classes:build/singleplayer-bootstrap.jar:app_pojavlauncher/src/main/assets/rt4.jar \
+            -d build/viewport-tests \
+            singleplayer/native-refactor/tests/SoftwareViewportRegression.java
+          java -Djava.awt.headless=true \
+            -cp build/viewport-tests:build/touch-classes:build/singleplayer-bootstrap.jar:app_pojavlauncher/src/main/assets/rt4.jar \
+            rt4.SoftwareViewportRegression
+
+      - name: Prepare viewport runtime manifest update
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -101,48 +128,49 @@ jobs:
           python3 - <<'PY'
           import hashlib, json, os, pathlib, shutil
 
-          jar = pathlib.Path('build/singleplayer-bootstrap.jar')
-          digest = hashlib.sha256(jar.read_bytes()).hexdigest()
-          size = jar.stat().st_size
-          asset_name = f'{digest}-singleplayer-bootstrap.jar'
-          target = pathlib.Path('build/payload-debug') / asset_name
-          shutil.copy2(jar, target)
-
           manifest_path = pathlib.Path('build/current-manifest/payload-manifest.json')
           manifest = json.loads(manifest_path.read_text())
-          matches = [entry for entry in manifest['files']
-                     if entry.get('name') == 'singleplayer-bootstrap.jar']
-          if len(matches) != 1:
-              raise SystemExit(f'Expected one bootstrap manifest entry, found {len(matches)}')
-          entry = matches[0]
-          entry['sha256'] = digest
-          entry['size'] = size
-          entry['url'] = (
-              'https://github.com/xonoxo143-ux/2009Scape-mobile/releases/download/'
-              f'singleplayer-payload/{asset_name}'
-          )
+          assets = []
+          for name in ('singleplayer-bootstrap.jar', 'MobileTouchControls.zip'):
+              source = pathlib.Path('build') / name
+              digest = hashlib.sha256(source.read_bytes()).hexdigest()
+              size = source.stat().st_size
+              asset_name = f'{digest}-{name}'
+              shutil.copy2(source, pathlib.Path('build/payload-debug') / asset_name)
+              matches = [entry for entry in manifest['files'] if entry.get('name') == name]
+              if len(matches) != 1:
+                  raise SystemExit(f'Expected one {name} manifest entry, found {len(matches)}')
+              entry = matches[0]
+              entry['sha256'] = digest
+              entry['size'] = size
+              entry['url'] = (
+                  'https://github.com/xonoxo143-ux/2009Scape-mobile/releases/download/'
+                  f'singleplayer-payload/{asset_name}'
+              )
+              assets.append(asset_name)
+              print('viewport payload:', asset_name, size)
           manifest['version'] = os.environ['GITHUB_SHA']
           pathlib.Path('build/payload-debug/payload-manifest.json').write_text(
               json.dumps(manifest, indent=2) + '\n'
           )
-          pathlib.Path('build/payload-debug/bootstrap-asset-name.txt').write_text(
-              asset_name + '\n'
+          pathlib.Path('build/payload-debug/asset-names.txt').write_text(
+              '\n'.join(assets) + '\n'
           )
-          print('diagnostic bootstrap:', asset_name, size)
           PY
 
-      - name: Publish bootstrap object then activation manifest
+      - name: Publish viewport objects then activation manifest
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
           TAG=singleplayer-payload
-          ASSET_NAME=$(cat build/payload-debug/bootstrap-asset-name.txt)
-          if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq "$ASSET_NAME"; then
-            echo "Keeping existing content-addressed bootstrap: $ASSET_NAME"
-          else
-            gh release upload "$TAG" "build/payload-debug/$ASSET_NAME"
-          fi
+          while IFS= read -r ASSET_NAME; do
+            if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq "$ASSET_NAME"; then
+              echo "Keeping existing content-addressed object: $ASSET_NAME"
+            else
+              gh release upload "$TAG" "build/payload-debug/$ASSET_NAME"
+            fi
+          done < build/payload-debug/asset-names.txt
           gh release upload "$TAG" \
             build/payload-debug/payload-manifest.json --clobber
 
@@ -152,16 +180,21 @@ jobs:
         run: |
           set -euxo pipefail
           TAG=singleplayer-payload
-          ASSET_NAME=$(cat build/payload-debug/bootstrap-asset-name.txt)
           mkdir -p build/verify
           gh release download "$TAG" \
-            --pattern payload-manifest.json \
-            --pattern "$ASSET_NAME" \
-            --dir build/verify \
-            --clobber
+            --pattern payload-manifest.json --dir build/verify --clobber
           cmp build/payload-debug/payload-manifest.json \
             build/verify/payload-manifest.json
-          EXPECTED=${ASSET_NAME%%-*}
-          ACTUAL=$(sha256sum "build/verify/$ASSET_NAME" | awk '{print $1}')
-          test "$EXPECTED" = "$ACTUAL"
-          jar tf "build/verify/$ASSET_NAME" | grep -q '^rt4/MiniMenu.class$'
+          while IFS= read -r ASSET_NAME; do
+            gh release download "$TAG" \
+              --pattern "$ASSET_NAME" --dir build/verify --clobber
+            EXPECTED=${ASSET_NAME%%-*}
+            ACTUAL=$(sha256sum "build/verify/$ASSET_NAME" | awk '{print $1}')
+            test "$EXPECTED" = "$ACTUAL"
+            case "$ASSET_NAME" in
+              *-singleplayer-bootstrap.jar)
+                jar tf "build/verify/$ASSET_NAME" | grep -q '^rt4/LocalViewportBridge.class$' ;;
+              *-MobileTouchControls.zip)
+                jar tf "build/verify/$ASSET_NAME" | grep -q '^MobileTouchControls/plugin.class$' ;;
+            esac
+          done < build/payload-debug/asset-names.txt

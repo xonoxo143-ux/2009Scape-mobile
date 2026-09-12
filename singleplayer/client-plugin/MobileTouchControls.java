@@ -13,7 +13,6 @@ import rt4.Mouse;
 import singleplayer.MobileGestureBridge;
 
 import java.util.ArrayList;
-import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,8 +31,13 @@ public class plugin extends Plugin {
         BLOCKED
     }
 
-    private static final int CLIENT_WIDTH = 765;
-    private static final int CLIENT_HEIGHT = 503;
+    private static int clientWidth() {
+        return Math.max(1, GameShell.canvasWidth);
+    }
+
+    private static int clientHeight() {
+        return Math.max(1, GameShell.canvasHeight);
+    }
 
     private static final long HIT_REGION_MAX_AGE_MS = 250L;
 
@@ -467,8 +471,8 @@ public class plugin extends Plugin {
 
         synchronized (instance) {
             Mouse.idleLoops = 0;
-            Mouse.eventMouseX = clamp(x, 0, CLIENT_WIDTH - 1);
-            Mouse.eventMouseY = clamp(y, 0, CLIENT_HEIGHT - 1);
+            Mouse.eventMouseX = clamp(x, 0, clientWidth() - 1);
+            Mouse.eventMouseY = clamp(y, 0, clientHeight() - 1);
             Mouse.eventMouseDownX = Mouse.eventMouseX;
             Mouse.eventMouseDownY = Mouse.eventMouseY;
             Mouse.eventTime = MonotonicClock.currentTimeMillis();
@@ -488,8 +492,8 @@ public class plugin extends Plugin {
 
         synchronized (instance) {
             Mouse.idleLoops = 0;
-            Mouse.eventMouseX = clamp(x, 0, CLIENT_WIDTH - 1);
-            Mouse.eventMouseY = clamp(y, 0, CLIENT_HEIGHT - 1);
+            Mouse.eventMouseX = clamp(x, 0, clientWidth() - 1);
+            Mouse.eventMouseY = clamp(y, 0, clientHeight() - 1);
             Mouse.eventMouseDownX = Mouse.eventMouseX;
             Mouse.eventMouseDownY = Mouse.eventMouseY;
             Mouse.eventTime = MonotonicClock.currentTimeMillis();
@@ -507,8 +511,8 @@ public class plugin extends Plugin {
 
         synchronized (instance) {
             Mouse.idleLoops = 0;
-            Mouse.eventMouseX = clamp(x, 0, CLIENT_WIDTH - 1);
-            Mouse.eventMouseY = clamp(y, 0, CLIENT_HEIGHT - 1);
+            Mouse.eventMouseX = clamp(x, 0, clientWidth() - 1);
+            Mouse.eventMouseY = clamp(y, 0, clientHeight() - 1);
             Mouse.eventAction = 1;
         }
     }
@@ -532,8 +536,8 @@ public class plugin extends Plugin {
         if (instance != null) {
             synchronized (instance) {
                 Mouse.idleLoops = 0;
-                Mouse.eventMouseX = clamp(pendingReleaseX, 0, CLIENT_WIDTH - 1);
-                Mouse.eventMouseY = clamp(pendingReleaseY, 0, CLIENT_HEIGHT - 1);
+                Mouse.eventMouseX = clamp(pendingReleaseX, 0, clientWidth() - 1);
+                Mouse.eventMouseY = clamp(pendingReleaseY, 0, clientHeight() - 1);
                 Mouse.eventAction = 0;
             }
         }
@@ -545,8 +549,8 @@ public class plugin extends Plugin {
         if (instance != null) {
             synchronized (instance) {
                 Mouse.idleLoops = 0;
-                Mouse.eventMouseX = clamp(x, 0, CLIENT_WIDTH - 1);
-                Mouse.eventMouseY = clamp(y, 0, CLIENT_HEIGHT - 1);
+                Mouse.eventMouseX = clamp(x, 0, clientWidth() - 1);
+                Mouse.eventMouseY = clamp(y, 0, clientHeight() - 1);
                 Mouse.eventAction = 0;
                 // If Mouse.loop() has not consumed the press yet, suppress the
                 // one-shot button as well so CANCEL cannot turn into a click.
@@ -574,8 +578,8 @@ public class plugin extends Plugin {
 
         synchronized (instance) {
             Mouse.idleLoops = 0;
-            Mouse.eventMouseX = clamp(x, 0, CLIENT_WIDTH - 1);
-            Mouse.eventMouseY = clamp(y, 0, CLIENT_HEIGHT - 1);
+            Mouse.eventMouseX = clamp(x, 0, clientWidth() - 1);
+            Mouse.eventMouseY = clamp(y, 0, clientHeight() - 1);
         }
     }
 

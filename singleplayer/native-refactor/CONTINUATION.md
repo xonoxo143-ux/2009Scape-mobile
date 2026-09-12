@@ -82,3 +82,16 @@ Delivery: updateable bootstrap only; no Android APK change is required. Publicat
 - Published bootstrap SHA-256: eb82afd5a4a7c7662aa842e039ba4352dfb4b104675dd6b97801856fad3ab8f0; size: 129276 bytes.
 - Delivery to the phone: use the existing in-app "Update from GitHub" and then start single-player again. Keep the installed Build 27 APK; this update replaces only the bootstrap JAR entry in the payload manifest.
 - Remaining gate: user must confirm actual post-login world/interface width and touch alignment. The READY marker observed in CI is from the regression probe, not a phone run. If the phone still fails, collect the new debug log and inspect LAYOUT_REQUEST / READY / LAYOUT_UNCONFIRMED, root interface, actual canvas size and margins before touching startup.
+
+## September 12: clipped/oversized phone presentation after layout activation
+
+The next phone log confirms the prior update reaches root 746 at 1289x503, but the recording shows a 262-logical-pixel left strip, a clipped right edge, and missing HUD. Do not shrink the logical viewport or change startup to mask this.
+
+Three retained presentation defects were identified:
+1. RT4 initially centers its 765-wide Frame on the 1289-wide Cacio screen, leaving outer-frame X=262. LocalViewportBridge resized only the frame and child canvas; its old origin diagnostic reported child margins and missed the outer-window offset. The patch applies outer bounds (0,0,1289,503), checks those bounds on the fast path, and reports the outer frame in diagnostics.
+2. The resizable root overlays HUD widgets on the world. Software mode only invalidated the moving world rectangle, allowing it to erase otherwise unchanged HUD pixels. The bridge now invalidates the resizable software interface before each render, using the same retained dirty flags as the GL path without enabling GL.
+3. The actual bundled MobileTouchControls plugin clamped all mouse events to 764x502. It now clamps against the current GameShell canvas so the newly visible right edge is usable.
+
+Local verification: real retained component rendering reproduces erased chat/side-panel pixels with the preceding code and retains them across repeated world redraws with the correction. The actual gesture-to-plugin-to-mouse path reproduces the old right-edge clamp and passes after correction. The preceding layout notification regression still passes. A Cacio integration probe verifies the old centered setup, outer-frame movement, actual screen coordinates and all four composited corner pixels; its local launch requires a full desktop JDK (the scratch JRE lacks libawt_xawt.so), so it is a required publisher CI gate before activation.
+
+Delivery is a payload update containing singleplayer-bootstrap.jar and MobileTouchControls.zip. The existing installed APK supports both. The publisher uploads both content-addressed objects before replacing the activation manifest and verifies both downloads. At this checkpoint publication is pending. The next phone check is the entire interface fitting the display, visible chat/minimap/tabs, and correct taps across the width.

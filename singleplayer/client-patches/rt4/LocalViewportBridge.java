@@ -1,6 +1,7 @@
 package rt4;
 
 import java.awt.Insets;
+import java.util.Arrays;
 
 /**
  * Expands RT4's retained software framebuffer to the Android-owned logical
@@ -34,11 +35,18 @@ public final class LocalViewportBridge {
                 && appliedHeight == height
                 && GameShell.canvasWidth == width
                 && GameShell.canvasHeight == height
+                && GameShell.frame.getX() == 0
+                && GameShell.frame.getY() == 0
+                && GameShell.frame.getWidth() == width
+                        + GameShell.frame.getInsets().left + GameShell.frame.getInsets().right
+                && GameShell.frame.getHeight() == height
+                        + GameShell.frame.getInsets().top + GameShell.frame.getInsets().bottom
                 && GameShell.canvas.getWidth() == width
                 && GameShell.canvas.getHeight() == height
                 && GameShell.canvas.getX() == GameShell.frame.getInsets().left
                 && GameShell.canvas.getY() == GameShell.frame.getInsets().top) {
             synchronizeWorldLayout(width, height);
+            prepareSoftwareInterfaceRedraw();
             return true;
         }
 
@@ -51,7 +59,10 @@ public final class LocalViewportBridge {
             GameShell.leftMargin = 0;
             GameShell.topMargin = 0;
 
-            GameShell.frame.setSize(
+            // The legacy 765-wide window was centered on the wider Cacio screen.
+            // Resizing it alone preserves that desktop offset and clips its right
+            // edge. Canvas coordinates are relative to this outer window.
+            GameShell.frame.setBounds(0, 0,
                     insets.left + width + insets.right,
                     insets.top + height + insets.bottom);
             GameShell.canvas.setSize(width, height);
@@ -73,13 +84,27 @@ public final class LocalViewportBridge {
             layoutConfirmed = false;
             layoutFailureReported = false;
             System.out.println(
-                    "SINGLEPLAYER_VIEWPORT: RT4_SOFTWARE_READY " + width + "x" + height);
+                    "SINGLEPLAYER_VIEWPORT: RT4_SOFTWARE_READY " + width + "x" + height
+                            + " frameOrigin=" + GameShell.frame.getX() + "," + GameShell.frame.getY());
             synchronizeWorldLayout(width, height);
+            prepareSoftwareInterfaceRedraw();
             return true;
         } catch (Throwable failure) {
             System.err.println("SINGLEPLAYER_VIEWPORT: APPLY_FAILED " + failure);
             return false;
         }
+    }
+
+    private static void prepareSoftwareInterfaceRedraw() {
+        if (client.gameState != 30 || GlRenderer.enabled
+                || presentationWindowMode(0) != 2
+                || InterfaceList.topLevelInterface != 746) return;
+
+        // The resizable root overlays HUD components on the world. Its world
+        // rectangle is repainted every frame, erasing any unchanged software HUD
+        // pixels. Match the retained GL path's interface invalidation without
+        // selecting GL: LoginManager propagates these flags before rendering.
+        Arrays.fill(InterfaceList.aBooleanArray100, true);
     }
 
     /** Layout mode is independent of the retained software/GL renderer choice. */
@@ -107,6 +132,7 @@ public final class LocalViewportBridge {
                         + " root=" + root
                         + " canvas=" + GameShell.canvas.getWidth() + "x" + GameShell.canvas.getHeight()
                         + " origin=" + GameShell.leftMargin + "," + GameShell.topMargin
+                        + " frame=" + GameShell.frame
                         + " renderer=" + (GlRenderer.enabled ? "GL" : "software"));
             }
             return;
