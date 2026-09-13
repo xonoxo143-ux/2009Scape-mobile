@@ -37,6 +37,7 @@ public class JavaGUILauncherActivity extends BaseActivity {
     private static final int CHAT_KEYBOARD_MAX_X = 520;
     private static final int CHAT_KEYBOARD_TOP_FROM_BOTTOM = 55;
     private static final int CHAT_KEYBOARD_BOTTOM_FROM_BOTTOM = 25;
+    private static final String CHAT_INPUT_FLAG = "singleplayer-chat-input-enabled.flag";
     private static final long EXIT_BACK_WINDOW_MS = 1500L;
     private static final long STARTUP_STALL_LOG_MS = 45000L;
 
@@ -44,6 +45,7 @@ public class JavaGUILauncherActivity extends BaseActivity {
     private LoggerView mLoggerView;
     private TouchCharInput mTouchCharInput;
     private TouchInputController mTouchInputController;
+    private TextView mChatInputPreview;
 
     private View mSinglePlayerLoadingOverlay;
     private TextView mSinglePlayerLoadingStatus;
@@ -69,12 +71,16 @@ public class JavaGUILauncherActivity extends BaseActivity {
                 new File(Tools.DIR_DATA, "singleplayer-game-stage.txt");
         mSinglePlayerReadyFile =
                 new File(Tools.DIR_DATA, "singleplayer-game-ready.flag");
+        File chatInputFlag = new File(Tools.DIR_DATA, CHAT_INPUT_FLAG);
 
         if (mSinglePlayerReadyFile.exists()) {
             mSinglePlayerReadyFile.delete();
         }
         if (mSinglePlayerStageFile.exists()) {
             mSinglePlayerStageFile.delete();
+        }
+        if (chatInputFlag.exists()) {
+            chatInputFlag.delete();
         }
         startSinglePlayerLoadingPoll();
 
@@ -92,8 +98,10 @@ public class JavaGUILauncherActivity extends BaseActivity {
         MainActivity.GLOBAL_CLIPBOARD =
                 (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
 
+        mChatInputPreview = findViewById(R.id.chatInputPreview);
         mTouchCharInput = findViewById(R.id.awt_touch_char);
         mTouchCharInput.setCharacterSender(new AwtCharSender());
+        mTouchCharInput.setPreviewListener(this::updateChatInputPreview);
 
         mLoggerView = findViewById(R.id.launcherLoggerView);
         mLoggerView.setVisibility(View.GONE);
@@ -159,6 +167,19 @@ public class JavaGUILauncherActivity extends BaseActivity {
                             + clientX + " y=" + clientY);
             mTouchCharInput.switchKeyboardState();
         }
+    }
+
+    private void updateChatInputPreview(String text, boolean keyboardActive) {
+        if (mChatInputPreview == null) {
+            return;
+        }
+        if (!keyboardActive) {
+            mChatInputPreview.setVisibility(View.GONE);
+            return;
+        }
+
+        mChatInputPreview.setText(text.isEmpty() ? "Chat:" : "Chat: " + text);
+        mChatInputPreview.setVisibility(View.VISIBLE);
     }
 
     private void installBackHandling() {
