@@ -29,13 +29,12 @@ public final class TouchInputController implements View.OnTouchListener {
 
     private static final int INVALID_POINTER = -1;
 
-    // The Android keyboard observer is intentionally much smaller than the
-    // whole chat box. Only deliberate taps on the actual text-entry line are
-    // owned by Android. Those gestures must not also reach RT4 or the world can
-    // interpret the same physical tap as a walk/click behind the chat overlay.
-    private static final int CHAT_INPUT_MIN_X = 8;
-    private static final int CHAT_INPUT_MAX_X = 400;
-    private static final int CHAT_INPUT_TOP_FROM_BOTTOM = 45;
+    // Match the actual RT4 chat-entry strip. The League launcher occupies
+    // x=404..515 only on the lower row (y=481..502), so the wider chat X range
+    // is safe as long as this ownership band ends at y=478.
+    private static final int CHAT_INPUT_MIN_X = 0;
+    private static final int CHAT_INPUT_MAX_X = 520;
+    private static final int CHAT_INPUT_TOP_FROM_BOTTOM = 55;
     private static final int CHAT_INPUT_BOTTOM_FROM_BOTTOM = 25;
 
     private final AWTCanvasView canvas;
@@ -119,10 +118,15 @@ public final class TouchInputController implements View.OnTouchListener {
         downX = lastX = event.getX(0);
         downY = lastY = event.getY(0);
 
-        if (isChatInputTap(toClientX(downX), toClientY(downY))) {
+        int clientX = toClientX(downX);
+        int clientY = toClientY(downY);
+        if (isChatInputTap(clientX, clientY)) {
             // The chat entry line is Android-owned. Do not start RT4's click,
             // long-press, or drag recognizers for the same physical gesture.
             state = State.CHAT_INPUT;
+            Logger.appendToLog(
+                    "SINGLEPLAYER_INPUT: CHAT_TOUCH_CAPTURED x="
+                            + clientX + " y=" + clientY);
             return;
         }
 
