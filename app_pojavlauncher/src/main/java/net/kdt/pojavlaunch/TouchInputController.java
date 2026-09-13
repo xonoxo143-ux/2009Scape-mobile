@@ -21,6 +21,7 @@ public final class TouchInputController implements View.OnTouchListener {
     private enum State {
         IDLE,
         PRESS_PENDING,
+        CHAT_INPUT,
         LONG_PRESS,
         DRAG,
         PINCH
@@ -30,8 +31,8 @@ public final class TouchInputController implements View.OnTouchListener {
 
     // The Android keyboard observer is intentionally much smaller than the
     // whole chat box. Only deliberate taps on the actual text-entry line are
-    // forwarded to it. Normal taps still reach RT4 everywhere, including the
-    // chat tabs and the League button immediately to the right.
+    // owned by Android. Those gestures must not also reach RT4 or the world can
+    // interpret the same physical tap as a walk/click behind the chat overlay.
     private static final int CHAT_INPUT_MIN_X = 8;
     private static final int CHAT_INPUT_MAX_X = 400;
     private static final int CHAT_INPUT_TOP_FROM_BOTTOM = 45;
@@ -114,15 +115,29 @@ public final class TouchInputController implements View.OnTouchListener {
 
     private void beginPress(MotionEvent event) {
         cancelLongPress();
-        state = State.PRESS_PENDING;
         activePointerId = event.getPointerId(0);
         downX = lastX = event.getX(0);
         downY = lastY = event.getY(0);
+
+        if (isChatInputTap(toClientX(downX), toClientY(downY))) {
+            // The chat entry line is Android-owned. Do not start RT4's click,
+            // long-press, or drag recognizers for the same physical gesture.
+            state = State.CHAT_INPUT;
+            return;
+        }
+
+        state = State.PRESS_PENDING;
         handler.postDelayed(longPressRunnable, longPressTimeoutMs);
     }
 
     private void beginPinch(MotionEvent event) {
         if (event.getPointerCount() < 2) {
+            return;
+        }
+
+        // A gesture that began in the chat input line remains keyboard-owned for
+        // its entire lifetime. A second finger must not turn it into a game pinch.
+        if (state == State.CHAT_INPUT) {
             return;
         }
 
@@ -142,6 +157,11 @@ public final class TouchInputController implements View.OnTouchListener {
     }
 
     private void handleMove(MotionEvent event) {
+        if (state == State.CHAT_INPUT) {
+            // Keep this physical sequence out of RT4 even if the finger moves.
+            return;
+        }
+
         if (state == State.PINCH) {
             if (event.getPointerCount() >= 2) {
                 float span = pointerSpan(event);
@@ -243,18 +263,17 @@ public final class TouchInputController implements View.OnTouchListener {
     private void finishGestureAt(float x, float y) {
         cancelLongPress();
 
-        if (state == State.PRESS_PENDING) {
-            int clientX = toClientX(x);
-            int clientY = toClientY(y);
+        if (state == State.CHAT_INPUT) {
+            if (tapObserver != null) {
+                tapObserver.onTap(toClientX(x), toClientY(y));
+            }
+        } else if (state == State.PRESS_PENDING) {
             send(
                     AWTInputBridge.GESTURE_TAP,
-                    clientX,
-                    clientY,
+                    toClientX(x),
+                    toClientY(y),
                     0,
                     0);
-            if (tapObserver != null && isChatInputTap(clientX, clientY)) {
-                tapObserver.onTap(clientX, clientY);
-            }
         } else if (state == State.DRAG) {
             send(
                     AWTInputBridge.GESTURE_DRAG_END,
