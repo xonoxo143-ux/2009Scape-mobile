@@ -6,6 +6,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 
+import java.io.File;
+
 /**
  * Single touch recognizer for the 2009Scape canvas.
  *
@@ -28,10 +30,11 @@ public final class TouchInputController implements View.OnTouchListener {
     }
 
     private static final int INVALID_POINTER = -1;
+    private static final String CHAT_INPUT_FLAG = "singleplayer-chat-input-enabled.flag";
 
-    // Match the actual RT4 chat-entry strip. The League launcher occupies
-    // x=404..515 only on the lower row (y=481..502), so the wider chat X range
-    // is safe as long as this ownership band ends at y=478.
+    // Match the actual RT4 chat-entry strip. Coordinates alone are not enough:
+    // dialogue and scripted chatboxes reuse the same pixels, so ownership is
+    // additionally gated by LocalChatInputBridge's current client-state flag.
     private static final int CHAT_INPUT_MIN_X = 0;
     private static final int CHAT_INPUT_MAX_X = 520;
     private static final int CHAT_INPUT_TOP_FROM_BOTTOM = 55;
@@ -42,6 +45,7 @@ public final class TouchInputController implements View.OnTouchListener {
     private final int touchSlopSquared;
     private final long longPressTimeoutMs;
     private final TapObserver tapObserver;
+    private final File chatInputFlag;
 
     private State state = State.IDLE;
     private int activePointerId = INVALID_POINTER;
@@ -70,6 +74,7 @@ public final class TouchInputController implements View.OnTouchListener {
     public TouchInputController(AWTCanvasView canvas, TapObserver tapObserver) {
         this.canvas = canvas;
         this.tapObserver = tapObserver;
+        this.chatInputFlag = new File(Tools.DIR_DATA, CHAT_INPUT_FLAG);
         ViewConfiguration configuration = ViewConfiguration.get(canvas.getContext());
         int touchSlop = configuration.getScaledTouchSlop();
         touchSlopSquared = touchSlop * touchSlop;
@@ -121,13 +126,21 @@ public final class TouchInputController implements View.OnTouchListener {
         int clientX = toClientX(downX);
         int clientY = toClientY(downY);
         if (isChatInputTap(clientX, clientY)) {
-            // The chat entry line is Android-owned. Do not start RT4's click,
-            // long-press, or drag recognizers for the same physical gesture.
-            state = State.CHAT_INPUT;
+            if (chatInputFlag.isFile()) {
+                // Normal public chat is Android-owned. Do not start RT4's click,
+                // long-press, or drag recognizers for the same physical gesture.
+                state = State.CHAT_INPUT;
+                Logger.appendToLog(
+                        "SINGLEPLAYER_INPUT: CHAT_TOUCH_CAPTURED x="
+                                + clientX + " y=" + clientY);
+                return;
+            }
+
+            // Dialogue/continue/scripted chatbox state reuses these coordinates.
+            // Let RT4 own the gesture normally in those states.
             Logger.appendToLog(
-                    "SINGLEPLAYER_INPUT: CHAT_TOUCH_CAPTURED x="
+                    "SINGLEPLAYER_INPUT: CHAT_TOUCH_PASSTHROUGH x="
                             + clientX + " y=" + clientY);
-            return;
         }
 
         state = State.PRESS_PENDING;
