@@ -6,26 +6,23 @@ import java.util.Arrays;
 public final class SoftwareHudBridge {
     private static final int RESIZABLE_ROOT = 746;
     private static boolean announced;
+    private static boolean renderCadenceAligned;
 
     private SoftwareHudBridge() {}
 
     /**
-     * RT4's software path uses two different dirty-state stages:
+     * RT4 advances game logic at 50 Hz, but the mobile plugin raises the software
+     * render target to 60 Hz. This hook is driven by the logic timer, so at 60 Hz
+     * some display frames can occur without a preceding HUD invalidation pass.
+     * Those render-only frames are the one-frame UI dropouts seen on device: the
+     * world still draws, while retained HUD rectangles wait for the next logic
+     * tick.
      *
-     * 1. aBooleanArray116 decides whether ordinary interface components are
-     *    actually rendered into the software framebuffer this frame.
-     * 2. rectangleRedraw decides which completed framebuffer rectangles are
-     *    copied to the AWT canvas at the end of the frame.
-     *
-     * The resizable root rebuilds its rectangle list while rendering. The list
-     * can therefore contain more/different rectangle indexes than the preceding
-     * frame. Dirtying only the previous pending list (or only the final blit
-     * list) leaves newly allocated HUD rectangles with a false render gate. The
-     * world is then rendered underneath them and a one-frame UI dropout appears.
-     *
-     * Arm all three 100-slot tables before the frame. LoginManager may rewrite
-     * the indexes that existed last frame, but newly allocated indexes remain
-     * true, so every current HUD rectangle is both rendered and presented.
+     * Keep software presentation on the same 50 Hz cadence as RT4 logic. The
+     * GameShell loop checks the logic threshold before the render threshold, so
+     * every displayed software frame is preceded by this hook. Also request a
+     * full framebuffer presentation rather than depending on RT4's old partial
+     * dirty-rectangle copy path.
      */
     public static void prepareFrameBlit() {
         if (!Boolean.getBoolean("singleplayer")
@@ -36,12 +33,19 @@ public final class SoftwareHudBridge {
             return;
         }
 
+        if (!renderCadenceAligned) {
+            GameShell.setFpsTarget(50);
+            renderCadenceAligned = true;
+        }
+
         Arrays.fill(InterfaceList.aBooleanArray100, true);
         Arrays.fill(InterfaceList.aBooleanArray116, true);
         Arrays.fill(InterfaceList.rectangleRedraw, true);
+        GameShell.fullRedraw = true;
+
         if (!announced) {
             announced = true;
-            System.out.println("SINGLEPLAYER_HUD: FULL_SOFTWARE_RENDER_AND_BLIT_ARMED");
+            System.out.println("SINGLEPLAYER_HUD: SOFTWARE_RENDER_SYNC_50HZ_ARMED");
         }
     }
 }
