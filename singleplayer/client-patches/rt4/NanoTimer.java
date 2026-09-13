@@ -26,6 +26,7 @@ public final class NanoTimer extends Timer {
             return 0;
         }
         SoftwareHudBridge.prepareFrameBlit();
+        LocalChatInputBridge.tick();
         LocalLoginBridge.tickAutoLogin();
         long minimumDelayNs = (long) minimumDelayMs * 1_000_000L;
         long delayNs = nextTick - System.nanoTime();
@@ -47,6 +48,7 @@ public final class NanoTimer extends Timer {
             return 0;
         }
         SoftwareHudBridge.prepareFrameBlit();
+        LocalChatInputBridge.tick();
         LocalLoginBridge.tickAutoLogin();
         return advance(tickMs);
     }
