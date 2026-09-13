@@ -1,9 +1,6 @@
 package net.kdt.pojavlaunch.customcontrols.keyboard;
 
-
 import static android.content.Context.INPUT_METHOD_SERVICE;
-
-import static org.lwjgl.glfw.CallbackBridge.sendKeyPress;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -19,141 +16,171 @@ import net.kdt.pojavlaunch.R;
 import net.kdt.pojavlaunch.utils.KeyEncoder;
 
 /**
- * This class is intended for sending characters used in chat via the virtual keyboard
+ * This class is intended for sending characters used in chat via the virtual keyboard.
  */
 public class TouchCharInput extends androidx.appcompat.widget.AppCompatEditText {
+    public interface PreviewListener {
+        void onPreviewChanged(String text, boolean keyboardActive);
+    }
+
     public static final String TEXT_FILLER = "                              ";
     public static boolean softKeyboardIsActive = false;
+
+    private boolean mIsDoingInternalChanges = false;
+    private CharacterSenderStrategy mCharacterSender;
+    private PreviewListener mPreviewListener;
+    private final StringBuilder mPreviewText = new StringBuilder();
+
     public TouchCharInput(@NonNull Context context) {
         this(context, null);
     }
+
     public TouchCharInput(@NonNull Context context, @Nullable AttributeSet attrs) {
         this(context, attrs, R.attr.editTextStyle);
     }
+
     public TouchCharInput(@NonNull Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
         setup();
     }
 
-
-    private boolean mIsDoingInternalChanges = false;
-    private CharacterSenderStrategy mCharacterSender;
-
     /**
-     * We take the new chars, and send them to the game.
-     * If less chars are present, remove some.
-     * The text is always cleaned up.
+     * Mirror IME edits into the game and into a lightweight Android preview.
+     * The hidden EditText keeps its historical filler so keyboard composition
+     * behavior remains unchanged; only the user's actual characters are shown.
      */
     @Override
-    protected void onTextChanged(CharSequence text, int start, int lengthBefore, int lengthAfter) {
-        if(lengthBefore == lengthAfter || lengthAfter == 30) return;
-        Log.i("TouchCharInput","New Event (before/after)!: "+ lengthBefore + " : " + lengthAfter);
-        boolean isBackSpace = (lengthBefore > lengthAfter);
-        if(isBackSpace) {
-            KeyEncoder.sendUnicodeBackspace();
+    protected void onTextChanged(CharSequence text, int start, int before, int count) {
+        super.onTextChanged(text, start, before, count);
+        if (mIsDoingInternalChanges) {
             return;
         }
-        char c = text.charAt(text.length()-1);
-        Log.i("TouchCharInput","New Event!: "+c);
-        if(mCharacterSender != null) {
-            KeyEncoder.sendEncodedChar(c,c);
-        }
-    }
 
+        Log.i("TouchCharInput", "New Event (before/after)!: " + before + " : " + count);
+
+        if (before > 0) {
+            int removals = Math.min(before, mPreviewText.length());
+            for (int i = 0; i < removals; i++) {
+                KeyEncoder.sendUnicodeBackspace();
+                mPreviewText.deleteCharAt(mPreviewText.length() - 1);
+            }
+        }
+
+        if (count > 0) {
+            int end = Math.min(text.length(), start + count);
+            for (int i = Math.max(0, start); i < end; i++) {
+                char c = text.charAt(i);
+                Log.i("TouchCharInput", "New Event!: " + c);
+                if (mCharacterSender != null) {
+                    KeyEncoder.sendEncodedChar(c, c);
+                }
+                mPreviewText.append(c);
+            }
+        }
+
+        notifyPreview();
+    }
 
     /**
      * When we change from app to app, the keyboard gets disabled.
-     * So, we disable the object
+     * So, we disable the object.
      */
     @Override
     public void onWindowFocusChanged(boolean hasWindowFocus) {
         super.onWindowFocusChanged(hasWindowFocus);
-        disable();
+        if (!hasWindowFocus) {
+            disable();
+        }
     }
 
-    /**
-     * Intercepts the back key to disable focus
-     * Does not affect the rest of the activity.
-     */
+    /** Intercepts the back key to disable focus. */
     @Override
     public boolean onKeyPreIme(final int keyCode, final KeyEvent event) {
-        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK
+                && event.getAction() == KeyEvent.ACTION_UP) {
             disable();
         }
         return super.onKeyPreIme(keyCode, event);
     }
 
-
-    /**
-     * Toggle on and off the soft keyboard, depending of the state
-     */
-    public void switchKeyboardState(){
-        InputMethodManager imm = (InputMethodManager) getContext().getSystemService(INPUT_METHOD_SERVICE);
-        // Allow, regardless of whether or not a hardware keyboard is declared
-        if(hasFocus()){
+    /** Toggle the soft keyboard, depending on the state. */
+    public void switchKeyboardState() {
+        InputMethodManager imm =
+                (InputMethodManager) getContext().getSystemService(INPUT_METHOD_SERVICE);
+        if (hasFocus()) {
             clear();
             disable();
-        }else{
+        } else {
             enable();
             imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
         }
     }
 
-
     /**
-     * Clear the EditText from any leftover inputs
-     * It does not affect the in-game input
+     * Clear hidden IME filler and visible preview. It does not alter previously
+     * submitted in-game chat text.
      */
     @SuppressLint("SetTextI18n")
-    public void clear(){
+    public void clear() {
         mIsDoingInternalChanges = true;
-        //Braille space, doesn't trigger keyboard auto-complete
-        //replacing directly the text without though setText avoids notifying changes
         setText(TEXT_FILLER);
         setSelection(TEXT_FILLER.length());
+        mPreviewText.setLength(0);
         mIsDoingInternalChanges = false;
+        notifyPreview();
     }
 
-    /** Regain ability to exist, take focus and have some text being input */
-    public void enable(){
+    /** Regain ability to take focus and receive text input. */
+    public void enable() {
         softKeyboardIsActive = true;
         setEnabled(true);
         setFocusable(true);
+        setFocusableInTouchMode(true);
         setVisibility(VISIBLE);
         requestFocus();
+        notifyPreview();
     }
 
-    /** Lose ability to exist, take focus and have some text being input */
-    public void disable(){
+    /** Lose ability to take focus and receive text input. */
+    public void disable() {
         softKeyboardIsActive = false;
         clear();
         setVisibility(GONE);
         clearFocus();
         setEnabled(false);
-        //setFocusable(false);
+        notifyPreview();
     }
 
     /** Send the enter key. */
-    private void sendEnter(){
-        mCharacterSender.sendEnter();
+    private void sendEnter() {
+        if (mCharacterSender != null) {
+            mCharacterSender.sendEnter();
+        }
         clear();
     }
 
-    /** Just sets the char sender that should be used. */
-    public void setCharacterSender(CharacterSenderStrategy characterSender){
+    public void setCharacterSender(CharacterSenderStrategy characterSender) {
         mCharacterSender = characterSender;
     }
 
-    /** This function deals with anything that has to be executed when the constructor is called */
-    private void setup(){
-        setOnEditorActionListener((textView, i, keyEvent) -> {
+    public void setPreviewListener(PreviewListener previewListener) {
+        mPreviewListener = previewListener;
+        notifyPreview();
+    }
+
+    private void notifyPreview() {
+        if (mPreviewListener != null) {
+            mPreviewListener.onPreviewChanged(mPreviewText.toString(), softKeyboardIsActive);
+        }
+    }
+
+    private void setup() {
+        setOnEditorActionListener((textView, actionId, keyEvent) -> {
             sendEnter();
-            clear();
             disable();
             return false;
         });
         clear();
         disable();
     }
-
 }
