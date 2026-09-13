@@ -34,6 +34,27 @@
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
+    <TextView
+        android:id="@+id/chatInputPreview"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="12dp"
+        android:minWidth="320dp"
+        android:maxWidth="900dp"
+        android:paddingStart="14dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="8dp"
+        android:background="#D9231C12"
+        android:gravity="center_vertical"
+        android:maxLines="2"
+        android:ellipsize="start"
+        android:text="Chat:"
+        android:textColor="#F2E4BE"
+        android:textSize="18sp"
+        android:visibility="gone" />
+
     <com.kdt.LoggerView
         android:id="@+id/launcherLoggerView"
         android:layout_width="match_parent"
