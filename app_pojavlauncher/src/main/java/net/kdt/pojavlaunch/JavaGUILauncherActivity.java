@@ -154,6 +154,9 @@ public class JavaGUILauncherActivity extends BaseActivity {
                 && clientY >= height - CHAT_KEYBOARD_TOP_FROM_BOTTOM
                 && clientY <= height - CHAT_KEYBOARD_BOTTOM_FROM_BOTTOM
                 && !TouchCharInput.softKeyboardIsActive) {
+            Logger.appendToLog(
+                    "SINGLEPLAYER_INPUT: CHAT_KEYBOARD_REQUEST x="
+                            + clientX + " y=" + clientY);
             mTouchCharInput.switchKeyboardState();
         }
     }
