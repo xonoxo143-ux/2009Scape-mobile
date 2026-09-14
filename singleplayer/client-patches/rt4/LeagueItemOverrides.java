@@ -7,30 +7,41 @@ import java.lang.reflect.Modifier;
 public final class LeagueItemOverrides {
     public static final int VOIDWALKER = 65000;
     public static final int DISK_OF_MEMORIES = 65001;
+    public static final int BANKERS_NOTE = 65002;
 
     private LeagueItemOverrides() {}
 
     public static boolean isCustom(int id) {
-        return id == VOIDWALKER || id == DISK_OF_MEMORIES;
+        return id == VOIDWALKER || id == DISK_OF_MEMORIES || id == BANKERS_NOTE;
     }
 
     public static ObjType create(int id) {
         if (!isCustom(id)) return null;
 
-        int donorId = id == VOIDWALKER ? 14534 : 981;
+        int donorId;
+        String name;
+        String action;
+        if (id == VOIDWALKER) {
+            donorId = 14534;
+            name = "Voidwalker";
+            action = "Teleport";
+        } else if (id == DISK_OF_MEMORIES) {
+            donorId = 981;
+            name = "Disk of Memories";
+            action = "Recall";
+        } else {
+            donorId = 970; // Papyrus
+            name = "Banker's Note";
+            action = "Bank";
+        }
+
         ObjType donor = ObjTypeList.get(donorId);
         ObjType custom = new ObjType();
         copyInstanceFields(donor, custom);
 
         custom.id = id;
-        custom.name = JagString.of(id == VOIDWALKER ? "Voidwalker" : "Disk of Memories");
-        custom.iops = new JagString[]{
-                JagString.of(id == VOIDWALKER ? "Teleport" : "Recall"),
-                null,
-                null,
-                null,
-                null
-        };
+        custom.name = JagString.of(name);
+        custom.iops = new JagString[]{JagString.of(action), null, null, null, null};
         custom.ops = new JagString[]{null, null, LocalizedText.TAKE, null, null};
         custom.cost = 0;
         custom.team = 0;
