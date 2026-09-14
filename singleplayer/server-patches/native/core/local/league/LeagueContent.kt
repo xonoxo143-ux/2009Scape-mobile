@@ -12,6 +12,7 @@ class LeagueBootstrap : StartupListener {
         if (!java.lang.Boolean.getBoolean("singleplayer")) return
         LeagueItems.installDefinitions()
         FirstPassRelics.registerAll()
+        ExpandedRelics.registerAll()
         LeagueRuntime.install(LeagueRules)
         println("SINGLEPLAYER_LEAGUE: RULES_READY relics=${LeagueRelics.registeredRelicIds()}")
     }
@@ -117,6 +118,7 @@ object LeagueRelics {
     fun resetSelections(player: Player) {
         player.setAttribute("/save:$RELICS_ATTRIBUTE", "")
         LeagueItems.removeRelicItems(player)
+        ExpandedLeagueItems.removeBankersNote(player)
         player.removeAttribute(LeagueModifiers.RECALL_ORIGIN)
         player.removeAttribute(LeagueModifiers.RECALL_IN_PROGRESS)
         player.sendMessage("League relic selections reset.")
@@ -128,7 +130,7 @@ object LeagueRelics {
             if (LeagueRuntime.hasRelic(player, id)) effect.onAttach(player)
         }
         if (effects.values.none { LeagueRuntime.hasRelic(player, it.id) }) {
-            player.sendMessage("League relic sandbox is ready. Use ::relics to view choices.")
+            player.sendMessage("League relic sandbox is ready. Open the League menu to view choices.")
         }
     }
 
