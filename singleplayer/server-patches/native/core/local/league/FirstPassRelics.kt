@@ -395,10 +395,10 @@ class LeagueSandboxCommands : Commands {
             val raw = args.drop(1).joinToString(" ").trim().lowercase()
             val normalized = raw.replace('-', '_').replace(' ', '_')
             val alias = when (normalized) {
-                "endless", "harvest" -> ENDLESS_HARVEST
-                "void" -> VOIDWALKER
-                "production" -> PRODUCTION_MASTER
-                "recall", "disk", "disk_of_memories" -> LAST_RECALL
+                "endless", "harvest" -> FirstPassRelics.ENDLESS_HARVEST
+                "void" -> FirstPassRelics.VOIDWALKER
+                "production" -> FirstPassRelics.PRODUCTION_MASTER
+                "recall", "disk", "disk_of_memories" -> FirstPassRelics.LAST_RECALL
                 "banker", "bank", "bankers" -> ExpandedRelics.BANKERS_NOTE
                 "slayer" -> ExpandedRelics.SLAYER_MASTER
                 "combat" -> ExpandedRelics.COMBAT_SPECIALIST
