@@ -11,9 +11,8 @@ import java.util.Set;
 /**
  * Local-only League presentation state.
  *
- * This class deliberately owns presentation state only. Authoritative League
- * progress continues to live in the retained world and is read through
- * LocalLeagueBridge.
+ * The world remains authoritative for progress and relic definitions. This UI
+ * renders those definitions and queues selection through LocalLeagueBridge.
  */
 public final class LocalLeagueUiBridge {
     public static final int TAB_TASKS = 0;
@@ -35,6 +34,10 @@ public final class LocalLeagueUiBridge {
     private static final int COLOR_SCROLL_TRACK = 0x17130f;
     private static final int COLOR_SCROLL_THUMB = 0x9b8457;
 
+    private static final int RELIC_HEADER_H = 23;
+    private static final int RELIC_CARD_H = 68;
+    private static final int RELIC_GAP = 4;
+
     private static volatile boolean open;
     private static volatile int activeTab = TAB_TASKS;
 
@@ -48,6 +51,9 @@ public final class LocalLeagueUiBridge {
     private static int blessingsScroll;
     private static boolean draggingContent;
     private static int dragTab = -1;
+
+    private static String relicStatus = "";
+    private static long relicStatusUntil;
 
     private static boolean announcedOpen;
     private static boolean announcedDraw;
@@ -85,6 +91,7 @@ public final class LocalLeagueUiBridge {
         open = false;
         draggingContent = false;
         dragTab = -1;
+        relicStatus = "";
         announcedDraw = false;
         System.out.println("SINGLEPLAYER_LEAGUE_UI: CLOSE");
     }
@@ -121,6 +128,11 @@ public final class LocalLeagueUiBridge {
                     return true;
                 }
             }
+
+            if (activeTab == TAB_RELICS
+                    && inside(x, y, layout.contentX, layout.contentY, layout.contentW, layout.contentH)) {
+                handleRelicTap(x, y, layout);
+            }
             return true;
         }
 
@@ -149,8 +161,6 @@ public final class LocalLeagueUiBridge {
             return true;
         }
 
-        // Pinch and any future touch gestures are swallowed while the modal is
-        // open so they cannot move the camera or alter the game behind it.
         return true;
     }
 
@@ -166,8 +176,6 @@ public final class LocalLeagueUiBridge {
                     "SINGLEPLAYER_LEAGUE_UI: DRAW " + layout.width + "x" + layout.height);
         }
 
-        // Keep the game readable behind the modal. The League window should feel
-        // like a compact in-game panel, not a second full-screen scene.
         API.FillRect(0, 0, GameShell.canvasWidth, GameShell.canvasHeight, COLOR_DIM, 68);
 
         API.FillRect(layout.x, layout.y, layout.width, layout.height, COLOR_BG, 0);
@@ -261,11 +269,7 @@ public final class LocalLeagueUiBridge {
 
         if (tasks.isEmpty()) {
             textLarge("No League tasks completed yet.", listX + 16, rowsTop + 34, COLOR_TEXT);
-            textSmall(
-                    "Completed tasks will appear here.",
-                    listX + 16,
-                    rowsTop + 56,
-                    COLOR_MUTED);
+            textSmall("Completed tasks will appear here.", listX + 16, rowsTop + 56, COLOR_MUTED);
         } else {
             for (int i = 0; i < tasks.size(); i++) {
                 int ry = rowsTop + i * rowH - tasksScroll;
@@ -282,67 +286,191 @@ public final class LocalLeagueUiBridge {
     }
 
     private static void drawRelics(Layout layout) {
-        int passiveW = Math.min(180, Math.max(145, layout.contentW / 3));
-        int gap = 8;
-        int leftW = layout.contentW - passiveW - gap;
-        int passiveX = layout.contentX + leftW + gap;
+        API.FillRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, COLOR_PANEL, 0);
+        API.DrawRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, 0x5d4f39);
+        textLarge("Relic choices", layout.contentX + 10, layout.contentY + 21, COLOR_GOLD);
 
-        API.FillRect(layout.contentX, layout.contentY, leftW, layout.contentH, COLOR_PANEL, 0);
-        API.DrawRect(layout.contentX, layout.contentY, leftW, layout.contentH, 0x5d4f39);
-        textLarge("Relics", layout.contentX + 10, layout.contentY + 21, COLOR_GOLD);
+        if (!relicStatus.isEmpty() && System.currentTimeMillis() < relicStatusUntil) {
+            int statusWidth = Fonts.p11Full.getStringWidth(JagString.of(relicStatus));
+            textSmall(relicStatus, layout.contentX + Math.max(140, layout.contentW - statusWidth - 18),
+                    layout.contentY + 20, COLOR_MUTED);
+        } else if (!relicStatus.isEmpty()) {
+            relicStatus = "";
+        }
 
-        List<String> relics = sorted(LocalLeagueBridge.unlockedRelics());
-        int rowsTop = layout.contentY + 31;
-        int rowsH = layout.contentH - 39;
-        int cardH = 54;
-        int maxScroll = Math.max(0, relics.size() * cardH - rowsH);
+        List<LocalLeagueBridge.RelicDefinition> definitions = LocalLeagueBridge.relicDefinitions();
+        Set<String> selected = LocalLeagueBridge.unlockedRelics();
+        int rowsTop = layout.contentY + 30;
+        int rowsH = layout.contentH - 38;
+        int maxScroll = Math.max(0, relicContentHeight(definitions) - rowsH);
         relicsScroll = clamp(relicsScroll, 0, maxScroll);
 
-        if (relics.isEmpty()) {
-            textLarge("No relics unlocked yet.", layout.contentX + 16, rowsTop + 34, COLOR_TEXT);
-            textSmall(
-                    "Unlocked relics will appear here.",
-                    layout.contentX + 16,
-                    rowsTop + 56,
-                    COLOR_MUTED);
-        } else {
-            for (int i = 0; i < relics.size(); i++) {
-                int ry = rowsTop + i * cardH - relicsScroll;
-                if (ry < rowsTop || ry + cardH > rowsTop + rowsH) continue;
-                API.FillRect(layout.contentX + 8, ry, leftW - 22, cardH - 5, COLOR_PANEL_ALT, 0);
-                API.DrawRect(layout.contentX + 8, ry, leftW - 22, cardH - 5, 0x6f5e41);
-                textLarge(fit(pretty(relics.get(i)), leftW - 56), layout.contentX + 18, ry + 22, COLOR_GOLD);
-                textSmall("Unlocked", layout.contentX + 18, ry + 40, COLOR_GREEN);
-            }
+        if (definitions.isEmpty()) {
+            textLarge("No relic definitions are available.", layout.contentX + 16, rowsTop + 34, COLOR_TEXT);
+            textSmall("The world is still loading or the League registry is unavailable.",
+                    layout.contentX + 16, rowsTop + 56, COLOR_MUTED);
+            return;
         }
-        drawScrollbar(layout.contentX + leftW - 10, rowsTop, 6, rowsH, relicsScroll, maxScroll);
 
-        API.FillRect(passiveX, layout.contentY, passiveW, layout.contentH, 0x272119, 0);
-        API.DrawRect(passiveX, layout.contentY, passiveW, layout.contentH, 0x5d4f39);
-        textLarge("Passive effects", passiveX + 10, layout.contentY + 21, COLOR_GOLD);
-        textSmall("Tier-wide bonuses", passiveX + 10, layout.contentY + 49, COLOR_TEXT);
-        textSmall("stay separate from", passiveX + 10, layout.contentY + 66, COLOR_MUTED);
-        textSmall("selected relic effects.", passiveX + 10, layout.contentY + 82, COLOR_MUTED);
-        textSmall("The ruleset supplies", passiveX + 10, layout.contentY + 112, COLOR_MUTED);
-        textSmall("the actual effect text.", passiveX + 10, layout.contentY + 128, COLOR_MUTED);
+        int cursor = rowsTop - relicsScroll;
+        int lastTier = -1;
+        for (LocalLeagueBridge.RelicDefinition relic : definitions) {
+            if (relic.tier != lastTier) {
+                if (cursor + RELIC_HEADER_H >= rowsTop && cursor <= rowsTop + rowsH) {
+                    textLarge(tierLabel(relic.tier), layout.contentX + 10, cursor + 17, COLOR_GOLD);
+                }
+                cursor += RELIC_HEADER_H;
+                lastTier = relic.tier;
+            }
+
+            int cardY = cursor;
+            if (cardY + RELIC_CARD_H >= rowsTop && cardY <= rowsTop + rowsH) {
+                drawRelicCard(layout, relic, definitions, selected, cardY, rowsTop, rowsH);
+            }
+            cursor += RELIC_CARD_H + RELIC_GAP;
+        }
+
+        drawScrollbar(layout.contentX + layout.contentW - 10, rowsTop, 6, rowsH, relicsScroll, maxScroll);
+    }
+
+    private static void drawRelicCard(
+            Layout layout,
+            LocalLeagueBridge.RelicDefinition relic,
+            List<LocalLeagueBridge.RelicDefinition> definitions,
+            Set<String> selected,
+            int cardY,
+            int clipTop,
+            int clipHeight) {
+        if (cardY < clipTop || cardY + RELIC_CARD_H > clipTop + clipHeight) return;
+
+        int cardX = layout.contentX + 8;
+        int cardW = layout.contentW - 22;
+        boolean isSelected = selected.contains(relic.id);
+        String tierChoice = selectedRelicInTier(relic.tier, definitions, selected);
+        boolean locked = tierChoice != null && !isSelected;
+
+        API.FillRect(cardX, cardY, cardW, RELIC_CARD_H - 3,
+                isSelected ? 0x3b3a22 : COLOR_PANEL_ALT, 0);
+        API.DrawRect(cardX, cardY, cardW, RELIC_CARD_H - 3,
+                isSelected ? COLOR_GREEN : locked ? 0x554c3d : 0x6f5e41);
+
+        String state = isSelected ? "SELECTED" : locked ? "LOCKED" : "Tap to choose";
+        int stateColor = isSelected ? COLOR_GREEN : locked ? COLOR_MUTED : COLOR_GOLD;
+        int stateWidth = Fonts.p11Full.getStringWidth(JagString.of(state));
+        textLarge(fit(relic.name, Math.max(110, cardW - stateWidth - 48)), cardX + 10, cardY + 20, COLOR_TEXT);
+        textSmall(state, cardX + cardW - stateWidth - 10, cardY + 19, stateColor);
+
+        String[] description = wrapSmall(relic.description, cardW - 20, 2);
+        if (description.length > 0) textSmall(description[0], cardX + 10, cardY + 40, COLOR_MUTED);
+        if (description.length > 1) textSmall(description[1], cardX + 10, cardY + 55, COLOR_MUTED);
+    }
+
+    private static void handleRelicTap(int x, int y, Layout layout) {
+        List<LocalLeagueBridge.RelicDefinition> definitions = LocalLeagueBridge.relicDefinitions();
+        if (definitions.isEmpty()) return;
+
+        int rowsTop = layout.contentY + 30;
+        int rowsH = layout.contentH - 38;
+        if (!inside(x, y, layout.contentX, rowsTop, layout.contentW - 10, rowsH)) return;
+
+        int cursor = rowsTop - relicsScroll;
+        int lastTier = -1;
+        for (LocalLeagueBridge.RelicDefinition relic : definitions) {
+            if (relic.tier != lastTier) {
+                cursor += RELIC_HEADER_H;
+                lastTier = relic.tier;
+            }
+            int cardY = cursor;
+            if (cardY >= rowsTop && cardY + RELIC_CARD_H <= rowsTop + rowsH
+                    && inside(x, y, layout.contentX + 8, cardY, layout.contentW - 22, RELIC_CARD_H - 3)) {
+                chooseRelic(relic, definitions);
+                return;
+            }
+            cursor += RELIC_CARD_H + RELIC_GAP;
+        }
+    }
+
+    private static void chooseRelic(
+            LocalLeagueBridge.RelicDefinition relic,
+            List<LocalLeagueBridge.RelicDefinition> definitions) {
+        Set<String> selected = LocalLeagueBridge.unlockedRelics();
+        if (selected.contains(relic.id)) {
+            setRelicStatus(relic.name + " is already selected.");
+            return;
+        }
+
+        String selectedId = selectedRelicInTier(relic.tier, definitions, selected);
+        if (selectedId != null) {
+            String selectedName = selectedId;
+            for (LocalLeagueBridge.RelicDefinition candidate : definitions) {
+                if (candidate.id.equals(selectedId)) {
+                    selectedName = candidate.name;
+                    break;
+                }
+            }
+            setRelicStatus("Tier " + relic.tier + " is locked by " + selectedName + ".");
+            return;
+        }
+
+        if (LocalLeagueBridge.selectRelic(relic.id)) {
+            setRelicStatus("Selecting " + relic.name + "...");
+        } else {
+            setRelicStatus("Could not queue that relic selection.");
+        }
+    }
+
+    private static String selectedRelicInTier(
+            int tier,
+            List<LocalLeagueBridge.RelicDefinition> definitions,
+            Set<String> selected) {
+        for (LocalLeagueBridge.RelicDefinition relic : definitions) {
+            if (relic.tier == tier && selected.contains(relic.id)) return relic.id;
+        }
+        return null;
+    }
+
+    private static int relicContentHeight(List<LocalLeagueBridge.RelicDefinition> definitions) {
+        int height = 0;
+        int lastTier = -1;
+        for (LocalLeagueBridge.RelicDefinition relic : definitions) {
+            if (relic.tier != lastTier) {
+                height += RELIC_HEADER_H;
+                lastTier = relic.tier;
+            }
+            height += RELIC_CARD_H + RELIC_GAP;
+        }
+        return height;
+    }
+
+    private static String tierLabel(int tier) {
+        switch (tier) {
+            case 1:
+                return "Tier 1 - Gathering";
+            case 2:
+                return "Tier 2 - Production";
+            case 3:
+                return "Tier 3 - Combat / Utility";
+            case 4:
+                return "Tier 4 - Utility";
+            default:
+                return "Tier " + tier;
+        }
+    }
+
+    private static void setRelicStatus(String value) {
+        relicStatus = value == null ? "" : value;
+        relicStatusUntil = System.currentTimeMillis() + 2500L;
     }
 
     private static void drawBlessings(Layout layout) {
         API.FillRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, COLOR_PANEL, 0);
         API.DrawRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, 0x5d4f39);
         textLarge("Blessings", layout.contentX + 12, layout.contentY + 22, COLOR_GOLD);
-        textLarge("Blessing state is not wired yet.",
-                layout.contentX + 18, layout.contentY + 62, COLOR_TEXT);
-        textSmall(
-                "This page is touch-modal and ready for authoritative choices, progress and resets.",
-                layout.contentX + 18,
-                layout.contentY + 88,
-                COLOR_MUTED);
-        textSmall(
-                "Nothing fake is stored in the client while that runtime seam is unfinished.",
-                layout.contentX + 18,
-                layout.contentY + 105,
-                COLOR_MUTED);
+        textLarge("Blessing state is not wired yet.", layout.contentX + 18, layout.contentY + 62, COLOR_TEXT);
+        textSmall("This page is touch-modal and ready for authoritative choices, progress and resets.",
+                layout.contentX + 18, layout.contentY + 88, COLOR_MUTED);
+        textSmall("Nothing fake is stored in the client while that runtime seam is unfinished.",
+                layout.contentX + 18, layout.contentY + 105, COLOR_MUTED);
 
         int sampleY = layout.contentY + 145 - blessingsScroll;
         API.FillRect(layout.contentX + 18, sampleY, layout.contentW - 36, 54, COLOR_PANEL_ALT, 0);
@@ -357,13 +485,7 @@ public final class LocalLeagueUiBridge {
         textLarge(value, x + 8, y + 18, COLOR_TEXT);
     }
 
-    private static void drawScrollbar(
-            int x,
-            int y,
-            int width,
-            int height,
-            int scroll,
-            int maxScroll) {
+    private static void drawScrollbar(int x, int y, int width, int height, int scroll, int maxScroll) {
         API.FillRect(x, y, width, height, COLOR_SCROLL_TRACK, 0);
         if (maxScroll <= 0) {
             API.FillRect(x, y, width, height, COLOR_SCROLL_THUMB, 0);
@@ -381,8 +503,8 @@ public final class LocalLeagueUiBridge {
             int max = Math.max(0, LocalLeagueBridge.completedTasks().size() * 32 - rowsH);
             tasksScroll = clamp(tasksScroll + delta, 0, max);
         } else if (activeTab == TAB_RELICS) {
-            int rowsH = layout.contentH - 39;
-            int max = Math.max(0, LocalLeagueBridge.unlockedRelics().size() * 54 - rowsH);
+            int rowsH = layout.contentH - 38;
+            int max = Math.max(0, relicContentHeight(LocalLeagueBridge.relicDefinitions()) - rowsH);
             relicsScroll = clamp(relicsScroll + delta, 0, max);
         } else {
             blessingsScroll = clamp(blessingsScroll + delta, 0, 90);
@@ -393,9 +515,6 @@ public final class LocalLeagueUiBridge {
         int canvasW = GameShell.canvasWidth;
         int canvasH = GameShell.canvasHeight;
 
-        // Keep the modal materially smaller than the world view. Wide phones get
-        // a little more horizontal room; taller/foldable layouts retain more game
-        // above and below the window.
         int width = clamp(canvasW * 58 / 100, 500, 650);
         int height = clamp(canvasH * 68 / 100, 320, 370);
         width = Math.min(width, Math.max(420, canvasW - 32));
@@ -463,11 +582,44 @@ public final class LocalLeagueUiBridge {
         String suffix = "...";
         for (int end = value.length() - 1; end > 0; end--) {
             String candidate = value.substring(0, end) + suffix;
-            if (Fonts.p12Full.getStringWidth(JagString.of(candidate)) <= maxWidth) {
-                return candidate;
-            }
+            if (Fonts.p12Full.getStringWidth(JagString.of(candidate)) <= maxWidth) return candidate;
         }
         return suffix;
+    }
+
+    private static String[] wrapSmall(String value, int maxWidth, int maxLines) {
+        if (value == null || value.trim().isEmpty() || maxLines <= 0) return new String[0];
+        String[] words = value.trim().split("\\s+");
+        ArrayList<String> lines = new ArrayList<String>();
+        StringBuilder current = new StringBuilder();
+        int index = 0;
+        while (index < words.length && lines.size() < maxLines) {
+            String candidate = current.length() == 0 ? words[index] : current + " " + words[index];
+            if (Fonts.p11Full.getStringWidth(JagString.of(candidate)) <= maxWidth) {
+                current.setLength(0);
+                current.append(candidate);
+                index++;
+                continue;
+            }
+            if (current.length() > 0) {
+                lines.add(current.toString());
+                current.setLength(0);
+            } else {
+                lines.add(words[index]);
+                index++;
+            }
+        }
+        if (current.length() > 0 && lines.size() < maxLines) lines.add(current.toString());
+        if (index < words.length && !lines.isEmpty()) {
+            int last = lines.size() - 1;
+            String line = lines.get(last);
+            while (!line.isEmpty()
+                    && Fonts.p11Full.getStringWidth(JagString.of(line + "...")) > maxWidth) {
+                line = line.substring(0, line.length() - 1);
+            }
+            lines.set(last, line + "...");
+        }
+        return lines.toArray(new String[lines.size()]);
     }
 
     private static void textLarge(String value, int x, int y, int color) {
