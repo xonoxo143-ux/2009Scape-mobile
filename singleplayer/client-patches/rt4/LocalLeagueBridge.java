@@ -1,16 +1,21 @@
 package rt4;
 
+import singleplayer.InProcessBootstrap;
+
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
- * Read-only RT4-facing view of the single-player league runtime.
+ * RT4-facing view of the authoritative single-player League runtime.
  *
- * League rules and persistence remain world-authoritative. This bridge exists so
- * future RT4/Android league UI can render points, tasks and relics directly from
- * the in-process world without introducing a new packet protocol.
+ * Reads use direct in-process reflection. Mutating relic selections are queued
+ * through the retained world command processor so the RT4 render/input thread
+ * never writes player state directly.
  */
 public final class LocalLeagueBridge {
     private static volatile Class<?> playerClass;
@@ -20,6 +25,11 @@ public final class LocalLeagueBridge {
     private static volatile Method unlockedRelics;
     private static volatile Method hasCompletedTask;
     private static volatile Method hasRelic;
+    private static volatile Method relicDefinitions;
+    private static volatile Method relicId;
+    private static volatile Method relicName;
+    private static volatile Method relicDescription;
+    private static volatile Method relicTier;
 
     private LocalLeagueBridge() {}
 
@@ -70,13 +80,62 @@ public final class LocalLeagueBridge {
         return stringSet(unlockedRelics);
     }
 
+    /** Authoritative relic metadata, sorted for presentation by tier then name. */
+    public static List<RelicDefinition> relicDefinitions() {
+        try {
+            resolve();
+            Object result = relicDefinitions.invoke(null);
+            if (!(result instanceof Iterable)) return Collections.emptyList();
+
+            ArrayList<RelicDefinition> copy = new ArrayList<RelicDefinition>();
+            for (Object effect : (Iterable<?>) result) {
+                if (effect == null) continue;
+                Object idValue = relicId.invoke(effect);
+                Object nameValue = relicName.invoke(effect);
+                Object descriptionValue = relicDescription.invoke(effect);
+                Object tierValue = relicTier.invoke(effect);
+                if (idValue == null || nameValue == null || tierValue == null) continue;
+                copy.add(new RelicDefinition(
+                        idValue.toString(),
+                        nameValue.toString(),
+                        descriptionValue == null ? "" : descriptionValue.toString(),
+                        ((Number) tierValue).intValue()));
+            }
+            Collections.sort(copy, new Comparator<RelicDefinition>() {
+                @Override
+                public int compare(RelicDefinition a, RelicDefinition b) {
+                    int tierCompare = Integer.compare(a.tier, b.tier);
+                    if (tierCompare != 0) return tierCompare;
+                    return a.name.compareToIgnoreCase(b.name);
+                }
+            });
+            return Collections.unmodifiableList(copy);
+        } catch (Throwable failure) {
+            return Collections.emptyList();
+        }
+    }
+
+    /** Queue a relic selection onto the authoritative world command processor. */
+    public static boolean selectRelic(String id) {
+        if (id == null || id.isEmpty()) return false;
+        for (int i = 0; i < id.length(); i++) {
+            char c = id.charAt(i);
+            if (!(c == '_' || c == '-' || Character.isLetterOrDigit(c))) return false;
+        }
+        boolean queued = InProcessBootstrap.LocalCommands.commandLine("relic " + id);
+        if (queued) {
+            System.out.println("SINGLEPLAYER_LEAGUE_UI: RELIC_SELECTION_QUEUED id=" + id);
+        }
+        return queued;
+    }
+
     private static Set<String> stringSet(Method method) {
         try {
             Object player = player();
             if (player == null) return Collections.emptySet();
             Object result = method.invoke(null, player);
             if (!(result instanceof Iterable)) return Collections.emptySet();
-            LinkedHashSet<String> copy = new LinkedHashSet<>();
+            LinkedHashSet<String> copy = new LinkedHashSet<String>();
             for (Object value : (Iterable<?>) result) {
                 if (value != null) copy.add(value.toString());
             }
@@ -104,10 +163,32 @@ public final class LocalLeagueBridge {
         unlockedRelics = runtime.getMethod("unlockedRelics", playerClass);
         hasCompletedTask = runtime.getMethod("hasCompletedTask", playerClass, String.class);
         hasRelic = runtime.getMethod("hasRelic", playerClass, String.class);
+
+        Class<?> relicRegistry = Class.forName("core.local.league.LeagueRelics");
+        relicDefinitions = relicRegistry.getMethod("definitions");
+        Class<?> effect = Class.forName("core.local.league.LeagueRelicEffect");
+        relicId = effect.getMethod("getId");
+        relicName = effect.getMethod("getName");
+        relicDescription = effect.getMethod("getDescription");
+        relicTier = effect.getMethod("getTier");
     }
 
     private static String playerName() {
         String value = System.getProperty("singlePlayerName", "Player").trim();
         return value.isEmpty() ? "Player" : value;
+    }
+
+    public static final class RelicDefinition {
+        public final String id;
+        public final String name;
+        public final String description;
+        public final int tier;
+
+        RelicDefinition(String id, String name, String description, int tier) {
+            this.id = id;
+            this.name = name;
+            this.description = description;
+            this.tier = tier;
+        }
     }
 }
