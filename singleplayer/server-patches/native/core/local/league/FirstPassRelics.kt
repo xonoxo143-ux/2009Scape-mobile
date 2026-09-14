@@ -34,7 +34,7 @@ object LeagueItemIds {
     const val DISK_VISUAL_DONOR = 981         // Disk of returning
 }
 
-/** Server-side logical definitions for the two custom League utility items. */
+/** Server-side logical definitions for the original League utility items. */
 object LeagueItems {
     @JvmStatic
     fun installDefinitions() {
@@ -89,7 +89,7 @@ object LeagueItems {
     }
 }
 
-/** First playable set: two choices in each of two automatically available tiers. */
+/** Original framework relics retained while the wider relic roadmap is restored. */
 object FirstPassRelics {
     const val ENDLESS_HARVEST = "endless_harvest"
     const val VOIDWALKER = "voidwalker"
@@ -108,7 +108,7 @@ object FirstPassRelics {
             VOIDWALKER,
             "Voidwalker",
             "Gain the Voidwalker, combining unlimited existing jewellery teleports into one item.",
-            1,
+            4,
             LeagueItemIds.VOIDWALKER
         ))
         LeagueRelics.register(ProductionMasterEffect)
@@ -196,7 +196,7 @@ object FirstPassRelics {
         override val id = LAST_RECALL
         override val name = "Last Recall"
         override val description = "Gain the Disk of Memories, which returns you to the origin of your last eligible teleport."
-        override val tier = 2
+        override val tier = 3
 
         override fun onAttach(player: Player) {
             LeagueItems.ensureRelicItem(player, LeagueItemIds.DISK_OF_MEMORIES)
@@ -381,25 +381,32 @@ class VoidwalkerDialogue : DialogueFile() {
 /** Temporary sandbox controls until tasks/League points replace free tier access. */
 class LeagueSandboxCommands : Commands {
     override fun defineCommands() {
-        define("relics", Privilege.STANDARD, "::relics", "View first-pass League relics.") { player, _ ->
+        define("relics", Privilege.STANDARD, "::relics", "View League relics.") { player, _ ->
             player.sendMessage("--- League relic sandbox ---")
-            for (effect in LeagueRelics.definitions()) {
+            for (effect in LeagueRelics.definitions().sortedWith(compareBy<LeagueRelicEffect> { it.tier }.thenBy { it.name })) {
                 val selected = if (LeagueRuntime.hasRelic(player, effect.id)) " [SELECTED]" else ""
                 player.sendMessage("Tier ${effect.tier}: ${effect.name}$selected - ${effect.description}")
             }
-            player.sendMessage("Choose: ::relic endless | voidwalker | production | recall")
+            player.sendMessage("Choose with the League UI or ::relic <name>.")
             player.sendMessage("Development reset: ::resetrelics")
         }
 
         define("relic", Privilege.STANDARD, "::relic <name>", "Select a relic in the sandbox.") { player, args ->
             val raw = args.drop(1).joinToString(" ").trim().lowercase()
-            val id = when (raw.replace("_", " ")) {
-                "endless", "harvest", "endless harvest" -> FirstPassRelics.ENDLESS_HARVEST
-                "void", "voidwalker" -> FirstPassRelics.VOIDWALKER
-                "production", "production master" -> FirstPassRelics.PRODUCTION_MASTER
-                "recall", "last recall", "disk", "disk of memories" -> FirstPassRelics.LAST_RECALL
-                else -> null
+            val normalized = raw.replace('-', '_').replace(' ', '_')
+            val alias = when (normalized) {
+                "endless", "harvest" -> ENDLESS_HARVEST
+                "void" -> VOIDWALKER
+                "production" -> PRODUCTION_MASTER
+                "recall", "disk", "disk_of_memories" -> LAST_RECALL
+                "banker", "bank", "bankers" -> ExpandedRelics.BANKERS_NOTE
+                "slayer" -> ExpandedRelics.SLAYER_MASTER
+                "combat" -> ExpandedRelics.COMBAT_SPECIALIST
+                else -> normalized
             }
+            val id = LeagueRelics.definitions().firstOrNull {
+                it.id.equals(alias, true) || it.name.lowercase().replace(' ', '_') == alias
+            }?.id
             if (id == null) {
                 player.sendMessage("Unknown relic. Use ::relics to see the available choices.")
                 return@define
@@ -407,7 +414,7 @@ class LeagueSandboxCommands : Commands {
             when (LeagueRelics.select(player, id)) {
                 LeagueRelics.SelectionResult.SELECTED -> Unit
                 LeagueRelics.SelectionResult.ALREADY_SELECTED -> player.sendMessage("That relic is already selected.")
-                LeagueRelics.SelectionResult.TIER_LOCKED -> player.sendMessage("You already selected the other relic in that tier. Use ::resetrelics while testing.")
+                LeagueRelics.SelectionResult.TIER_LOCKED -> player.sendMessage("You already selected another relic in that tier. Use ::resetrelics while testing.")
                 LeagueRelics.SelectionResult.UNKNOWN -> player.sendMessage("That relic is not registered.")
             }
         }
