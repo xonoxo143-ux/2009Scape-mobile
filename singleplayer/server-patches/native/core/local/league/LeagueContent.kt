@@ -2,7 +2,6 @@ package core.local.league
 
 import core.api.StartupListener
 import core.game.event.Event
-import core.game.event.ResourceProducedEvent
 import core.game.node.entity.player.Player
 import core.local.LeagueRuntime
 import java.util.concurrent.CopyOnWriteArrayList
@@ -11,11 +10,10 @@ import java.util.concurrent.CopyOnWriteArrayList
 class LeagueBootstrap : StartupListener {
     override fun startup() {
         if (!java.lang.Boolean.getBoolean("singleplayer")) return
-        LeagueItems.installDefinitions()
-        FirstPassRelics.registerAll()
-        ExpandedRelics.registerAll()
+        LeagueItems.installDefinitions() // legacy cleanup/compat definitions
+        DemonicPactsRelics.registerAll()
         LeagueRuntime.install(LeagueRules)
-        println("SINGLEPLAYER_LEAGUE: RULES_READY relics=${LeagueRelics.registeredRelicIds()}")
+        println("SINGLEPLAYER_LEAGUE: DEMONIC_PACTS_READY relics=${LeagueRelics.registeredRelicIds()}")
     }
 }
 
@@ -27,6 +25,7 @@ object LeagueRules : LeagueRuntime.RuleSet {
 
     override fun onEvent(player: Player, event: Event) {
         LeagueTasks.onEvent(player, event)
+        DemonicPactsRelics.onGlobalEvent(player, event)
         LeagueRelics.onEvent(player, event)
     }
 }
@@ -68,11 +67,13 @@ interface LeagueRelicEffect {
     val description: String
     val tier: Int
     fun onAttach(player: Player) {}
+    fun onDetach(player: Player) {}
     fun onEvent(player: Player, event: Event) {}
 }
 
 object LeagueRelics {
     private const val RELICS_ATTRIBUTE = "league:relics"
+    private const val RELOADED_EXTRA_ATTRIBUTE = "league:reloaded-extra"
     private val effects = LinkedHashMap<String, LeagueRelicEffect>()
 
     @JvmStatic
@@ -95,33 +96,81 @@ object LeagueRelics {
     @JvmStatic
     fun definition(id: String): LeagueRelicEffect? = effects[id]
 
-    /** Temporary sandbox selection: exactly one relic may be chosen per tier. */
+    @JvmStatic
+    fun selectedDefinitions(player: Player): List<LeagueRelicEffect> =
+        effects.values.filter { LeagueRuntime.hasRelic(player, it.id) }
+
+    /** Filter saved legacy IDs out of the UI/counts without destroying the save. */
+    @JvmStatic
+    fun selectedIds(player: Player): List<String> = selectedDefinitions(player).map { it.id }
+
+    @JvmStatic
+    fun canSelect(player: Player, id: String): Boolean {
+        val chosen = effects[id] ?: return false
+        if (LeagueRuntime.hasRelic(player, id)) return false
+
+        val conflict = effects.values.firstOrNull {
+            it.tier == chosen.tier && LeagueRuntime.hasRelic(player, it.id)
+        }
+        if (conflict == null) return true
+
+        return chosen.tier < 7 &&
+            LeagueRuntime.hasRelic(player, DemonicPactsRelics.RELOADED) &&
+            player.getAttribute(RELOADED_EXTRA_ATTRIBUTE, "").isBlank()
+    }
+
+    /** One relic per tier, plus one lower-tier extra when Reloaded has been chosen. */
     @JvmStatic
     @Synchronized
     fun select(player: Player, id: String): SelectionResult {
         val chosen = effects[id] ?: return SelectionResult.UNKNOWN
         if (LeagueRuntime.hasRelic(player, id)) return SelectionResult.ALREADY_SELECTED
+
         val conflict = effects.values.firstOrNull {
             it.tier == chosen.tier && LeagueRuntime.hasRelic(player, it.id)
         }
-        if (conflict != null) return SelectionResult.TIER_LOCKED
+        var consumesReloaded = false
+        if (conflict != null) {
+            val extraAvailable = chosen.tier < 7 &&
+                LeagueRuntime.hasRelic(player, DemonicPactsRelics.RELOADED) &&
+                player.getAttribute(RELOADED_EXTRA_ATTRIBUTE, "").isBlank()
+            if (!extraAvailable) return SelectionResult.TIER_LOCKED
+            consumesReloaded = true
+        }
 
         if (!LeagueRuntime.unlockRelic(player, id)) return SelectionResult.ALREADY_SELECTED
+        if (consumesReloaded) {
+            player.setAttribute("/save:$RELOADED_EXTRA_ATTRIBUTE", id)
+            player.sendMessage("Reloaded grants an additional lower-tier relic.")
+        }
         chosen.onAttach(player)
+        DemonicPactsRelics.refreshPassives(player)
         player.sendMessage("League relic selected: ${chosen.name}.")
-        println("SINGLEPLAYER_LEAGUE: RELIC_SELECTED tier=${chosen.tier} id=${chosen.id}")
+        println("SINGLEPLAYER_LEAGUE: RELIC_SELECTED tier=${chosen.tier} id=${chosen.id} reloadedExtra=$consumesReloaded")
         return SelectionResult.SELECTED
     }
 
-    /** Development-only reset until League points/tier unlocks replace sandbox mode. */
+    /** Single-player sandbox reset, exposed through the League UI. */
     @JvmStatic
     @Synchronized
     fun resetSelections(player: Player) {
+        for (effect in selectedDefinitions(player)) {
+            try {
+                effect.onDetach(player)
+            } catch (failure: Throwable) {
+                System.err.println("SINGLEPLAYER_LEAGUE: DETACH_FAILED id=${effect.id} failure=$failure")
+            }
+        }
+
         player.setAttribute("/save:$RELICS_ATTRIBUTE", "")
+        player.setAttribute("/save:$RELOADED_EXTRA_ATTRIBUTE", "")
         LeagueItems.removeRelicItems(player)
         ExpandedLeagueItems.removeBankersNote(player)
+        DemonicPactsItems.removeAll(player)
         player.removeAttribute(LeagueModifiers.RECALL_ORIGIN)
         player.removeAttribute(LeagueModifiers.RECALL_IN_PROGRESS)
+        player.removeAttribute(RELOADED_EXTRA_ATTRIBUTE)
+        DemonicPactsRelics.refreshPassives(player)
         player.sendMessage("League relic selections reset.")
         println("SINGLEPLAYER_LEAGUE: RELICS_RESET username=${player.username}")
     }
@@ -130,22 +179,15 @@ object LeagueRelics {
         for ((id, effect) in effects) {
             if (LeagueRuntime.hasRelic(player, id)) effect.onAttach(player)
         }
-        if (effects.values.none { LeagueRuntime.hasRelic(player, it.id) }) {
-            player.sendMessage("League relic sandbox is ready. Open the League menu to view choices.")
+        DemonicPactsRelics.refreshPassives(player)
+        if (selectedDefinitions(player).isEmpty()) {
+            player.sendMessage("Demonic Pacts relic board is ready. Open the League menu to choose.")
         }
     }
 
     fun onEvent(player: Player, event: Event) {
         for ((id, effect) in effects) {
-            if (!LeagueRuntime.hasRelic(player, id)) continue
-
-            // Endless Harvest's item doubling/banking now happens synchronously
-            // inside the retained gathering reward handoff. Do not run its old
-            // ResourceProducedEvent relocation path; other relics may still use
-            // this event normally.
-            if (id == FirstPassRelics.ENDLESS_HARVEST && event is ResourceProducedEvent) continue
-
-            effect.onEvent(player, event)
+            if (LeagueRuntime.hasRelic(player, id)) effect.onEvent(player, event)
         }
     }
 
