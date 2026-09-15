@@ -45,18 +45,24 @@ object LocalPlayerUiState {
         root["quests"] = quests(player)
         root["questPoints"] = player.questRepository.points.toLong()
 
-        // JSONObject produces the whole document before the atomic reference is
-        // replaced, so readers can only observe complete snapshots.
-        publishedJson.set(root.toJSONString())
+        // Build the complete immutable document on the world thread and only
+        // advance the sequence when semantic UI-visible state actually changed.
+        // This keeps Android from rebuilding open menus every 600 ms.
+        val next = root.toJSONString()
         publishedUsername = player.username
+        if (publishedJson.get() == next) return
+        publishedJson.set(next)
         publishedSequence.incrementAndGet()
     }
 
     internal fun clearIfPlayerChanged(username: String?) {
         if (publishedUsername == null || publishedUsername == username) return
         publishedUsername = null
-        publishedJson.set(emptySnapshot())
-        publishedSequence.incrementAndGet()
+        val empty = emptySnapshot()
+        if (publishedJson.get() != empty) {
+            publishedJson.set(empty)
+            publishedSequence.incrementAndGet()
+        }
     }
 
     private fun skills(player: Player): JSONArray {
