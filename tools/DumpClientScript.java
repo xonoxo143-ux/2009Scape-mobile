@@ -22,8 +22,11 @@ public final class DumpClientScript {
         int trailerPos = b.length - trailerLen - 14;
         int p = trailerPos;
         int instructions = i4(b,p); p += 4;
-        int intLocals=u2(b,p); p+=2, stringLocals=u2(b,p); p+=2, intArgs=u2(b,p); p+=2, stringArgs=u2(b,p); p+=2;
-        int switches=u1(b,p++);
+        int intLocals = u2(b,p); p += 2;
+        int stringLocals = u2(b,p); p += 2;
+        int intArgs = u2(b,p); p += 2;
+        int stringArgs = u2(b,p); p += 2;
+        int switches = u1(b,p++);
         System.out.println("script="+id+" bytes="+b.length+" instructions="+instructions+" intLocals="+intLocals+" stringLocals="+stringLocals+" intArgs="+intArgs+" stringArgs="+stringArgs+" switches="+switches+" trailerPos="+trailerPos);
 
         p = 0;
