@@ -2,6 +2,7 @@ package core.local.league
 
 import core.api.StartupListener
 import core.game.event.Event
+import core.game.event.ResourceProducedEvent
 import core.game.node.entity.player.Player
 import core.local.LeagueRuntime
 import java.util.concurrent.CopyOnWriteArrayList
@@ -136,7 +137,15 @@ object LeagueRelics {
 
     fun onEvent(player: Player, event: Event) {
         for ((id, effect) in effects) {
-            if (LeagueRuntime.hasRelic(player, id)) effect.onEvent(player, event)
+            if (!LeagueRuntime.hasRelic(player, id)) continue
+
+            // Endless Harvest's item doubling/banking now happens synchronously
+            // inside the retained gathering reward handoff. Do not run its old
+            // ResourceProducedEvent relocation path; other relics may still use
+            // this event normally.
+            if (id == FirstPassRelics.ENDLESS_HARVEST && event is ResourceProducedEvent) continue
+
+            effect.onEvent(player, event)
         }
     }
 
