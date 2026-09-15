@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference
  * varps, client scripts or presentation codecs.
  */
 object LocalPlayerUiState {
-    private const val SCHEMA_VERSION = 1L
+    private const val SCHEMA_VERSION = 2L
 
     private val publishedSequence = AtomicLong(0L)
     private val publishedJson = AtomicReference(emptySnapshot())
@@ -40,8 +40,8 @@ object LocalPlayerUiState {
         root["schema"] = SCHEMA_VERSION
         root["username"] = player.username
         root["skills"] = skills(player)
-        root["inventory"] = items(player.inventory.toArray())
-        root["equipment"] = items(player.equipment.toArray())
+        root["inventory"] = items(player.inventory.toArray(), false)
+        root["equipment"] = items(player.equipment.toArray(), true)
         root["quests"] = quests(player)
         root["questPoints"] = player.questRepository.points.toLong()
 
@@ -74,7 +74,7 @@ object LocalPlayerUiState {
         return result
     }
 
-    private fun items(source: Array<core.game.node.item.Item?>): JSONArray {
+    private fun items(source: Array<core.game.node.item.Item?>, equipped: Boolean): JSONArray {
         val result = JSONArray()
         for (slot in source.indices) {
             val item = source[slot] ?: continue
@@ -83,6 +83,19 @@ object LocalPlayerUiState {
             entry["id"] = item.id.toLong()
             entry["amount"] = item.amount.toLong()
             entry["name"] = item.name
+            entry["examine"] = item.definition.examine ?: ""
+
+            val actions = JSONArray()
+            if (equipped) {
+                actions.add("Unequip")
+                actions.add("Operate")
+            } else {
+                item.definition.options
+                    .filterNotNull()
+                    .filter { it.isNotBlank() }
+                    .forEach { actions.add(it) }
+            }
+            entry["actions"] = actions
             result.add(entry)
         }
         return result
