@@ -1,18 +1,23 @@
 package core.local.league
 
-import core.api.openBankAccount
+import core.api.note
+import core.api.openDialogue
+import core.api.unnote
 import core.cache.def.impl.ItemDefinition
+import core.game.dialogue.DialogueFile
 import core.game.event.Event
 import core.game.event.NPCKillEvent
 import core.game.event.TickEvent
 import core.game.event.XPGainEvent
 import core.game.interaction.InteractionListener
 import core.game.interaction.IntType
+import core.game.node.Node
 import core.game.node.entity.player.Player
 import core.game.node.entity.skill.Skills
 import core.game.node.item.Item
 import core.local.LeagueRuntime
 import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.min
 
 /** Extra custom item IDs used by the expanded single-player League relic set. */
@@ -21,7 +26,7 @@ object ExpandedLeagueItemIds {
     const val BANKERS_NOTE_VISUAL_DONOR = 970 // Papyrus
 }
 
-/** Server-side definition and persistence helper for the portable banker relic item. */
+/** Server-side definition and persistence helper for the portable Banker relic item. */
 object ExpandedLeagueItems {
     @JvmStatic
     fun installDefinitions() {
@@ -29,7 +34,7 @@ object ExpandedLeagueItems {
         val custom = ItemDefinition()
         custom.id = ExpandedLeagueItemIds.BANKERS_NOTE
         custom.name = "Banker's Note"
-        custom.examine = "A relic-bound note that opens your bank wherever you are."
+        custom.examine = "A relic-bound note that can note and un-note ordinary items."
         custom.interfaceModelId = donor.interfaceModelId
         custom.modelZoom = donor.modelZoom
         custom.modelRotationX = donor.modelRotationX
@@ -39,7 +44,7 @@ object ExpandedLeagueItems {
         custom.isStackable = false
         custom.value = 0
         custom.isMembersOnly = false
-        custom.options = arrayOf("bank", null, null, null, null)
+        custom.options = arrayOf("activate", null, null, null, null)
         ItemDefinition.getDefinitions()[ExpandedLeagueItemIds.BANKERS_NOTE] = custom
         println("SINGLEPLAYER_LEAGUE: CUSTOM_ITEM_READY id=${ExpandedLeagueItemIds.BANKERS_NOTE}")
     }
@@ -107,7 +112,7 @@ object ExpandedRelics {
     private object BankersNoteEffect : LeagueRelicEffect {
         override val id = BANKERS_NOTE
         override val name = "Banker's Note"
-        override val description = "Gain a permanent Banker's Note that opens your bank from almost anywhere."
+        override val description = "Gain a permanent Banker's Note that notes and un-notes eligible inventory items anywhere."
         override val tier = 2
 
         override fun onAttach(player: Player) {
@@ -203,16 +208,140 @@ object ExpandedRelics {
     }
 }
 
-/** Inventory action for the portable banker relic item. */
+/** Real note/un-note behavior shared by the item-on-item and Activate paths. */
+object BankersNoteMechanics {
+    private const val NOTE_ID = ExpandedLeagueItemIds.BANKERS_NOTE
+
+    fun convertTarget(player: Player, target: Item): Boolean {
+        if (target.id == NOTE_ID) return false
+        val source = Item(target.id, max(1, player.inventory.getAmount(Item(target.id))), target.charge)
+        val converted = counterpart(source) ?: run {
+            player.sendMessage("That item cannot be converted by the Banker's Note.")
+            return true
+        }
+        val changed = convertStack(player, source, converted)
+        if (changed > 0) {
+            player.sendMessage("The Banker's Note converts $changed x ${source.name}.")
+        } else {
+            player.sendMessage("You do not have enough inventory space to convert that item.")
+        }
+        return true
+    }
+
+    fun convertAll(player: Player, toNoted: Boolean): Int {
+        val ids = LinkedHashSet<Int>()
+        for (item in player.inventory.toArray()) {
+            if (item == null || item.id == NOTE_ID) continue
+            if (item.definition.isUnnoted == toNoted) ids.add(item.id)
+        }
+
+        var total = 0
+        for (id in ids) {
+            val amount = player.inventory.getAmount(Item(id))
+            if (amount <= 0) continue
+            val source = Item(id, amount)
+            val converted = if (toNoted) note(source) else unnote(source)
+            if (converted.id == source.id) continue
+            total += convertStack(player, source, converted)
+        }
+        return total
+    }
+
+    private fun counterpart(source: Item): Item? {
+        val converted = if (source.definition.isUnnoted) note(source) else unnote(source)
+        return if (converted.id == source.id) null else converted
+    }
+
+    /**
+     * Transactionally replace as much of one inventory stack as possible.
+     * When un-noting a large stack, reserve one slot for any noted remainder.
+     */
+    private fun convertStack(player: Player, source: Item, converted: Item): Int {
+        val available = player.inventory.getAmount(Item(source.id))
+        if (available <= 0) return 0
+        val original = Item(source.id, available, source.charge)
+        if (!player.inventory.remove(original)) return 0
+
+        var convertible = min(available, player.inventory.getMaximumAdd(Item(converted.id, available, converted.charge)))
+        if (!converted.definition.isStackable && convertible < available) {
+            // The source is normally a stackable note. Keep room to put the
+            // unconverted remainder back instead of silently losing it.
+            convertible = min(convertible, max(0, player.inventory.freeSlots() - 1))
+        }
+
+        if (convertible <= 0) {
+            player.inventory.add(original)
+            return 0
+        }
+
+        val replacement = Item(converted.id, convertible, converted.charge)
+        if (!player.inventory.add(replacement)) {
+            player.inventory.add(original)
+            return 0
+        }
+
+        val remainder = available - convertible
+        if (remainder > 0) {
+            player.inventory.add(Item(source.id, remainder, source.charge))
+        }
+        return convertible
+    }
+}
+
+/** Inventory behavior for the Banker relic item. */
 class ExpandedRelicItemListener : InteractionListener {
     override fun defineListeners() {
-        on(ExpandedLeagueItemIds.BANKERS_NOTE, IntType.ITEM, "bank") { player, _ ->
+        on(ExpandedLeagueItemIds.BANKERS_NOTE, IntType.ITEM, "activate") { player, _ ->
             if (!LeagueRuntime.hasRelic(player, ExpandedRelics.BANKERS_NOTE)) {
                 player.sendMessage("You have not selected Banker's Note.")
                 return@on true
             }
-            openBankAccount(player)
+            openDialogue(player, BankersNoteDialogue())
             true
+        }
+
+        onUseWithWildcard(
+            IntType.ITEM,
+            { used, with -> used == ExpandedLeagueItemIds.BANKERS_NOTE || with == ExpandedLeagueItemIds.BANKERS_NOTE }
+        ) { player, used, with ->
+            if (!LeagueRuntime.hasRelic(player, ExpandedRelics.BANKERS_NOTE)) {
+                player.sendMessage("You have not selected Banker's Note.")
+                return@onUseWithWildcard true
+            }
+            val target: Node = if ((used as? Item)?.id == ExpandedLeagueItemIds.BANKERS_NOTE) with else used
+            val item = target as? Item ?: return@onUseWithWildcard false
+            BankersNoteMechanics.convertTarget(player, item)
+        }
+    }
+}
+
+/** Bulk conversion fallback so the relic is fully usable without item-on-item input. */
+class BankersNoteDialogue : DialogueFile() {
+    override fun handle(componentID: Int, buttonID: Int) {
+        val p = player ?: return
+        when (stage) {
+            0 -> {
+                interpreter!!.sendOptions(
+                    "Banker's Note",
+                    "Note all eligible inventory items",
+                    "Un-note as much as possible",
+                    "Never mind"
+                )
+                stage = 1
+            }
+            1 -> {
+                when (buttonID) {
+                    1 -> {
+                        val changed = BankersNoteMechanics.convertAll(p, true)
+                        p.sendMessage("Banker's Note converted $changed item${if (changed == 1) "" else "s"} into notes.")
+                    }
+                    2 -> {
+                        val changed = BankersNoteMechanics.convertAll(p, false)
+                        p.sendMessage("Banker's Note un-noted $changed item${if (changed == 1) "" else "s"}.")
+                    }
+                }
+                end()
+            }
         }
     }
 }
