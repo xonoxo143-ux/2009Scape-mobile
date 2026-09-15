@@ -1,0 +1,114 @@
+[23:17:41]: [INFO] Initializing cache...
+INTERFACE 746 FILES [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]
+child=0 if3=true type=0 buttonType=0 clientCode=1337 base=0,0 size=16391x16391 overlayer=-1 ops=null onOptionClick=null
+child=1 if3=true type=0 buttonType=0 clientCode=1405 base=225,5 size=150x100 overlayer=-1 ops=null onOptionClick=null
+child=2 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=160x158 overlayer=-1 ops=null onOptionClick=null
+child=3 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=219x164 overlayer=-1 ops=null onOptionClick=null
+child=4 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=16384x16384 overlayer=-1 ops=null onOptionClick=null
+child=5 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=16391x16391 overlayer=-1 ops=null onOptionClick=null
+child=6 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=512x334 overlayer=-1 ops=null onOptionClick=null
+child=7 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=220x186 overlayer=-1 ops=null onOptionClick=null
+child=8 if3=true type=5 buttonType=0 clientCode=1338 base=7,5 size=152x152 overlayer=48889863 ops=null onOptionClick=null
+child=9 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=164x164 overlayer=48889863 ops=null onOptionClick=null
+child=10 if3=true type=5 buttonType=0 clientCode=1339 base=131,5 size=33x33 overlayer=48889863 ops=null onOptionClick=null
+child=11 if3=true type=5 buttonType=0 clientCode=0 base=126,0 size=43x43 overlayer=48889863 ops=null onOptionClick=null
+child=12 if3=true type=5 buttonType=0 clientCode=0 base=1,1 size=22x21 overlayer=48889863 ops=[Log Out] onOptionClick=[1303, 99]
+child=13 if3=true type=0 buttonType=0 clientCode=0 base=152,38 size=57x34 overlayer=48889863 ops=null onOptionClick=null
+child=14 if3=true type=0 buttonType=0 clientCode=0 base=155,74 size=57x34 overlayer=48889863 ops=null onOptionClick=null
+child=15 if3=true type=0 buttonType=0 clientCode=0 base=143,107 size=57x34 overlayer=48889863 ops=null onOptionClick=null
+child=16 if3=true type=0 buttonType=0 clientCode=0 base=120,136 size=57x34 overlayer=48889863 ops=null onOptionClick=null
+child=17 if3=true type=0 buttonType=0 clientCode=0 base=5,172 size=115x35 overlayer=-1 ops=null onOptionClick=null
+child=18 if3=true type=0 buttonType=0 clientCode=0 base=42,177 size=38x17 overlayer=-1 ops=[, , , , , , , , ,  ] onOptionClick=null
+child=19 if3=true type=4 buttonType=0 clientCode=0 base=36,207 size=53x19 overlayer=-1 ops=null onOptionClick=null
+child=20 if3=true type=3 buttonType=0 clientCode=0 base=0,0 size=16391x16391 overlayer=48889874 ops=[, , , , , , , , ,  ] onOptionClick=null
+child=21 if3=true type=3 buttonType=0 clientCode=0 base=0,0 size=16391x16391 overlayer=48889874 ops=[, , , , , , , , ,  ] onOptionClick=null
+child=22 if3=true type=4 buttonType=0 clientCode=0 base=0,0 size=16391x16391 overlayer=48889874 ops=[, , , , , , , , ,  ] onOptionClick=null
+child=23 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=519x23 overlayer=-1 ops=null onOptionClick=null
+child=24 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=462x36 overlayer=-1 ops=null onOptionClick=null
+child=25 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=462x36 overlayer=48889880 ops=null onOptionClick=null
+child=26 if3=true type=5 buttonType=0 clientCode=0 base=396,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=27 if3=true type=5 buttonType=0 clientCode=0 base=363,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=28 if3=true type=5 buttonType=0 clientCode=0 base=330,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=29 if3=true type=5 buttonType=0 clientCode=0 base=297,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=30 if3=true type=5 buttonType=0 clientCode=0 base=264,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=31 if3=true type=5 buttonType=0 clientCode=0 base=231,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=32 if3=true type=5 buttonType=0 clientCode=0 base=198,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=33 if3=true type=5 buttonType=0 clientCode=0 base=429,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=34 if3=true type=5 buttonType=0 clientCode=0 base=165,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=35 if3=true type=5 buttonType=0 clientCode=0 base=132,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=36 if3=true type=5 buttonType=0 clientCode=0 base=99,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=37 if3=true type=5 buttonType=0 clientCode=0 base=66,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=38 if3=true type=5 buttonType=0 clientCode=0 base=33,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=39 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=33x36 overlayer=48889881 ops=null onOptionClick=null
+child=40 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=462x36 overlayer=48889880 ops=null onOptionClick=null
+child=41 if3=true type=5 buttonType=0 clientCode=0 base=396,0 size=33x36 overlayer=48889896 ops=[Combat Styles] onOptionClick=[1303, 0]
+child=42 if3=true type=5 buttonType=0 clientCode=0 base=363,0 size=33x36 overlayer=48889896 ops=[Stats] onOptionClick=[1303, 1]
+child=43 if3=true type=5 buttonType=0 clientCode=0 base=330,0 size=33x36 overlayer=48889896 ops=[Quest List] onOptionClick=[1303, 2]
+child=44 if3=true type=5 buttonType=0 clientCode=0 base=297,0 size=33x36 overlayer=48889896 ops=[Inventory] onOptionClick=[1303, 3]
+child=45 if3=true type=5 buttonType=0 clientCode=0 base=264,0 size=33x36 overlayer=48889896 ops=[Worn Equipment] onOptionClick=[1303, 4]
+child=46 if3=true type=5 buttonType=0 clientCode=0 base=231,0 size=33x36 overlayer=48889896 ops=[Prayer List] onOptionClick=[1303, 5]
+child=47 if3=true type=5 buttonType=0 clientCode=0 base=198,0 size=33x36 overlayer=48889896 ops=[Magic Spellbook] onOptionClick=[1303, 6]
+child=48 if3=true type=5 buttonType=0 clientCode=0 base=429,0 size=33x36 overlayer=48889896 ops=[Follower Details] onOptionClick=[1303, 7]
+child=49 if3=true type=5 buttonType=0 clientCode=0 base=165,0 size=33x36 overlayer=48889896 ops=[Friends List] onOptionClick=[1303, 8]
+child=50 if3=true type=5 buttonType=0 clientCode=0 base=132,0 size=33x36 overlayer=48889896 ops=[Ignore List] onOptionClick=[1303, 9]
+child=51 if3=true type=5 buttonType=0 clientCode=0 base=99,0 size=33x36 overlayer=48889896 ops=[Clan Chat] onOptionClick=[1303, 10]
+child=52 if3=true type=5 buttonType=0 clientCode=0 base=66,0 size=33x36 overlayer=48889896 ops=[Options] onOptionClick=[1303, 11]
+child=53 if3=true type=5 buttonType=0 clientCode=0 base=33,0 size=33x36 overlayer=48889896 ops=[Emotes] onOptionClick=[1303, 12]
+child=54 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=33x36 overlayer=48889896 ops=[Music Player] onOptionClick=[1303, 13]
+child=55 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=462x36 overlayer=48889880 ops=null onOptionClick=null
+child=56 if3=true type=5 buttonType=0 clientCode=0 base=394,0 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=57 if3=true type=5 buttonType=0 clientCode=0 base=364,1 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=58 if3=true type=5 buttonType=0 clientCode=0 base=330,-1 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=59 if3=true type=5 buttonType=0 clientCode=0 base=298,2 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=60 if3=true type=5 buttonType=0 clientCode=0 base=265,-2 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=61 if3=true type=5 buttonType=0 clientCode=0 base=232,1 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=62 if3=true type=5 buttonType=0 clientCode=0 base=199,0 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=63 if3=true type=5 buttonType=0 clientCode=0 base=430,-1 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=64 if3=true type=5 buttonType=0 clientCode=0 base=165,-1 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=65 if3=true type=5 buttonType=0 clientCode=0 base=132,-1 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=66 if3=true type=5 buttonType=0 clientCode=0 base=99,-1 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=67 if3=true type=5 buttonType=0 clientCode=0 base=65,0 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=68 if3=true type=5 buttonType=0 clientCode=0 base=33,-3 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=69 if3=true type=5 buttonType=0 clientCode=0 base=0,-3 size=32x36 overlayer=48889911 ops=null onOptionClick=null
+child=70 if3=true type=0 buttonType=0 clientCode=0 base=0,23 size=519x142 overlayer=-1 ops=null onOptionClick=null
+child=71 if3=true type=0 buttonType=0 clientCode=0 base=9,164 size=512x69 overlayer=-1 ops=null onOptionClick=null
+child=72 if3=true type=0 buttonType=0 clientCode=0 base=9,164 size=512x69 overlayer=-1 ops=null onOptionClick=null
+child=73 if3=true type=0 buttonType=0 clientCode=0 base=0,36 size=200x271 overlayer=-1 ops=null onOptionClick=null
+child=74 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=200x271 overlayer=48889929 ops=null onOptionClick=null
+child=75 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889932 ops=null onOptionClick=null
+child=76 if3=true type=0 buttonType=0 clientCode=1354 base=5,5 size=190x261 overlayer=48889929 ops=null onOptionClick=null
+child=77 if3=true type=0 buttonType=0 clientCode=0 base=5,5 size=190x261 overlayer=48889929 ops=null onOptionClick=null
+child=78 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889963 ops=null onOptionClick=null
+child=79 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889962 ops=null onOptionClick=null
+child=80 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889961 ops=null onOptionClick=null
+child=81 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889960 ops=null onOptionClick=null
+child=82 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889959 ops=null onOptionClick=null
+child=83 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889958 ops=null onOptionClick=null
+child=84 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889957 ops=null onOptionClick=null
+child=85 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889956 ops=null onOptionClick=null
+child=86 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889955 ops=null onOptionClick=null
+child=87 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889954 ops=null onOptionClick=null
+child=88 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889953 ops=null onOptionClick=null
+child=89 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889952 ops=null onOptionClick=null
+child=90 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889951 ops=null onOptionClick=null
+child=91 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889950 ops=null onOptionClick=null
+child=92 if3=true type=5 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889949 ops=null onOptionClick=null
+child=93 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=94 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=95 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=96 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=97 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=98 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=99 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=100 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=101 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=102 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=103 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=104 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=105 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=106 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=107 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=190x261 overlayer=48889933 ops=null onOptionClick=null
+child=108 if3=true type=6 buttonType=0 clientCode=0 base=8,11 size=31x52 overlayer=-1 ops=[, , , , , , , , , Examine] onOptionClick=null
+child=109 if3=true type=5 buttonType=0 clientCode=0 base=1,129 size=43x43 overlayer=48889863 ops=[, , , , , , , , ,   ] onOptionClick=null
+child=110 if3=true type=5 buttonType=0 clientCode=0 base=181,134 size=34x34 overlayer=48889863 ops=[World Map, , , , , , , , ,  ] onOptionClick=null
+child=111 if3=true type=0 buttonType=0 clientCode=0 base=0,0 size=16391x16391 overlayer=-1 ops=null onOptionClick=null
