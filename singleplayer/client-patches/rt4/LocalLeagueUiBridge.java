@@ -8,18 +8,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Local-only League presentation state.
- *
- * The world remains authoritative for progress and relic definitions. This UI
- * renders those definitions and queues selection through LocalLeagueBridge.
- */
+/** Full-canvas touch UI for the authoritative single-player League runtime. */
 public final class LocalLeagueUiBridge {
     public static final int TAB_TASKS = 0;
     public static final int TAB_RELICS = 1;
     public static final int TAB_BLESSINGS = 2;
 
-    private static final int COLOR_DIM = 0x000000;
     private static final int COLOR_FRAME = 0x8c7651;
     private static final int COLOR_BG = 0x241e17;
     private static final int COLOR_HEADER = 0x3b3124;
@@ -34,9 +28,10 @@ public final class LocalLeagueUiBridge {
     private static final int COLOR_SCROLL_TRACK = 0x17130f;
     private static final int COLOR_SCROLL_THUMB = 0x9b8457;
 
-    private static final int RELIC_HEADER_H = 23;
-    private static final int RELIC_CARD_H = 68;
-    private static final int RELIC_GAP = 4;
+    private static final int RELIC_HEADER_H = 25;
+    private static final int RELIC_CARD_H = 72;
+    private static final int RELIC_GAP = 7;
+    private static final int GRID_GAP = 8;
 
     private static volatile boolean open;
     private static volatile int activeTab = TAB_TASKS;
@@ -54,7 +49,6 @@ public final class LocalLeagueUiBridge {
 
     private static String relicStatus = "";
     private static long relicStatusUntil;
-
     private static boolean announcedOpen;
     private static boolean announcedDraw;
 
@@ -96,11 +90,7 @@ public final class LocalLeagueUiBridge {
         System.out.println("SINGLEPLAYER_LEAGUE_UI: CLOSE");
     }
 
-    /**
-     * Called from MobileGestureBridge before the normal RT4 touch plugin. When
-     * this returns true the gesture belongs to the League UI and must not become
-     * a world click/camera drag.
-     */
+    /** League owns every touch while visible, preventing world input beneath it. */
     public static boolean handleGesture(int type, int x, int y, int value1, int value2) {
         if (!open) {
             if ((type == MobileGestureBridge.TAP || type == MobileGestureBridge.LONG_PRESS)
@@ -112,7 +102,6 @@ public final class LocalLeagueUiBridge {
         }
 
         Layout layout = layout();
-
         if (type == MobileGestureBridge.TAP || type == MobileGestureBridge.LONG_PRESS) {
             if (inside(x, y, layout.closeX, layout.closeY, layout.closeW, layout.closeH)) {
                 close();
@@ -137,57 +126,41 @@ public final class LocalLeagueUiBridge {
         }
 
         if (type == MobileGestureBridge.DRAG_BEGIN) {
-            draggingContent = inside(
-                    x,
-                    y,
-                    layout.contentX,
-                    layout.contentY,
-                    layout.contentW,
-                    layout.contentH);
+            draggingContent = inside(x, y, layout.contentX, layout.contentY, layout.contentW, layout.contentH);
             dragTab = draggingContent ? activeTab : -1;
             return true;
         }
-
         if (type == MobileGestureBridge.DRAG_MOVE) {
-            if (draggingContent && dragTab == activeTab) {
-                scrollActiveTab(-value2, layout);
-            }
+            if (draggingContent && dragTab == activeTab) scrollActiveTab(-value2, layout);
             return true;
         }
-
         if (type == MobileGestureBridge.DRAG_END || type == MobileGestureBridge.CANCEL) {
             draggingContent = false;
             dragTab = -1;
             return true;
         }
-
         return true;
     }
 
     public static void draw() {
         if (!open) return;
-
         Layout layout = layout();
         if (layout.width <= 0 || layout.height <= 0) return;
 
         if (!announcedDraw) {
             announcedDraw = true;
-            System.out.println(
-                    "SINGLEPLAYER_LEAGUE_UI: DRAW " + layout.width + "x" + layout.height);
+            System.out.println("SINGLEPLAYER_LEAGUE_UI: FULLSCREEN " + layout.width + "x" + layout.height);
         }
 
-        API.FillRect(0, 0, GameShell.canvasWidth, GameShell.canvasHeight, COLOR_DIM, 68);
-
-        API.FillRect(layout.x, layout.y, layout.width, layout.height, COLOR_BG, 0);
-        API.DrawRect(layout.x, layout.y, layout.width, layout.height, COLOR_FRAME);
-        API.DrawRect(layout.x + 1, layout.y + 1, layout.width - 2, layout.height - 2, 0x4c402e);
-
-        API.FillRect(layout.x + 2, layout.y + 2, layout.width - 4, 26, COLOR_HEADER, 0);
-        textLarge("LEAGUE", layout.x + 12, layout.y + 19, COLOR_GOLD);
+        // This is now a real screen, not a modal over the world.
+        API.FillRect(0, 0, layout.width, layout.height, COLOR_BG, 0);
+        API.DrawRect(0, 0, layout.width, layout.height, COLOR_FRAME);
+        API.FillRect(1, 1, layout.width - 2, 31, COLOR_HEADER, 0);
+        textLarge("LEAGUE", 14, 22, COLOR_GOLD);
 
         API.FillRect(layout.closeX, layout.closeY, layout.closeW, layout.closeH, 0x6f2e21, 0);
         API.DrawRect(layout.closeX, layout.closeY, layout.closeW, layout.closeH, 0xb78c62);
-        textLarge("X", layout.closeX + 7, layout.closeY + 16, 0xffffff);
+        textLarge("X", layout.closeX + 10, layout.closeY + 19, 0xffffff);
 
         drawTabs(layout);
         drawSummary(layout);
@@ -209,16 +182,12 @@ public final class LocalLeagueUiBridge {
         String[] names = {"Tasks", "Relics", "Blessings"};
         for (int i = 0; i < names.length; i++) {
             int tx = layout.tabsX + i * (layout.tabW + 4);
-            API.FillRect(
-                    tx,
-                    layout.tabsY,
-                    layout.tabW,
-                    layout.tabH,
-                    i == activeTab ? COLOR_TAB_ACTIVE : COLOR_TAB,
-                    0);
+            API.FillRect(tx, layout.tabsY, layout.tabW, layout.tabH,
+                    i == activeTab ? COLOR_TAB_ACTIVE : COLOR_TAB, 0);
             API.DrawRect(tx, layout.tabsY, layout.tabW, layout.tabH, COLOR_FRAME);
-            int textX = tx + Math.max(8, (layout.tabW - Fonts.p12Full.getStringWidth(JagString.of(names[i]))) / 2);
-            textLarge(names[i], textX, layout.tabsY + 20, i == activeTab ? COLOR_GOLD : COLOR_TEXT);
+            int textWidth = Fonts.p12Full.getStringWidth(JagString.of(names[i]));
+            textLarge(names[i], tx + Math.max(8, (layout.tabW - textWidth) / 2),
+                    layout.tabsY + 21, i == activeTab ? COLOR_GOLD : COLOR_TEXT);
         }
     }
 
@@ -226,108 +195,95 @@ public final class LocalLeagueUiBridge {
         int points = LocalLeagueBridge.points();
         int tasks = LocalLeagueBridge.completedTasks().size();
         int relics = LocalLeagueBridge.unlockedRelics().size();
-
         API.FillRect(layout.summaryX, layout.summaryY, layout.summaryW, layout.summaryH, 0x1d1914, 0);
         API.DrawRect(layout.summaryX, layout.summaryY, layout.summaryW, layout.summaryH, 0x5d4f39);
         textLarge("League points: " + points, layout.summaryX + 10, layout.summaryY + 20, COLOR_GOLD);
-        int statsX = layout.summaryX + Math.min(190, Math.max(165, layout.summaryW / 2));
-        textSmall(
-                "Tasks: " + tasks + "    Relics: " + relics,
-                statsX,
-                layout.summaryY + 19,
-                COLOR_MUTED);
+        textSmall("Tasks: " + tasks + "    Relics: " + relics,
+                layout.summaryX + Math.max(190, layout.summaryW / 2), layout.summaryY + 19, COLOR_MUTED);
     }
 
     private static void drawTasks(Layout layout) {
-        int sidebarW = Math.min(150, Math.max(128, layout.contentW / 3));
-        int gap = 8;
-        int listX = layout.contentX + sidebarW + gap;
-        int listW = layout.contentW - sidebarW - gap;
-
-        API.FillRect(layout.contentX, layout.contentY, sidebarW, layout.contentH, COLOR_PANEL, 0);
-        API.DrawRect(layout.contentX, layout.contentY, sidebarW, layout.contentH, 0x5d4f39);
-        textLarge("Tasks", layout.contentX + 10, layout.contentY + 21, COLOR_GOLD);
-        textSmall("View", layout.contentX + 10, layout.contentY + 46, COLOR_MUTED);
-        drawStaticSelector(layout.contentX + 10, layout.contentY + 52, sidebarW - 20, "Completed");
-        textSmall("Tier", layout.contentX + 10, layout.contentY + 92, COLOR_MUTED);
-        drawStaticSelector(layout.contentX + 10, layout.contentY + 98, sidebarW - 20, "All");
-        textSmall("Type", layout.contentX + 10, layout.contentY + 138, COLOR_MUTED);
-        drawStaticSelector(layout.contentX + 10, layout.contentY + 144, sidebarW - 20, "All");
-        textSmall("Drag to scroll.", layout.contentX + 10, layout.contentY + layout.contentH - 18, COLOR_MUTED);
-
-        API.FillRect(listX, layout.contentY, listW, layout.contentH, COLOR_PANEL, 0);
-        API.DrawRect(listX, layout.contentY, listW, layout.contentH, 0x5d4f39);
+        API.FillRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, COLOR_PANEL, 0);
+        API.DrawRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, 0x5d4f39);
 
         List<String> tasks = sorted(LocalLeagueBridge.completedTasks());
-        textLarge("Completed tasks (" + tasks.size() + ")", listX + 10, layout.contentY + 21, COLOR_GOLD);
-
-        int rowsTop = layout.contentY + 31;
-        int rowsH = layout.contentH - 39;
-        int rowH = 32;
+        textLarge("Completed tasks (" + tasks.size() + ")", layout.contentX + 12, layout.contentY + 23, COLOR_GOLD);
+        int rowsTop = layout.contentY + 34;
+        int rowsH = layout.contentH - 42;
+        int rowH = 34;
         int maxScroll = Math.max(0, tasks.size() * rowH - rowsH);
         tasksScroll = clamp(tasksScroll, 0, maxScroll);
 
         if (tasks.isEmpty()) {
-            textLarge("No League tasks completed yet.", listX + 16, rowsTop + 34, COLOR_TEXT);
-            textSmall("Completed tasks will appear here.", listX + 16, rowsTop + 56, COLOR_MUTED);
+            textLarge("No League tasks completed yet.", layout.contentX + 18, rowsTop + 38, COLOR_TEXT);
+            textSmall("Completed tasks will appear here as the task system is populated.",
+                    layout.contentX + 18, rowsTop + 61, COLOR_MUTED);
         } else {
             for (int i = 0; i < tasks.size(); i++) {
                 int ry = rowsTop + i * rowH - tasksScroll;
                 if (ry < rowsTop || ry + rowH > rowsTop + rowsH) continue;
-                API.FillRect(listX + 7, ry, listW - 21, rowH - 3,
+                API.FillRect(layout.contentX + 8, ry, layout.contentW - 22, rowH - 3,
                         (i & 1) == 0 ? COLOR_PANEL_ALT : 0x30281f, 0);
-                API.DrawRect(listX + 7, ry, listW - 21, rowH - 3, 0x4d4332);
-                textLarge("✓", listX + 14, ry + 20, COLOR_GREEN);
-                textLarge(fit(pretty(tasks.get(i)), listW - 58), listX + 34, ry + 20, COLOR_TEXT);
+                API.DrawRect(layout.contentX + 8, ry, layout.contentW - 22, rowH - 3, 0x4d4332);
+                textLarge("✓", layout.contentX + 16, ry + 22, COLOR_GREEN);
+                textLarge(pretty(tasks.get(i)), layout.contentX + 40, ry + 22, COLOR_TEXT);
             }
         }
-
-        drawScrollbar(listX + listW - 10, rowsTop, 6, rowsH, tasksScroll, maxScroll);
+        drawScrollbar(layout.contentX + layout.contentW - 10, rowsTop, 6, rowsH, tasksScroll, maxScroll);
     }
 
     private static void drawRelics(Layout layout) {
         API.FillRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, COLOR_PANEL, 0);
         API.DrawRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, 0x5d4f39);
-        textLarge("Relic choices", layout.contentX + 10, layout.contentY + 21, COLOR_GOLD);
+        textLarge("Relic choices", layout.contentX + 12, layout.contentY + 23, COLOR_GOLD);
 
         if (!relicStatus.isEmpty() && System.currentTimeMillis() < relicStatusUntil) {
             int statusWidth = Fonts.p11Full.getStringWidth(JagString.of(relicStatus));
-            textSmall(relicStatus, layout.contentX + Math.max(140, layout.contentW - statusWidth - 18),
-                    layout.contentY + 20, COLOR_MUTED);
+            textSmall(relicStatus,
+                    layout.contentX + Math.max(160, layout.contentW - statusWidth - 20),
+                    layout.contentY + 22, COLOR_MUTED);
         } else if (!relicStatus.isEmpty()) {
             relicStatus = "";
         }
 
         List<LocalLeagueBridge.RelicDefinition> definitions = LocalLeagueBridge.relicDefinitions();
         Set<String> selected = LocalLeagueBridge.unlockedRelics();
-        int rowsTop = layout.contentY + 30;
-        int rowsH = layout.contentH - 38;
-        int maxScroll = Math.max(0, relicContentHeight(definitions) - rowsH);
+        int rowsTop = layout.contentY + 34;
+        int rowsH = layout.contentH - 42;
+        int columns = relicColumns(layout);
+        int maxScroll = Math.max(0, relicContentHeight(definitions, columns) - rowsH);
         relicsScroll = clamp(relicsScroll, 0, maxScroll);
 
         if (definitions.isEmpty()) {
-            textLarge("No relic definitions are available.", layout.contentX + 16, rowsTop + 34, COLOR_TEXT);
-            textSmall("The world is still loading or the League registry is unavailable.",
-                    layout.contentX + 16, rowsTop + 56, COLOR_MUTED);
+            textLarge("No relic definitions are available.", layout.contentX + 18, rowsTop + 38, COLOR_TEXT);
             return;
         }
 
         int cursor = rowsTop - relicsScroll;
-        int lastTier = -1;
-        for (LocalLeagueBridge.RelicDefinition relic : definitions) {
-            if (relic.tier != lastTier) {
-                if (cursor + RELIC_HEADER_H >= rowsTop && cursor <= rowsTop + rowsH) {
-                    textLarge(tierLabel(relic.tier), layout.contentX + 10, cursor + 17, COLOR_GOLD);
-                }
-                cursor += RELIC_HEADER_H;
-                lastTier = relic.tier;
-            }
+        int index = 0;
+        while (index < definitions.size()) {
+            int tier = definitions.get(index).tier;
+            int tierEnd = index;
+            while (tierEnd < definitions.size() && definitions.get(tierEnd).tier == tier) tierEnd++;
 
-            int cardY = cursor;
-            if (cardY + RELIC_CARD_H >= rowsTop && cardY <= rowsTop + rowsH) {
-                drawRelicCard(layout, relic, definitions, selected, cardY, rowsTop, rowsH);
+            if (cursor + RELIC_HEADER_H >= rowsTop && cursor <= rowsTop + rowsH) {
+                textLarge(tierLabel(tier), layout.contentX + 12, cursor + 18, COLOR_GOLD);
             }
-            cursor += RELIC_CARD_H + RELIC_GAP;
+            cursor += RELIC_HEADER_H;
+
+            int count = tierEnd - index;
+            int rows = (count + columns - 1) / columns;
+            for (int row = 0; row < rows; row++) {
+                for (int column = 0; column < columns; column++) {
+                    int relicIndex = index + row * columns + column;
+                    if (relicIndex >= tierEnd) break;
+                    drawRelicCard(layout, definitions.get(relicIndex), definitions, selected,
+                            relicCardX(layout, columns, column), cursor,
+                            relicCardWidth(layout, columns), rowsTop, rowsH);
+                }
+                cursor += RELIC_CARD_H + RELIC_GAP;
+            }
+            index = tierEnd;
         }
 
         drawScrollbar(layout.contentX + layout.contentW - 10, rowsTop, 6, rowsH, relicsScroll, maxScroll);
@@ -338,17 +294,16 @@ public final class LocalLeagueUiBridge {
             LocalLeagueBridge.RelicDefinition relic,
             List<LocalLeagueBridge.RelicDefinition> definitions,
             Set<String> selected,
+            int cardX,
             int cardY,
+            int cardW,
             int clipTop,
             int clipHeight) {
         if (cardY < clipTop || cardY + RELIC_CARD_H > clipTop + clipHeight) return;
 
-        int cardX = layout.contentX + 8;
-        int cardW = layout.contentW - 22;
         boolean isSelected = selected.contains(relic.id);
         String tierChoice = selectedRelicInTier(relic.tier, definitions, selected);
         boolean locked = tierChoice != null && !isSelected;
-
         API.FillRect(cardX, cardY, cardW, RELIC_CARD_H - 3,
                 isSelected ? 0x3b3a22 : COLOR_PANEL_ALT, 0);
         API.DrawRect(cardX, cardY, cardW, RELIC_CARD_H - 3,
@@ -357,36 +312,48 @@ public final class LocalLeagueUiBridge {
         String state = isSelected ? "SELECTED" : locked ? "LOCKED" : "Tap to choose";
         int stateColor = isSelected ? COLOR_GREEN : locked ? COLOR_MUTED : COLOR_GOLD;
         int stateWidth = Fonts.p11Full.getStringWidth(JagString.of(state));
-        textLarge(fit(relic.name, Math.max(110, cardW - stateWidth - 48)), cardX + 10, cardY + 20, COLOR_TEXT);
+        textLarge(fit(relic.name, Math.max(110, cardW - stateWidth - 34)), cardX + 10, cardY + 20, COLOR_TEXT);
         textSmall(state, cardX + cardW - stateWidth - 10, cardY + 19, stateColor);
 
         String[] description = wrapSmall(relic.description, cardW - 20, 2);
-        if (description.length > 0) textSmall(description[0], cardX + 10, cardY + 40, COLOR_MUTED);
-        if (description.length > 1) textSmall(description[1], cardX + 10, cardY + 55, COLOR_MUTED);
+        if (description.length > 0) textSmall(description[0], cardX + 10, cardY + 42, COLOR_MUTED);
+        if (description.length > 1) textSmall(description[1], cardX + 10, cardY + 58, COLOR_MUTED);
     }
 
     private static void handleRelicTap(int x, int y, Layout layout) {
         List<LocalLeagueBridge.RelicDefinition> definitions = LocalLeagueBridge.relicDefinitions();
         if (definitions.isEmpty()) return;
 
-        int rowsTop = layout.contentY + 30;
-        int rowsH = layout.contentH - 38;
+        int rowsTop = layout.contentY + 34;
+        int rowsH = layout.contentH - 42;
         if (!inside(x, y, layout.contentX, rowsTop, layout.contentW - 10, rowsH)) return;
 
+        int columns = relicColumns(layout);
         int cursor = rowsTop - relicsScroll;
-        int lastTier = -1;
-        for (LocalLeagueBridge.RelicDefinition relic : definitions) {
-            if (relic.tier != lastTier) {
-                cursor += RELIC_HEADER_H;
-                lastTier = relic.tier;
+        int index = 0;
+        while (index < definitions.size()) {
+            int tier = definitions.get(index).tier;
+            int tierEnd = index;
+            while (tierEnd < definitions.size() && definitions.get(tierEnd).tier == tier) tierEnd++;
+            cursor += RELIC_HEADER_H;
+
+            int count = tierEnd - index;
+            int rows = (count + columns - 1) / columns;
+            for (int row = 0; row < rows; row++) {
+                for (int column = 0; column < columns; column++) {
+                    int relicIndex = index + row * columns + column;
+                    if (relicIndex >= tierEnd) break;
+                    int cardX = relicCardX(layout, columns, column);
+                    int cardW = relicCardWidth(layout, columns);
+                    if (cursor >= rowsTop && cursor + RELIC_CARD_H <= rowsTop + rowsH
+                            && inside(x, y, cardX, cursor, cardW, RELIC_CARD_H - 3)) {
+                        chooseRelic(definitions.get(relicIndex), definitions);
+                        return;
+                    }
+                }
+                cursor += RELIC_CARD_H + RELIC_GAP;
             }
-            int cardY = cursor;
-            if (cardY >= rowsTop && cardY + RELIC_CARD_H <= rowsTop + rowsH
-                    && inside(x, y, layout.contentX + 8, cardY, layout.contentW - 22, RELIC_CARD_H - 3)) {
-                chooseRelic(relic, definitions);
-                return;
-            }
-            cursor += RELIC_CARD_H + RELIC_GAP;
+            index = tierEnd;
         }
     }
 
@@ -412,11 +379,45 @@ public final class LocalLeagueUiBridge {
             return;
         }
 
-        if (LocalLeagueBridge.selectRelic(relic.id)) {
-            setRelicStatus("Selecting " + relic.name + "...");
-        } else {
-            setRelicStatus("Could not queue that relic selection.");
+        if (LocalLeagueBridge.selectRelic(relic.id)) setRelicStatus("Selecting " + relic.name + "...");
+        else setRelicStatus("Could not queue that relic selection.");
+    }
+
+    private static void drawBlessings(Layout layout) {
+        API.FillRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, COLOR_PANEL, 0);
+        API.DrawRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, 0x5d4f39);
+        textLarge("Blessings", layout.contentX + 14, layout.contentY + 24, COLOR_GOLD);
+        textLarge("Blessing state is not wired yet.", layout.contentX + 20, layout.contentY + 70, COLOR_TEXT);
+        textSmall("This full-screen page is reserved for the authoritative blessing runtime.",
+                layout.contentX + 20, layout.contentY + 96 - blessingsScroll, COLOR_MUTED);
+    }
+
+    private static int relicColumns(Layout layout) {
+        return layout.contentW >= 780 ? 2 : 1;
+    }
+
+    private static int relicCardWidth(Layout layout, int columns) {
+        int usable = layout.contentW - 26 - (columns - 1) * GRID_GAP;
+        return usable / columns;
+    }
+
+    private static int relicCardX(Layout layout, int columns, int column) {
+        return layout.contentX + 8 + column * (relicCardWidth(layout, columns) + GRID_GAP);
+    }
+
+    private static int relicContentHeight(List<LocalLeagueBridge.RelicDefinition> definitions, int columns) {
+        int height = 0;
+        int index = 0;
+        while (index < definitions.size()) {
+            int tier = definitions.get(index).tier;
+            int end = index;
+            while (end < definitions.size() && definitions.get(end).tier == tier) end++;
+            int count = end - index;
+            height += RELIC_HEADER_H;
+            height += ((count + columns - 1) / columns) * (RELIC_CARD_H + RELIC_GAP);
+            index = end;
         }
+        return height;
     }
 
     private static String selectedRelicInTier(
@@ -429,60 +430,19 @@ public final class LocalLeagueUiBridge {
         return null;
     }
 
-    private static int relicContentHeight(List<LocalLeagueBridge.RelicDefinition> definitions) {
-        int height = 0;
-        int lastTier = -1;
-        for (LocalLeagueBridge.RelicDefinition relic : definitions) {
-            if (relic.tier != lastTier) {
-                height += RELIC_HEADER_H;
-                lastTier = relic.tier;
-            }
-            height += RELIC_CARD_H + RELIC_GAP;
-        }
-        return height;
-    }
-
     private static String tierLabel(int tier) {
         switch (tier) {
-            case 1:
-                return "Tier 1 - Gathering";
-            case 2:
-                return "Tier 2 - Production";
-            case 3:
-                return "Tier 3 - Combat / Utility";
-            case 4:
-                return "Tier 4 - Utility";
-            default:
-                return "Tier " + tier;
+            case 1: return "Tier 1 - Gathering";
+            case 2: return "Tier 2 - Production";
+            case 3: return "Tier 3 - Combat / Utility";
+            case 4: return "Tier 4 - Utility";
+            default: return "Tier " + tier;
         }
     }
 
     private static void setRelicStatus(String value) {
         relicStatus = value == null ? "" : value;
         relicStatusUntil = System.currentTimeMillis() + 2500L;
-    }
-
-    private static void drawBlessings(Layout layout) {
-        API.FillRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, COLOR_PANEL, 0);
-        API.DrawRect(layout.contentX, layout.contentY, layout.contentW, layout.contentH, 0x5d4f39);
-        textLarge("Blessings", layout.contentX + 12, layout.contentY + 22, COLOR_GOLD);
-        textLarge("Blessing state is not wired yet.", layout.contentX + 18, layout.contentY + 62, COLOR_TEXT);
-        textSmall("This page is touch-modal and ready for authoritative choices, progress and resets.",
-                layout.contentX + 18, layout.contentY + 88, COLOR_MUTED);
-        textSmall("Nothing fake is stored in the client while that runtime seam is unfinished.",
-                layout.contentX + 18, layout.contentY + 105, COLOR_MUTED);
-
-        int sampleY = layout.contentY + 145 - blessingsScroll;
-        API.FillRect(layout.contentX + 18, sampleY, layout.contentW - 36, 54, COLOR_PANEL_ALT, 0);
-        API.DrawRect(layout.contentX + 18, sampleY, layout.contentW - 36, 54, 0x5d4f39);
-        textLarge("No blessing choices installed yet.", layout.contentX + 30, sampleY + 23, COLOR_TEXT);
-        textSmall("Awaiting authoritative world state.", layout.contentX + 30, sampleY + 42, COLOR_MUTED);
-    }
-
-    private static void drawStaticSelector(int x, int y, int width, String value) {
-        API.FillRect(x, y, width, 25, 0x211c16, 0);
-        API.DrawRect(x, y, width, 25, 0x66563d);
-        textLarge(value, x + 8, y + 18, COLOR_TEXT);
     }
 
     private static void drawScrollbar(int x, int y, int width, int height, int scroll, int maxScroll) {
@@ -499,51 +459,48 @@ public final class LocalLeagueUiBridge {
     private static void scrollActiveTab(int delta, Layout layout) {
         if (delta == 0) return;
         if (activeTab == TAB_TASKS) {
-            int rowsH = layout.contentH - 39;
-            int max = Math.max(0, LocalLeagueBridge.completedTasks().size() * 32 - rowsH);
-            tasksScroll = clamp(tasksScroll + delta, 0, max);
+            int rowsH = layout.contentH - 42;
+            int maxScroll = Math.max(0, LocalLeagueBridge.completedTasks().size() * 34 - rowsH);
+            tasksScroll = clamp(tasksScroll + delta, 0, maxScroll);
         } else if (activeTab == TAB_RELICS) {
-            int rowsH = layout.contentH - 38;
-            int max = Math.max(0, relicContentHeight(LocalLeagueBridge.relicDefinitions()) - rowsH);
-            relicsScroll = clamp(relicsScroll + delta, 0, max);
+            int rowsH = layout.contentH - 42;
+            int maxScroll = Math.max(0,
+                    relicContentHeight(LocalLeagueBridge.relicDefinitions(), relicColumns(layout)) - rowsH);
+            relicsScroll = clamp(relicsScroll + delta, 0, maxScroll);
         } else {
             blessingsScroll = clamp(blessingsScroll + delta, 0, 90);
         }
     }
 
+    /** Fill the entire logical RT4 canvas; startup/display geometry is untouched. */
     private static Layout layout() {
         int canvasW = GameShell.canvasWidth;
         int canvasH = GameShell.canvasHeight;
-
-        int width = clamp(canvasW * 58 / 100, 500, 650);
-        int height = clamp(canvasH * 68 / 100, 320, 370);
-        width = Math.min(width, Math.max(420, canvasW - 32));
-        height = Math.min(height, Math.max(300, canvasH - 28));
-        int x = Math.max(0, (canvasW - width) / 2);
-        int y = Math.max(0, (canvasH - height) / 2);
-
         Layout l = new Layout();
-        l.x = x;
-        l.y = y;
-        l.width = width;
-        l.height = height;
-        l.closeW = 22;
-        l.closeH = 20;
-        l.closeX = x + width - l.closeW - 7;
-        l.closeY = y + 5;
-        l.tabW = Math.min(140, Math.max(104, (width - 32) / 3));
+        l.x = 0;
+        l.y = 0;
+        l.width = canvasW;
+        l.height = canvasH;
+        l.closeW = 31;
+        l.closeH = 25;
+        l.closeX = Math.max(0, canvasW - l.closeW - 7);
+        l.closeY = 4;
+
+        l.tabW = Math.max(120, Math.min(240, (canvasW - 40) / 3));
         int tabsTotal = l.tabW * 3 + 8;
-        l.tabsX = x + Math.max(12, (width - tabsTotal) / 2);
-        l.tabsY = y + 34;
-        l.tabH = 27;
-        l.summaryX = x + 12;
-        l.summaryY = y + 67;
-        l.summaryW = width - 24;
-        l.summaryH = 30;
-        l.contentX = x + 12;
-        l.contentY = y + 104;
-        l.contentW = width - 24;
-        l.contentH = height - 116;
+        l.tabsX = Math.max(8, (canvasW - tabsTotal) / 2);
+        l.tabsY = 35;
+        l.tabH = 29;
+
+        l.summaryX = 8;
+        l.summaryY = 69;
+        l.summaryW = Math.max(1, canvasW - 16);
+        l.summaryH = 29;
+
+        l.contentX = 8;
+        l.contentY = 104;
+        l.contentW = Math.max(1, canvasW - 16);
+        l.contentH = Math.max(1, canvasH - 112);
         return l;
     }
 
@@ -557,7 +514,6 @@ public final class LocalLeagueUiBridge {
     private static String pretty(String id) {
         if (id == null || id.isEmpty()) return "Unknown";
         String raw = id.replace('_', ' ').replace('-', ' ').trim();
-        if (raw.isEmpty()) return id;
         StringBuilder out = new StringBuilder(raw.length());
         boolean upper = true;
         for (int i = 0; i < raw.length(); i++) {
@@ -568,23 +524,19 @@ public final class LocalLeagueUiBridge {
             } else if (upper) {
                 out.append(Character.toUpperCase(c));
                 upper = false;
-            } else {
-                out.append(c);
-            }
+            } else out.append(c);
         }
         return out.toString();
     }
 
     private static String fit(String value, int maxWidth) {
         if (value == null) return "";
-        JagString full = JagString.of(value);
-        if (Fonts.p12Full.getStringWidth(full) <= maxWidth) return value;
-        String suffix = "...";
+        if (Fonts.p12Full.getStringWidth(JagString.of(value)) <= maxWidth) return value;
         for (int end = value.length() - 1; end > 0; end--) {
-            String candidate = value.substring(0, end) + suffix;
+            String candidate = value.substring(0, end) + "...";
             if (Fonts.p12Full.getStringWidth(JagString.of(candidate)) <= maxWidth) return candidate;
         }
-        return suffix;
+        return "...";
     }
 
     private static String[] wrapSmall(String value, int maxWidth, int maxLines) {
@@ -599,22 +551,18 @@ public final class LocalLeagueUiBridge {
                 current.setLength(0);
                 current.append(candidate);
                 index++;
-                continue;
-            }
-            if (current.length() > 0) {
+            } else if (current.length() > 0) {
                 lines.add(current.toString());
                 current.setLength(0);
             } else {
-                lines.add(words[index]);
-                index++;
+                lines.add(words[index++]);
             }
         }
         if (current.length() > 0 && lines.size() < maxLines) lines.add(current.toString());
         if (index < words.length && !lines.isEmpty()) {
             int last = lines.size() - 1;
             String line = lines.get(last);
-            while (!line.isEmpty()
-                    && Fonts.p11Full.getStringWidth(JagString.of(line + "...")) > maxWidth) {
+            while (!line.isEmpty() && Fonts.p11Full.getStringWidth(JagString.of(line + "...")) > maxWidth) {
                 line = line.substring(0, line.length() - 1);
             }
             lines.set(last, line + "...");
@@ -642,25 +590,10 @@ public final class LocalLeagueUiBridge {
     }
 
     private static final class Layout {
-        int x;
-        int y;
-        int width;
-        int height;
-        int closeX;
-        int closeY;
-        int closeW;
-        int closeH;
-        int tabsX;
-        int tabsY;
-        int tabW;
-        int tabH;
-        int summaryX;
-        int summaryY;
-        int summaryW;
-        int summaryH;
-        int contentX;
-        int contentY;
-        int contentW;
-        int contentH;
+        int x, y, width, height;
+        int closeX, closeY, closeW, closeH;
+        int tabsX, tabsY, tabW, tabH;
+        int summaryX, summaryY, summaryW, summaryH;
+        int contentX, contentY, contentW, contentH;
     }
 }
