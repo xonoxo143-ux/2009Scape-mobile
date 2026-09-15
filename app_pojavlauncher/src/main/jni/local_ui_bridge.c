@@ -2,6 +2,9 @@
 #include <string.h>
 #include "awt_graphics.h"
 
+JNIEXPORT void JNICALL
+Java_net_kdt_pojavlaunch_utils_JREUtils_releaseAWTRenderer(JNIEnv*, jclass);
+
 static __thread jclass class_ui_state;
 static __thread jclass class_ui_commands;
 static __thread jmethodID method_sequence;
@@ -184,8 +187,6 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_localUiEquipmentAction(
 JNIEXPORT void JNICALL
 Java_net_kdt_pojavlaunch_utils_JREUtils_releaseLocalUiBridge(
         JNIEnv* android_env, jclass clazz) {
-    (void) android_env;
-    (void) clazz;
     JNIEnv* runtime = awt_get_graphics_env();
     if (!runtime) return;
     if (class_ui_state) (*runtime)->DeleteGlobalRef(runtime, class_ui_state);
@@ -198,5 +199,5 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_releaseLocalUiBridge(
     method_unequip_equipment = NULL;
     method_inventory_action = NULL;
     method_equipment_action = NULL;
-    awt_release_graphics_env();
+    Java_net_kdt_pojavlaunch_utils_JREUtils_releaseAWTRenderer(android_env, clazz);
 }
