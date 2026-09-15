@@ -7,6 +7,7 @@ import content.global.skill.gather.woodcutting.WoodcuttingNode
 import core.api.Commands
 import core.api.addItemOrDrop
 import core.api.openDialogue
+import core.api.runTask
 import core.cache.def.impl.ItemDefinition
 import core.game.dialogue.DialogueFile
 import core.game.event.Event
@@ -14,8 +15,10 @@ import core.game.event.ResourceProducedEvent
 import core.game.event.TeleportEvent
 import core.game.event.TickEvent
 import core.game.event.XPGainEvent
+import core.game.interaction.Clocks
 import core.game.interaction.InteractionListener
 import core.game.interaction.IntType
+import core.game.interaction.Script
 import core.game.node.entity.player.Player
 import core.game.node.entity.player.link.TeleportManager
 import core.game.node.entity.skill.SkillPulse
@@ -23,8 +26,11 @@ import core.game.node.entity.skill.Skills
 import core.game.node.item.Item
 import core.game.system.command.Privilege
 import core.game.system.task.Pulse
+import core.game.world.GameWorld
 import core.game.world.map.Location
 import core.local.LeagueRuntime
+import kotlin.math.max
+import kotlin.math.min
 
 /** IDs above the revision-530 cache range; RT4 synthesizes matching ObjTypes locally. */
 object LeagueItemIds {
@@ -136,7 +142,7 @@ object FirstPassRelics {
     private object EndlessHarvestEffect : LeagueRelicEffect {
         override val id = ENDLESS_HARVEST
         override val name = "Endless Harvest"
-        override val description = "Gather twice the resources and twice the gathering XP from Mining, Fishing and Woodcutting."
+        override val description = "Gather twice the resources and twice the gathering XP from Mining, Fishing and Woodcutting; bank gathered resources when space is available."
         override val tier = 1
 
         private const val XP_GUARD = "league:endless-harvest-xp-guard"
@@ -152,8 +158,18 @@ object FirstPassRelics {
         override fun onEvent(player: Player, event: Event) {
             when (event) {
                 is ResourceProducedEvent -> {
-                    if (event.amount > 0 && event.itemId in resourceIds) {
-                        addItemOrDrop(player, event.itemId, event.amount)
+                    if (event.amount <= 0 || event.itemId !in resourceIds) return
+
+                    // The relic-generated copy goes straight to the bank first.
+                    bankOrInventory(player, event.itemId, event.amount)
+
+                    // ResourceProducedEvent fires before the base reward for Mining/Fishing
+                    // but after it for Woodcutting. A one-tick relocation normalizes all
+                    // three without forking their retained skill implementations.
+                    val itemId = event.itemId
+                    val amount = event.amount
+                    runTask(player, 1) {
+                        moveInventoryResourceToBank(player, itemId, amount)
                     }
                 }
                 is XPGainEvent -> {
@@ -168,24 +184,55 @@ object FirstPassRelics {
                 }
             }
         }
+
+        private fun bankOrInventory(player: Player, itemId: Int, amount: Int) {
+            if (amount <= 0) return
+            val bankable = min(amount, player.bank.getMaximumAdd(Item(itemId, amount)))
+            if (bankable > 0) {
+                player.bank.add(Item(itemId, bankable))
+            }
+            val remainder = amount - bankable
+            if (remainder > 0) addItemOrDrop(player, itemId, remainder)
+        }
+
+        private fun moveInventoryResourceToBank(player: Player, itemId: Int, amount: Int) {
+            if (amount <= 0) return
+            val available = player.inventory.getAmount(Item(itemId))
+            if (available <= 0) return
+            val wanted = min(amount, available)
+            val bankable = min(wanted, player.bank.getMaximumAdd(Item(itemId, wanted)))
+            if (bankable <= 0) return
+
+            val moving = Item(itemId, bankable)
+            if (player.inventory.remove(moving)) {
+                if (!player.bank.add(Item(itemId, bankable))) {
+                    // Defensive rollback if a bank listener rejects the add.
+                    player.inventory.add(moving)
+                }
+            }
+        }
     }
 
     private object ProductionMasterEffect : LeagueRelicEffect {
         override val id = PRODUCTION_MASTER
         override val name = "Production Master"
-        override val description = "Batch-process supported production actions with their normal ingredients, products and XP."
+        override val description = "Batch-process supported Smithing, Crafting, Herblore, Cooking and Fletching actions with their normal ingredients, products and XP."
         override val tier = 2
 
         private const val GUARD = "league:production-master-running"
 
         override fun onEvent(player: Player, event: Event) {
             if (event !is TickEvent || player.getAttribute(GUARD, false)) return
-            val pulse = player.pulseManager.current ?: return
-            if (!LeagueModifiers.isProductionPulse(pulse)) return
 
             player.setAttribute(GUARD, true)
             try {
-                LeagueModifiers.finishProductionPulse(pulse)
+                // Modern retained production uses both SkillPulse and queueScript.
+                // Complete either representation through its own existing reward logic.
+                LeagueModifiers.finishQueuedProduction(player)
+                val pulse = player.pulseManager.current
+                if (pulse != null && LeagueModifiers.isProductionPulse(pulse)) {
+                    LeagueModifiers.finishProductionPulse(pulse)
+                }
             } finally {
                 player.removeAttribute(GUARD)
             }
@@ -223,14 +270,18 @@ object LeagueModifiers {
     const val RECALL_IN_PROGRESS = "league:last-recall-in-progress"
     private const val LAST_TILE = "league:last-recall-last-tile"
 
+    private val scriptQueueField by lazy {
+        playerScriptQueueField()
+    }
+
     @JvmStatic
     fun isProductionPulse(pulse: Pulse): Boolean {
         val name = pulse.javaClass.name
         return name.startsWith("content.global.skill.smithing.") ||
             name.startsWith("content.global.skill.crafting.") ||
             name.startsWith("content.global.skill.herblore.") ||
-            name.startsWith("content.global.skill.cooking.dairy.") ||
-            name == "content.global.skill.cooking.StandardCookingPulse"
+            name.startsWith("content.global.skill.cooking.") ||
+            name.startsWith("content.global.skill.fletching.")
     }
 
     /** Run only the current recognized production pulse to completion, capped defensively. */
@@ -251,8 +302,6 @@ object LeagueModifiers {
                 continue
             }
 
-            // StandardCookingPulse predates SkillPulse but deliberately exposes
-            // the same checkRequirements/reward shape. Keep this reflection local.
             try {
                 val check = pulse.javaClass.getMethod("checkRequirements")
                 val reward = pulse.javaClass.getMethod("reward")
@@ -264,6 +313,69 @@ object LeagueModifiers {
                 break
             }
         }
+    }
+
+    /**
+     * Fletching and several retained production handlers use queueScript rather
+     * than SkillPulse. Drive only production-package scripts through their own
+     * stages immediately, preserving every existing ingredient/XP/reward check.
+     */
+    @JvmStatic
+    fun finishQueuedProduction(player: Player) {
+        var passes = 0
+        while (passes++ < 1024) {
+            val before = productionScripts(player)
+            if (before.isEmpty()) return
+            var beforeState = 0
+            for (script in before) {
+                beforeState += script.state
+                script.nextExecution = GameWorld.ticks
+            }
+
+            // The production scripts use this clock in addition to nextExecution.
+            player.clocks[Clocks.SKILLING] = GameWorld.ticks - 1
+            player.scripts.processQueue()
+
+            val after = productionScripts(player)
+            if (after.isEmpty()) return
+            var afterState = 0
+            for (script in after) afterState += script.state
+            if (after.size == before.size && afterState == beforeState) return
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun productionScripts(player: Player): List<Script<*>> {
+        val queue = try {
+            scriptQueueField.get(player.scripts) as? List<*>
+        } catch (_: Throwable) {
+            null
+        } ?: return emptyList()
+
+        val result = ArrayList<Script<*>>()
+        for (entry in queue) {
+            val script = entry as? Script<*> ?: continue
+            val executionName = try {
+                script.execution!!::class.java.name
+            } catch (_: Throwable) {
+                continue
+            }
+            if (isProductionScriptClass(executionName)) result.add(script)
+        }
+        return result
+    }
+
+    private fun isProductionScriptClass(name: String): Boolean =
+        name.startsWith("content.global.skill.smithing.") ||
+            name.startsWith("content.global.skill.crafting.") ||
+            name.startsWith("content.global.skill.herblore.") ||
+            name.startsWith("content.global.skill.cooking.") ||
+            name.startsWith("content.global.skill.fletching.")
+
+    private fun playerScriptQueueField(): java.lang.reflect.Field {
+        val field = core.game.interaction.ScriptProcessor::class.java.getDeclaredField("queue")
+        field.isAccessible = true
+        return field
     }
 
     @JvmStatic
