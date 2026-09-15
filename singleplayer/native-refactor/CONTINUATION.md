@@ -45,6 +45,24 @@ Android ARM64 compilation and publication are separate gates; device startup,
 League overlay, touch alignment and pause/resume still require a phone result.
 Look for SINGLEPLAYER_FRAME: DIRECT_RT4 and DIRECT_ANDROID_BITMAP diagnostics.
 
+### Verified Build 42 delivery
+
+- Source: adb4a3947c94918d2e8d98a67ac407b93833aaa9.
+- Phone Build 42 passed, including both new regression gates:
+  https://github.com/xonoxo143-ux/2009Scape-mobile/actions/runs/34999839106
+- Stable payload publish 41 passed and verified the published manifest/APK:
+  https://github.com/xonoxo143-ux/2009Scape-mobile/actions/runs/34999838995
+- Delivered APK: 2009scape-mobile-build42.apk, 217186028 bytes.
+- APK SHA-256: 7c81299c31e64e6070e04c4f313c34059b69f950b7f570afdc15d79202e4dd4d.
+- Downloaded Actions archive SHA-256 matches GitHub's artifact digest, the APK
+  matches its CI checksum, and both archives pass their ZIP CRC checks.
+- The packaged bootstrap contains all three new framebuffer classes. The ARM64
+  bridge exports renderRT4Frame and releaseAWTRenderer, links libjnigraphics,
+  and retains 16 KiB ELF LOAD alignment. World, runtime and League assets exist.
+- Next required evidence is the phone result: install Build 42 over the current
+  app, enter the world, open League, check taps across the width, and background
+  then resume. Build success is not a claim that this device check has happened.
+
 The material below is the historical September 12 record. Its pending-publication
 statements describe those earlier checkpoints, not this continuation's status.
 
