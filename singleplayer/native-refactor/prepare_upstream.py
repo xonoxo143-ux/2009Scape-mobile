@@ -79,6 +79,30 @@ def patch_endless_harvest_depletion(server_root: Path) -> None:
     mining = server_root / "src/main/content/global/skill/gather/mining/MiningListener.kt"
     replace_once(
         mining,
+        """            // Give the mining reward, increment 'rocks mined' attribute
+            addItemOrDrop(player, reward, rewardAmount)
+""",
+        """            // Endless Harvest routes the doubled primary reward straight
+            // into the bank, avoiding any transient inventory insertion.
+            if (!core.local.league.EndlessHarvestHooks.routeGatheredReward(player, reward, rewardAmount)) {
+                addItemOrDrop(player, reward, rewardAmount)
+            }
+""",
+        "Endless Harvest mining direct-bank reward",
+    )
+    replace_once(
+        mining,
+        """        if (freeSlots(player) == 0) {
+            if(resource.identifier == 13.toByte()) {
+""",
+        """        if (freeSlots(player) == 0 &&
+            !core.local.league.EndlessHarvestHooks.bypassInventoryCapacity(player)) {
+            if(resource.identifier == 13.toByte()) {
+""",
+        "Endless Harvest mining inventory bypass",
+    )
+    replace_once(
+        mining,
         """            // Transform ore to depleted version
             if (!isEssence && resource!!.respawnRate != 0) {
 """,
@@ -98,6 +122,29 @@ def patch_endless_harvest_depletion(server_root: Path) -> None:
     woodcutting = server_root / "src/main/content/global/skill/gather/woodcutting/WoodcuttingListener.kt"
     replace_once(
         woodcutting,
+        """                //give the reward
+                player.inventory.add(Item(reward, rewardAmount))
+""",
+        """                // Endless Harvest banks the doubled primary reward directly.
+                if (!core.local.league.EndlessHarvestHooks.routeGatheredReward(player, reward, rewardAmount)) {
+                    player.inventory.add(Item(reward, rewardAmount))
+                }
+""",
+        "Endless Harvest woodcutting direct-bank reward",
+    )
+    replace_once(
+        woodcutting,
+        """        if (player.inventory.freeSlots() < 1 && node.isActive) {
+            player.sendMessage("Your inventory is too full to hold any more " + ItemDefinition.forId(resource.getReward()).name.lowercase(Locale.getDefault()) + ".")
+""",
+        """        if (player.inventory.freeSlots() < 1 && node.isActive &&
+            !core.local.league.EndlessHarvestHooks.bypassInventoryCapacity(player)) {
+            player.sendMessage("Your inventory is too full to hold any more " + ItemDefinition.forId(resource.getReward()).name.lowercase(Locale.getDefault()) + ".")
+""",
+        "Endless Harvest woodcutting inventory bypass",
+    )
+    replace_once(
+        woodcutting,
         """    private fun rollDepletion(player: Player, node: Scenery, resource: WoodcuttingNode): Boolean {
         //transform to depleted version
 """,
@@ -110,7 +157,42 @@ def patch_endless_harvest_depletion(server_root: Path) -> None:
 """,
         "Endless Harvest woodcutting persistence",
     )
-    print("overlay: Endless Harvest resource nodes persist")
+
+    fishing = server_root / "src/main/content/global/skill/gather/fishing/FishingListener.kt"
+    replace_once(
+        fishing,
+        """            if (!hasSpaceFor(player, Item(fish.id)) || !op.removeBait(player)) return restartScript(player)
+""",
+        """            if ((!hasSpaceFor(player, Item(fish.id)) &&
+                !core.local.league.EndlessHarvestHooks.bypassInventoryCapacity(player)) ||
+                !op.removeBait(player)) return restartScript(player)
+""",
+        "Endless Harvest fishing reward-space bypass",
+    )
+    replace_once(
+        fishing,
+        """                sendMessage(player, msg)
+                addItemOrDrop(player, item.id, item.amount)
+""",
+        """                sendMessage(player, msg)
+                if (!core.local.league.EndlessHarvestHooks.routeGatheredReward(player, item.id, item.amount)) {
+                    addItemOrDrop(player, item.id, item.amount)
+                }
+""",
+        "Endless Harvest fishing direct-bank reward",
+    )
+    replace_once(
+        fishing,
+        """        if (freeSlots(player) == 0) {
+            if (option.fish.contains(Fish.LOBSTER)) {
+""",
+        """        if (freeSlots(player) == 0 &&
+            !core.local.league.EndlessHarvestHooks.bypassInventoryCapacity(player)) {
+            if (option.fish.contains(Fish.LOBSTER)) {
+""",
+        "Endless Harvest fishing inventory bypass",
+    )
+    print("overlay: Endless Harvest banks primary rewards directly and resource nodes persist")
 
 
 def patch_command_boundary(server_root: Path) -> None:
