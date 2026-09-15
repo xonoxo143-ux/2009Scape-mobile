@@ -32,7 +32,7 @@ public final class LeagueItemOverrides {
         } else {
             donorId = 970; // Papyrus
             name = "Banker's Note";
-            action = "Bank";
+            action = "Activate";
         }
 
         ObjType donor = ObjTypeList.get(donorId);
