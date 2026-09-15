@@ -73,8 +73,10 @@ include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := pojavexec_awt
+LOCAL_LDLIBS := -ljnigraphics
 LOCAL_SRC_FILES := \
-    awt_bridge.c
+    awt_bridge.c \
+    rt4_frame_bridge.c
 LOCAL_LDFLAGS += $(PAGE_SIZE_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 

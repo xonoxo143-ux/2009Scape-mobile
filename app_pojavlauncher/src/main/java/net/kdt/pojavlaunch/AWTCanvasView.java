@@ -11,7 +11,7 @@ import java.util.*;
 import net.kdt.pojavlaunch.Tools;
 import net.kdt.pojavlaunch.utils.*;
 
-public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener, Runnable {
+public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener {
     public static final int MIN_CANVAS_WIDTH = 765;
     public static final int MIN_CANVAS_HEIGHT = 503;
 
@@ -22,7 +22,7 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     private static volatile boolean sViewportFrozen = false;
 
     private static final double NANOS = 1000000000.0;
-    private volatile boolean mIsDestroyed = false;
+    private volatile int mSurfaceGeneration;
     private volatile boolean mRenderingPaused = false;
     private final Object mRenderPauseLock = new Object();
 
@@ -84,13 +84,13 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture texture, int w, int h) {
         texture.setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
-        mIsDestroyed = false;
-        new Thread(this, "AndroidAWTRenderer").start();
+        final int generation = ++mSurfaceGeneration;
+        new Thread(() -> renderSurface(texture, generation), "AndroidAWTRenderer").start();
     }
 
     @Override
     public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
-        mIsDestroyed = true;
+        ++mSurfaceGeneration;
         synchronized (mRenderPauseLock) {
             mRenderPauseLock.notifyAll();
         }
@@ -108,81 +108,84 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         // or resize from a presentation callback.
     }
 
-    @Override
-    public void run() {
-        Canvas canvas;
-        Surface surface = new Surface(getSurfaceTexture());
+    private void renderSurface(SurfaceTexture texture, int generation) {
+        Surface surface = null;
+        Bitmap rgbArrayBitmap = null;
         final int logicalWidth = AWT_CANVAS_WIDTH;
         final int logicalHeight = AWT_CANVAS_HEIGHT;
-        Bitmap rgbArrayBitmap = Bitmap.createBitmap(
-                logicalWidth, logicalHeight, Bitmap.Config.ARGB_8888);
         Paint paint = new Paint();
         paint.setAntiAlias(false);
         paint.setDither(false);
         paint.setFilterBitmap(false);
-        long frameEndNanos;
-        long frameStartNanos;
-        long sleepTime;
-        long sleepMillis;
-        int sleepNanos;
-        final int[] rgbArray = new int[logicalWidth * logicalHeight];
+        int[] rgbArray = null;
+        Rect destination = new Rect();
         final long frameTimeNanos = (long)(NANOS / 60);
-        long frameDuration;
+        long previousSequence = 0;
+        boolean directAnnounced = false;
 
         try {
-            while (!mIsDestroyed && surface.isValid()) {
+            // Capture this surface, rather than looking up a possibly newer one
+            // after this renderer thread has been scheduled.
+            surface = new Surface(texture);
+            rgbArrayBitmap = Bitmap.createBitmap(
+                    logicalWidth, logicalHeight, Bitmap.Config.ARGB_8888);
+            while (generation == mSurfaceGeneration && surface.isValid()
+                    && !Thread.currentThread().isInterrupted()) {
                 if (mRenderingPaused) {
                     synchronized (mRenderPauseLock) {
-                        while (mRenderingPaused && !mIsDestroyed) {
-                            try {
-                                mRenderPauseLock.wait(250L);
-                            } catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                                mIsDestroyed = true;
-                                break;
-                            }
+                        while (mRenderingPaused && generation == mSurfaceGeneration) {
+                            mRenderPauseLock.wait(250L);
                         }
                     }
                     continue;
                 }
 
-                frameStartNanos = System.nanoTime();
-                canvas = surface.lockCanvas(null);
-                if (canvas == null) continue;
-                if (JREUtils.renderAWTScreenFrameInto(rgbArray)) {
-                    rgbArrayBitmap.setPixels(
-                            rgbArray,
-                            0,
-                            logicalWidth,
-                            0,
-                            0,
-                            logicalWidth,
-                            logicalHeight);
-                    canvas.drawBitmap(rgbArrayBitmap, null,
-                            new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), paint);
-                } else {
-                    canvas.drawRGB(0, 0, 0);
-                }
-                surface.unlockCanvasAndPost(canvas);
-
-                frameEndNanos = System.nanoTime();
-                frameDuration = frameEndNanos - frameStartNanos;
-                if (frameDuration < frameTimeNanos) {
-                    sleepTime = frameTimeNanos - frameDuration;
-                    sleepMillis = sleepTime / 1000000;
-                    sleepNanos = (int)(sleepTime - sleepMillis * 1000000);
-                    try {
-                        Thread.sleep(sleepMillis, sleepNanos);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
+                long frameStartNanos = System.nanoTime();
+                long sequence = JREUtils.renderRT4Frame(rgbArrayBitmap, previousSequence);
+                if (sequence <= 0 || sequence != previousSequence) {
+                    boolean havePixels = sequence > 0;
+                    if (!havePixels) {
+                        // Startup and older payloads still use the proven Cacio
+                        // path. The direct path never crosses an Android int[].
+                        previousSequence = 0;
+                        if (rgbArray == null) rgbArray = new int[logicalWidth * logicalHeight];
+                        havePixels = JREUtils.renderAWTScreenFrameInto(rgbArray);
+                        if (havePixels) rgbArrayBitmap.setPixels(rgbArray, 0,
+                                logicalWidth, 0, 0, logicalWidth, logicalHeight);
+                    }
+                    if (generation != mSurfaceGeneration || mRenderingPaused) continue;
+                    Canvas canvas = surface.lockCanvas(null);
+                    if (canvas != null) {
+                        try {
+                            if (havePixels) {
+                                destination.set(0, 0, canvas.getWidth(), canvas.getHeight());
+                                canvas.drawBitmap(rgbArrayBitmap, null, destination, paint);
+                            } else {
+                                canvas.drawRGB(0, 0, 0);
+                            }
+                        } finally {
+                            surface.unlockCanvasAndPost(canvas);
+                        }
+                        previousSequence = sequence;
+                        if (sequence > 0 && !directAnnounced) {
+                            directAnnounced = true;
+                            Log.i("SINGLEPLAYER_FRAME", "DIRECT_ANDROID_BITMAP "
+                                    + logicalWidth + "x" + logicalHeight);
+                        }
                     }
                 }
+                long sleepTime = frameTimeNanos - (System.nanoTime() - frameStartNanos);
+                if (sleepTime > 0) Thread.sleep(sleepTime / 1000000, (int)(sleepTime % 1000000));
             }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
         } catch (Throwable throwable) {
-            Tools.showError(getContext(), throwable);
+            if (generation == mSurfaceGeneration) Tools.showError(getContext(), throwable);
+        } finally {
+            JREUtils.releaseAWTRenderer();
+            if (rgbArrayBitmap != null) rgbArrayBitmap.recycle();
+            if (surface != null) surface.release();
         }
-        rgbArrayBitmap.recycle();
-        surface.release();
     }
 
     public void setRenderingPaused(boolean paused) {

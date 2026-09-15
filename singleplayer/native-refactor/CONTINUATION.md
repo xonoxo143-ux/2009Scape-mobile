@@ -1,5 +1,53 @@
 # Current continuation checkpoint
 
+## September 15: direct RT4 framebuffer handoff
+
+The continuation moved to the Android-native rendering work after the Demonic
+Pacts checkpoint at 13ab749c74d700ab157d3843d2ac74ba4321f161 (successful phone
+Build 41 and payload publish 40). The relic checkpoint is published; it does not
+establish that every registered relic's mechanics are complete.
+
+The new presentation path copies the final retained RT4 software framebuffer
+into one reusable completed-frame snapshot, then JNI writes its RGB pixels
+straight into an Android RGBA bitmap. It bypasses Cacio image compositing,
+screen RGB extraction, the Android int-array transfer and Bitmap.setPixels
+once the direct consumer is active. RT4's world, HUD and League drawing all
+finish before the existing framebuffer blit hook publishes the frame.
+
+The snapshot and native read share one monitor; Android cannot read a partially
+written frame or RT4's live raster. Native copying handles Android row stride,
+opaque alpha and RGB-to-RGBA byte order. Repeated frame sequences skip redundant
+bitmap copying and surface posts. No JNI object crosses between the two VMs.
+
+Compatibility and lifecycle:
+
+- The Android renderer explicitly arms the new path. Older shells keep ordinary
+  AWT blits even with the new bootstrap installed. New shells with an older
+  bootstrap, startup, map rebuilds and mismatched dimensions use Cacio.
+- Native-copy failures disarm direct rendering for that surface and restore AWT.
+- Surface generations prevent an old render loop from restarting when a new
+  SurfaceTexture arrives. Graphics JNI environments and cached global references
+  belong to each renderer thread and are released/detached on thread exit.
+- Existing viewport calculation, startup/login ordering, software HUD cadence,
+  input mapping, world authority and audio behavior are preserved.
+
+Delivery requires a new APK because the JNI library and Android renderer change.
+Payload publication remains compatible with the previous shell but cannot enable
+the new native handoff there. Install the APK over the existing app to retain saves.
+
+Local regression checks pass against the exact repository RT4 JAR: both retained
+framebuffer implementations, fallback, full/partial blits, 1289x503 corners,
+snapshot reuse/isolation, concurrent publication, rebuilds and invalid sizes.
+Native color/stride/bounds checks also pass with address/undefined sanitizers
+(leak checking is unavailable in the container; the converter allocates nothing).
+The phone-build workflow runs both regression suites before producing its APK.
+Android ARM64 compilation and publication are separate gates; device startup,
+League overlay, touch alignment and pause/resume still require a phone result.
+Look for SINGLEPLAYER_FRAME: DIRECT_RT4 and DIRECT_ANDROID_BITMAP diagnostics.
+
+The material below is the historical September 12 record. Its pending-publication
+statements describe those earlier checkpoints, not this continuation's status.
+
 This is the continuation record for the most recent chat titled "Review workflow trajectory" and its September 12, 2026 continuation. Revisit prior chat context when it affects a decision; update this record with concrete recovered ideas and verified results. Historical retrieval has been incomplete, so do not invent missing exchanges.
 
 ## User-supplied handoff

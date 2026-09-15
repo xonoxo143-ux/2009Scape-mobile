@@ -2,14 +2,16 @@
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
+#include "awt_graphics.h"
 
 static JavaVM* dalvikJavaVMPtr;
 
 static JavaVM* runtimeJavaVMPtr;
-static JNIEnv* runtimeJNIEnvPtr_GRAPHICS;
+static __thread JNIEnv* runtimeJNIEnvPtr_GRAPHICS;
+static __thread int graphics_attached;
 static JNIEnv* runtimeJNIEnvPtr_INPUT;
-jclass class_CTCScreen;
-jmethodID method_GetRGB;
+static __thread jclass class_CTCScreen;
+static __thread jmethodID method_GetRGB;
 
 jclass class_CTCAndroidInput;
 jmethodID method_ReceiveInput;
@@ -250,144 +252,143 @@ JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeSetMobilePa
     }
 }
 
-// TODO: check for memory leaks
-// int printed = 0;
-int threadAttached = 0;
-JNIEXPORT jintArray JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScreenFrame(JNIEnv* env, jclass clazz /*, jobject canvas, jint width, jint height */) {
-    if (runtimeJNIEnvPtr_GRAPHICS == NULL) {
-        if (runtimeJavaVMPtr == NULL) {
+/* The graphics attachment and all cached references belong to one Android
+ * renderer thread, including after SurfaceTexture recreation. */
+JNIEnv* awt_get_graphics_env(void) {
+    if (runtimeJNIEnvPtr_GRAPHICS) return runtimeJNIEnvPtr_GRAPHICS;
+    if (!runtimeJavaVMPtr) return NULL;
+    jint status = (*runtimeJavaVMPtr)->GetEnv(runtimeJavaVMPtr,
+            (void**) &runtimeJNIEnvPtr_GRAPHICS, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*runtimeJavaVMPtr)->AttachCurrentThread(runtimeJavaVMPtr,
+                (void**) &runtimeJNIEnvPtr_GRAPHICS, NULL) != JNI_OK) {
+            runtimeJNIEnvPtr_GRAPHICS = NULL;
             return NULL;
-        } else {
-            (*runtimeJavaVMPtr)->AttachCurrentThread(runtimeJavaVMPtr, &runtimeJNIEnvPtr_GRAPHICS, NULL);
         }
+        graphics_attached = 1;
+    } else if (status != JNI_OK) {
+        runtimeJNIEnvPtr_GRAPHICS = NULL;
     }
+    return runtimeJNIEnvPtr_GRAPHICS;
+}
 
-    int *rgbArray;
-    jintArray jreRgbArray, androidRgbArray;
-  
-    if (method_GetRGB == NULL) {
-        class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(runtimeJNIEnvPtr_GRAPHICS, "net/java/openjdk/cacio/ctc/CTCScreen");
-        if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
-            (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
-            class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(runtimeJNIEnvPtr_GRAPHICS, "com/github/caciocavallosilano/cacio/ctc/CTCScreen");
-        }
-        assert(class_CTCScreen != NULL);
-        method_GetRGB = (*runtimeJNIEnvPtr_GRAPHICS)->GetStaticMethodID(runtimeJNIEnvPtr_GRAPHICS, class_CTCScreen, "getCurrentScreenRGB", "()[I");
-        assert(method_GetRGB != NULL);
-    }
-    jreRgbArray = (jintArray) (*runtimeJNIEnvPtr_GRAPHICS)->CallStaticObjectMethod(
-        runtimeJNIEnvPtr_GRAPHICS,
-        class_CTCScreen,
-        method_GetRGB
-    );
-    if (jreRgbArray == NULL) {
+/* Attached Android threads may lack the embedded application's class loader.
+ * The returned reference is global and is deleted when the renderer exits. */
+jclass awt_find_runtime_class(JNIEnv* env, const char* binary_name, const char* dotted_name) {
+    if ((*env)->PushLocalFrame(env, 12) != JNI_OK) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
         return NULL;
     }
-    
-    // Copy JRE RGB array memory to Android.
-    int arrayLength = (*runtimeJNIEnvPtr_GRAPHICS)->GetArrayLength(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
-    rgbArray = (*runtimeJNIEnvPtr_GRAPHICS)->GetIntArrayElements(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, 0);
-    androidRgbArray = (*env)->NewIntArray(env, arrayLength);
-    (*env)->SetIntArrayRegion(env, androidRgbArray, 0, arrayLength, rgbArray);
+    jclass found = (*env)->FindClass(env, binary_name);
+    if (!found) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        jclass loader_class = (*env)->FindClass(env, "java/lang/ClassLoader");
+        if (loader_class) {
+            jmethodID system_loader = (*env)->GetStaticMethodID(env, loader_class,
+                    "getSystemClassLoader", "()Ljava/lang/ClassLoader;");
+            jmethodID load_class = NULL;
+            if (system_loader) load_class = (*env)->GetMethodID(env, loader_class,
+                    "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+            if (system_loader && load_class) {
+                jobject loader = (*env)->CallStaticObjectMethod(env, loader_class, system_loader);
+                if (loader && !(*env)->ExceptionCheck(env)) {
+                    jstring name = (*env)->NewStringUTF(env, dotted_name);
+                    if (name) found = (jclass) (*env)->CallObjectMethod(env, loader, load_class, name);
+                }
+            }
+        }
+    }
+    jclass global = NULL;
+    if (!(*env)->ExceptionCheck(env) && found) global = (*env)->NewGlobalRef(env, found);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    (*env)->PopLocalFrame(env, NULL);
+    return global;
+}
 
-    (*runtimeJNIEnvPtr_GRAPHICS)->ReleaseIntArrayElements(
-        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, rgbArray, JNI_ABORT);
-    (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(
-        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
+static jintArray awt_screen_pixels(JNIEnv* env) {
+    if (!class_CTCScreen) {
+        class_CTCScreen = awt_find_runtime_class(env,
+                "net/java/openjdk/cacio/ctc/CTCScreen", "net.java.openjdk.cacio.ctc.CTCScreen");
+        if (!class_CTCScreen) class_CTCScreen = awt_find_runtime_class(env,
+                "com/github/caciocavallosilano/cacio/ctc/CTCScreen",
+                "com.github.caciocavallosilano.cacio.ctc.CTCScreen");
+        if (!class_CTCScreen) return NULL;
+    }
+    if (!method_GetRGB) {
+        method_GetRGB = (*env)->GetStaticMethodID(env, class_CTCScreen, "getCurrentScreenRGB", "()[I");
+        if (!method_GetRGB) {
+            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+            return NULL;
+        }
+    }
+    jintArray pixels = (jintArray) (*env)->CallStaticObjectMethod(env, class_CTCScreen, method_GetRGB);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        if (pixels) (*env)->DeleteLocalRef(env, pixels);
+        return NULL;
+    }
+    return pixels;
+}
 
-    return androidRgbArray;
+JNIEXPORT jintArray JNICALL
+Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScreenFrame(JNIEnv* env, jclass clazz) {
+    (void) clazz;
+    JNIEnv* runtime = awt_get_graphics_env();
+    if (!runtime) return NULL;
+    jintArray source = awt_screen_pixels(runtime);
+    if (!source) return NULL;
+    jsize length = (*runtime)->GetArrayLength(runtime, source);
+    jintArray target = (*env)->NewIntArray(env, length);
+    if (target) {
+        jint* pixels = (*runtime)->GetIntArrayElements(runtime, source, NULL);
+        if (pixels) {
+            (*env)->SetIntArrayRegion(env, target, 0, length, pixels);
+            (*runtime)->ReleaseIntArrayElements(runtime, source, pixels, JNI_ABORT);
+        }
+    }
+    if ((*runtime)->ExceptionCheck(runtime)) (*runtime)->ExceptionClear(runtime);
+    (*runtime)->DeleteLocalRef(runtime, source);
+    return target;
 }
 
 JNIEXPORT jboolean JNICALL
 Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScreenFrameInto(
-        JNIEnv* env, jclass clazz, jintArray androidRgbArray) {
-    if (androidRgbArray == NULL) {
-        return JNI_FALSE;
-    }
-
-    if (runtimeJNIEnvPtr_GRAPHICS == NULL) {
-        if (runtimeJavaVMPtr == NULL) {
-            return JNI_FALSE;
-        }
-        (*runtimeJavaVMPtr)->AttachCurrentThread(
-            runtimeJavaVMPtr, &runtimeJNIEnvPtr_GRAPHICS, NULL);
-    }
-
-    if (method_GetRGB == NULL) {
-        class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(
-            runtimeJNIEnvPtr_GRAPHICS, "net/java/openjdk/cacio/ctc/CTCScreen");
-        if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
-            (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
-            class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(
-                runtimeJNIEnvPtr_GRAPHICS,
-                "com/github/caciocavallosilano/cacio/ctc/CTCScreen");
-        }
-        if (class_CTCScreen == NULL) {
-            if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
-                (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
-            }
-            return JNI_FALSE;
-        }
-        method_GetRGB = (*runtimeJNIEnvPtr_GRAPHICS)->GetStaticMethodID(
-            runtimeJNIEnvPtr_GRAPHICS,
-            class_CTCScreen,
-            "getCurrentScreenRGB",
-            "()[I");
-        if (method_GetRGB == NULL) {
-            if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
-                (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
-            }
-            return JNI_FALSE;
+        JNIEnv* env, jclass clazz, jintArray target) {
+    (void) clazz;
+    if (!target) return JNI_FALSE;
+    JNIEnv* runtime = awt_get_graphics_env();
+    if (!runtime) return JNI_FALSE;
+    jintArray source = awt_screen_pixels(runtime);
+    if (!source) return JNI_FALSE;
+    jboolean result = JNI_FALSE;
+    jsize length = (*runtime)->GetArrayLength(runtime, source);
+    if (length > 0 && (*env)->GetArrayLength(env, target) >= length) {
+        jint* pixels = (*runtime)->GetIntArrayElements(runtime, source, NULL);
+        if (pixels) {
+            (*env)->SetIntArrayRegion(env, target, 0, length, pixels);
+            (*runtime)->ReleaseIntArrayElements(runtime, source, pixels, JNI_ABORT);
+            result = JNI_TRUE;
         }
     }
+    (*runtime)->DeleteLocalRef(runtime, source);
+    if ((*runtime)->ExceptionCheck(runtime)) { (*runtime)->ExceptionClear(runtime); result = JNI_FALSE; }
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); result = JNI_FALSE; }
+    return result;
+}
 
-    jintArray jreRgbArray = (jintArray) (*runtimeJNIEnvPtr_GRAPHICS)->CallStaticObjectMethod(
-        runtimeJNIEnvPtr_GRAPHICS,
-        class_CTCScreen,
-        method_GetRGB);
-    if (jreRgbArray == NULL) {
-        if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
-            (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
-        }
-        return JNI_FALSE;
-    }
-
-    jsize sourceLength = (*runtimeJNIEnvPtr_GRAPHICS)->GetArrayLength(
-        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
-    jsize destinationLength = (*env)->GetArrayLength(env, androidRgbArray);
-    if (sourceLength <= 0 || destinationLength < sourceLength) {
-        (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(
-            runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
-        return JNI_FALSE;
-    }
-
-    jint* sourcePixels = (*runtimeJNIEnvPtr_GRAPHICS)->GetIntArrayElements(
-        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, NULL);
-    if (sourcePixels == NULL) {
-        (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(
-            runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
-        return JNI_FALSE;
-    }
-
-    (*env)->SetIntArrayRegion(
-        env,
-        androidRgbArray,
-        0,
-        sourceLength,
-        sourcePixels);
-    (*runtimeJNIEnvPtr_GRAPHICS)->ReleaseIntArrayElements(
-        runtimeJNIEnvPtr_GRAPHICS,
-        jreRgbArray,
-        sourcePixels,
-        JNI_ABORT);
-    (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(
-        runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
-
-    if ((*env)->ExceptionCheck(env) == JNI_TRUE) {
-        (*env)->ExceptionClear(env);
-        return JNI_FALSE;
-    }
-    return JNI_TRUE;
+JNIEXPORT void JNICALL
+Java_net_kdt_pojavlaunch_utils_JREUtils_releaseAWTRenderer(JNIEnv* env, jclass clazz) {
+    (void) env;
+    (void) clazz;
+    JNIEnv* runtime = runtimeJNIEnvPtr_GRAPHICS;
+    if (!runtime) return;
+    awt_release_direct_frame(runtime);
+    if (class_CTCScreen) (*runtime)->DeleteGlobalRef(runtime, class_CTCScreen);
+    class_CTCScreen = NULL;
+    method_GetRGB = NULL;
+    runtimeJNIEnvPtr_GRAPHICS = NULL;
+    if (graphics_attached) (*runtimeJavaVMPtr)->DetachCurrentThread(runtimeJavaVMPtr);
+    graphics_attached = 0;
 }
 
 JNIEXPORT void JNICALL Java_net_java_openjdk_cacio_ctc_CTCClipboard_nQuerySystemClipboard(JNIEnv *env, jclass clazz) {
@@ -503,3 +504,4 @@ Java_net_kdt_pojavlaunch_AWTInputBridge_nativeMoveWindow(JNIEnv *env, jclass cla
     (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(runtimeJNIEnvPtr_INPUT, rectangle);
     (*runtimeJNIEnvPtr_INPUT)->DeleteLocalRef(runtimeJNIEnvPtr_INPUT, frames);
 }
+

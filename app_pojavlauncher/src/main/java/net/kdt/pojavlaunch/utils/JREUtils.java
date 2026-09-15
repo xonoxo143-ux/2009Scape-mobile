@@ -538,6 +538,12 @@ public class JREUtils {
     // Obtain AWT screen pixels to render on Android SurfaceView
     public static native int[] renderAWTScreenFrame(/* Object canvas, int width, int height */);
     public static native boolean renderAWTScreenFrameInto(int[] outputPixels);
+
+    /** Positive completed-frame sequence, or zero to use the Cacio fallback. */
+    public static native long renderRT4Frame(android.graphics.Bitmap bitmap, long previousSequence);
+
+    /** Release this Android render thread's embedded-JVM references/attachment. */
+    public static native void releaseAWTRenderer();
     static {
         System.loadLibrary("pojavexec");
         System.loadLibrary("pojavexec_awt");

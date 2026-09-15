@@ -207,6 +207,22 @@ jobs:
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q '^rt4/MiniMenu.class$'
           jar -tf app_pojavlauncher/src/main/assets/singleplayer-bootstrap.jar | grep -q '^rt4/LocalLeagueBridge.class$'
 
+      - name: Verify direct framebuffer handoff
+        run: |
+          set -euxo pipefail
+          mkdir -p build/direct-frame-tests
+          javac --release 17 \
+            -cp "build/singleplayer-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar" \
+            -d build/direct-frame-tests \
+            singleplayer/native-refactor/tests/DirectFrameBufferRegression.java
+          java -Djava.awt.headless=true \
+            -cp "build/direct-frame-tests:build/singleplayer-bootstrap:app_pojavlauncher/src/main/assets/rt4.jar" \
+            rt4.DirectFrameBufferRegression
+          cc -std=c11 -Wall -Wextra -Werror \
+            singleplayer/native-refactor/tests/rt4_pixels_test.c \
+            -o build/direct-frame-tests/rt4_pixels_test
+          build/direct-frame-tests/rt4_pixels_test
+
       - name: Restore ARM64 Java 17 runtime download
         id: jre-cache
         uses: actions/cache@v4
