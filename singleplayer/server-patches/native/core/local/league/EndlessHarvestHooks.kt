@@ -2,6 +2,9 @@ package core.local.league
 
 import content.global.skill.cooking.CookableItems
 import content.global.skill.firemaking.Log
+import content.global.skill.fishing.Fish
+import content.global.skill.gather.mining.MiningNode
+import content.global.skill.gather.woodcutting.WoodcuttingNode
 import core.api.addItemOrDrop
 import core.game.node.entity.player.Player
 import core.game.node.entity.skill.Skills
@@ -11,6 +14,10 @@ import kotlin.math.min
 
 /** Retained-skill seam for the Demonic Pacts gathering relics. */
 object EndlessHarvestHooks {
+    private val fishingItems by lazy { Fish.values().map { it.id }.toSet() }
+    private val miningItems by lazy { MiningNode.values().map { it.reward }.filter { it > 0 }.toSet() }
+    private val woodcuttingItems by lazy { WoodcuttingNode.values().map { it.reward }.filter { it > 0 }.toSet() }
+
     @JvmStatic
     fun isActive(player: Player): Boolean =
         LeagueRuntime.hasRelic(player, DemonicPactsRelics.ENDLESS_HARVEST)
@@ -34,6 +41,10 @@ object EndlessHarvestHooks {
     @JvmStatic
     fun preventDepletion(player: Player): Boolean = isActive(player)
 
+    /** Compatibility overload used by the already-pinned source overlay. */
+    @JvmStatic
+    fun bypassInventoryCapacity(player: Player): Boolean = isActive(player)
+
     @JvmStatic
     fun bypassInventoryCapacity(player: Player, skillId: Int): Boolean =
         isActive(player) || (skillId == Skills.WOODCUTTING && woodsman(player))
@@ -46,6 +57,18 @@ object EndlessHarvestHooks {
     @JvmStatic
     fun actionDelay(player: Player, normalDelay: Int): Int =
         if (flowState(player)) min(2, normalDelay) else normalDelay
+
+    /** Compatibility overload; infer the gathering skill from the retained reward ID. */
+    @JvmStatic
+    fun routeGatheredReward(player: Player, itemId: Int, amount: Int): Boolean {
+        val skill = when {
+            itemId in fishingItems -> Skills.FISHING
+            itemId in woodcuttingItems -> Skills.WOODCUTTING
+            itemId in miningItems -> Skills.MINING
+            else -> -1
+        }
+        return routeGatheredReward(player, skill, itemId, amount)
+    }
 
     /**
      * Transform and route the primary gathering reward before it ever reaches
