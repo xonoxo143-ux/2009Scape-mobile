@@ -1,0 +1,35 @@
+name: Dump interface 746
+
+on:
+  push:
+    branches: [singleplayer-native-refactor]
+    paths:
+      - 'tools/DumpInterface746.java'
+      - '.github/workflows/dump-interface-746.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: singleplayer-native-refactor
+      - name: Fetch historical single-player runtime
+        run: git clone --depth 1 https://github.com/2009scape/Singleplayer-Edition-Linux.git /tmp/2009sp
+      - name: Decode resizable root
+        run: |
+          mkdir -p diagnostics
+          javac -cp /tmp/2009sp/client.jar:/tmp/2009sp/server.jar tools/DumpInterface746.java
+          java -cp tools:/tmp/2009sp/client.jar:/tmp/2009sp/server.jar DumpInterface746 /tmp/2009sp/data/cache > diagnostics/interface-746.txt
+          cat diagnostics/interface-746.txt
+      - name: Save diagnostic
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add diagnostics/interface-746.txt
+          git commit -m 'Record decoded interface 746 layout' || exit 0
+          git push origin HEAD:singleplayer-native-refactor
