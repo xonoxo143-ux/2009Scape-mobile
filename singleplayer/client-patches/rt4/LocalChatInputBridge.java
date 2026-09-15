@@ -16,6 +16,7 @@ import java.nio.file.Files;
  */
 public final class LocalChatInputBridge {
     private static final int CHAT_TOP_INTERFACE = 752;
+    private static final int DEFAULT_CHATBOX_INTERFACE = 137;
     private static final int CS_CHATBOX_CHILD = 6;
     private static final int CHATBOX_CHILD = 8;
     private static final int DIALOGUE_CHILD = 12;
@@ -29,10 +30,17 @@ public final class LocalChatInputBridge {
     public static void tick() {
         if (!Boolean.getBoolean("singleplayer")) return;
 
+        int csChatbox = mountedInterfaceId(CS_CHATBOX_CHILD);
+        int chatbox = mountedInterfaceId(CHATBOX_CHILD);
+        int dialogue = mountedInterfaceId(DIALOGUE_CHILD);
+
+        // Android may own the soft keyboard only while the stock public-chat
+        // interface is actually mounted. Dialogue/options and client-script
+        // chatboxes occupy the same screen space and must remain RT4-owned.
         boolean enabled = client.gameState == 30
-                && !isMounted(CS_CHATBOX_CHILD)
-                && !isMounted(CHATBOX_CHILD)
-                && !isMounted(DIALOGUE_CHILD);
+                && chatbox == DEFAULT_CHATBOX_INTERFACE
+                && csChatbox == -1
+                && dialogue == -1;
 
         if (lastEnabled != null && lastEnabled.booleanValue() == enabled) return;
         lastEnabled = enabled;
@@ -43,19 +51,25 @@ public final class LocalChatInputBridge {
                 Files.write(
                         flag.toPath(),
                         "normal-chat\n".getBytes(StandardCharsets.UTF_8));
-                System.out.println("SINGLEPLAYER_INPUT: CHAT_ENTRY_AVAILABLE");
+                System.out.println(
+                        "SINGLEPLAYER_INPUT: CHAT_ENTRY_AVAILABLE chatbox=" + chatbox);
             } else {
                 Files.deleteIfExists(flag.toPath());
-                System.out.println("SINGLEPLAYER_INPUT: CHAT_ENTRY_BLOCKED");
+                System.out.println(
+                        "SINGLEPLAYER_INPUT: CHAT_ENTRY_BLOCKED state=" + client.gameState
+                                + " chatbox=" + chatbox
+                                + " dialogue=" + dialogue
+                                + " cs=" + csChatbox);
             }
         } catch (IOException failure) {
             System.err.println("SINGLEPLAYER_INPUT: CHAT_ENTRY_FLAG_FAILED " + failure);
         }
     }
 
-    private static boolean isMounted(int child) {
+    private static int mountedInterfaceId(int child) {
         int hostId = (CHAT_TOP_INTERFACE << 16) | child;
-        return InterfaceList.openInterfaces.get(hostId) != null;
+        ComponentPointer pointer = (ComponentPointer) InterfaceList.openInterfaces.get(hostId);
+        return pointer == null ? -1 : pointer.interfaceId;
     }
 
     private static File getFlagFile() {
