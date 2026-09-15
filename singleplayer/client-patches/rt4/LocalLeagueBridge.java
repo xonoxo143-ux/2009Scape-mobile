@@ -10,22 +10,17 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * RT4-facing view of the authoritative single-player League runtime.
- *
- * Reads use direct in-process reflection. Mutating relic selections are queued
- * through the retained world command processor so the RT4 render/input thread
- * never writes player state directly.
- */
+/** RT4-facing view of the authoritative single-player League runtime. */
 public final class LocalLeagueBridge {
     private static volatile Class<?> playerClass;
     private static volatile Method getPlayerByName;
     private static volatile Method points;
     private static volatile Method completedTasks;
-    private static volatile Method unlockedRelics;
     private static volatile Method hasCompletedTask;
     private static volatile Method hasRelic;
     private static volatile Method relicDefinitions;
+    private static volatile Method selectedRelicIds;
+    private static volatile Method canSelectRelic;
     private static volatile Method relicId;
     private static volatile Method relicName;
     private static volatile Method relicDescription;
@@ -72,15 +67,37 @@ public final class LocalLeagueBridge {
         }
     }
 
+    public static boolean canSelectRelic(String id) {
+        try {
+            Object player = player();
+            if (player == null || id == null) return false;
+            return Boolean.TRUE.equals(canSelectRelic.invoke(null, player, id));
+        } catch (Throwable failure) {
+            return false;
+        }
+    }
+
     public static Set<String> completedTasks() {
-        return stringSet(completedTasks);
+        try {
+            Object player = player();
+            if (player == null) return Collections.emptySet();
+            return iterableStringSet(completedTasks.invoke(null, player));
+        } catch (Throwable failure) {
+            return Collections.emptySet();
+        }
     }
 
+    /** Only currently registered Demonic Pacts relic IDs are exposed to the UI. */
     public static Set<String> unlockedRelics() {
-        return stringSet(unlockedRelics);
+        try {
+            Object player = player();
+            if (player == null) return Collections.emptySet();
+            return iterableStringSet(selectedRelicIds.invoke(null, player));
+        } catch (Throwable failure) {
+            return Collections.emptySet();
+        }
     }
 
-    /** Authoritative relic metadata, sorted for presentation by tier then name. */
     public static List<RelicDefinition> relicDefinitions() {
         try {
             resolve();
@@ -115,34 +132,35 @@ public final class LocalLeagueBridge {
         }
     }
 
-    /** Queue a relic selection onto the authoritative world command processor. */
     public static boolean selectRelic(String id) {
+        if (!safeRelicId(id)) return false;
+        boolean queued = InProcessBootstrap.LocalCommands.commandLine("relic " + id);
+        if (queued) System.out.println("SINGLEPLAYER_LEAGUE_UI: RELIC_SELECTION_QUEUED id=" + id);
+        return queued;
+    }
+
+    public static boolean resetRelics() {
+        boolean queued = InProcessBootstrap.LocalCommands.commandLine("resetrelics");
+        if (queued) System.out.println("SINGLEPLAYER_LEAGUE_UI: RELIC_RESET_QUEUED");
+        return queued;
+    }
+
+    private static boolean safeRelicId(String id) {
         if (id == null || id.isEmpty()) return false;
         for (int i = 0; i < id.length(); i++) {
             char c = id.charAt(i);
             if (!(c == '_' || c == '-' || Character.isLetterOrDigit(c))) return false;
         }
-        boolean queued = InProcessBootstrap.LocalCommands.commandLine("relic " + id);
-        if (queued) {
-            System.out.println("SINGLEPLAYER_LEAGUE_UI: RELIC_SELECTION_QUEUED id=" + id);
-        }
-        return queued;
+        return true;
     }
 
-    private static Set<String> stringSet(Method method) {
-        try {
-            Object player = player();
-            if (player == null) return Collections.emptySet();
-            Object result = method.invoke(null, player);
-            if (!(result instanceof Iterable)) return Collections.emptySet();
-            LinkedHashSet<String> copy = new LinkedHashSet<String>();
-            for (Object value : (Iterable<?>) result) {
-                if (value != null) copy.add(value.toString());
-            }
-            return Collections.unmodifiableSet(copy);
-        } catch (Throwable failure) {
-            return Collections.emptySet();
+    private static Set<String> iterableStringSet(Object result) {
+        if (!(result instanceof Iterable)) return Collections.emptySet();
+        LinkedHashSet<String> copy = new LinkedHashSet<String>();
+        for (Object value : (Iterable<?>) result) {
+            if (value != null) copy.add(value.toString());
         }
+        return Collections.unmodifiableSet(copy);
     }
 
     private static Object player() throws Exception {
@@ -160,12 +178,14 @@ public final class LocalLeagueBridge {
         Class<?> runtime = Class.forName("core.local.LeagueRuntime");
         points = runtime.getMethod("points", playerClass);
         completedTasks = runtime.getMethod("completedTasks", playerClass);
-        unlockedRelics = runtime.getMethod("unlockedRelics", playerClass);
         hasCompletedTask = runtime.getMethod("hasCompletedTask", playerClass, String.class);
         hasRelic = runtime.getMethod("hasRelic", playerClass, String.class);
 
         Class<?> relicRegistry = Class.forName("core.local.league.LeagueRelics");
         relicDefinitions = relicRegistry.getMethod("definitions");
+        selectedRelicIds = relicRegistry.getMethod("selectedIds", playerClass);
+        canSelectRelic = relicRegistry.getMethod("canSelect", playerClass, String.class);
+
         Class<?> effect = Class.forName("core.local.league.LeagueRelicEffect");
         relicId = effect.getMethod("getId");
         relicName = effect.getMethod("getName");
