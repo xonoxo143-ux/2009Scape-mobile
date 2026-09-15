@@ -61,14 +61,6 @@
         android:layout_height="match_parent"
         android:visibility="gone" />
 
-    <!-- Lifecycle-only hook for the Android-owned game UI. It never participates
-         in the retained RT4 canvas measurement or viewport geometry. -->
-    <net.kdt.pojavlaunch.LocalGameNativeUiHost
-        android:layout_width="1dp"
-        android:layout_height="1dp"
-        android:layout_gravity="top|start"
-        android:importantForAccessibility="no" />
-
     <LinearLayout
         android:id="@+id/singleplayerLoadingOverlay"
         android:layout_width="match_parent"
