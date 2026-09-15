@@ -166,7 +166,7 @@ object LeagueRelics {
         player.setAttribute("/save:$RELOADED_EXTRA_ATTRIBUTE", "")
         LeagueItems.removeRelicItems(player)
         ExpandedLeagueItems.removeBankersNote(player)
-        DemonicPactsItems.removeAll(player)
+        DemonicPactsReset.removeItems(player)
         player.removeAttribute(LeagueModifiers.RECALL_ORIGIN)
         player.removeAttribute(LeagueModifiers.RECALL_IN_PROGRESS)
         player.removeAttribute(RELOADED_EXTRA_ATTRIBUTE)
