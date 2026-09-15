@@ -68,7 +68,7 @@ static jboolean resolve_commands(JNIEnv* env) {
 }
 
 JNIEXPORT jlong JNICALL
-Java_net_kdt_pojavlaunch_utils_JREUtils_localUiStateSequence(
+Java_net_kdt_pojavlaunch_LocalGameUiNativeBridge_stateSequence(
         JNIEnv* android_env, jclass clazz) {
     (void) android_env;
     (void) clazz;
@@ -83,7 +83,7 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_localUiStateSequence(
 }
 
 JNIEXPORT jstring JNICALL
-Java_net_kdt_pojavlaunch_utils_JREUtils_localUiStateJson(
+Java_net_kdt_pojavlaunch_LocalGameUiNativeBridge_stateJson(
         JNIEnv* android_env, jclass clazz) {
     (void) clazz;
     JNIEnv* runtime = awt_get_graphics_env();
@@ -147,7 +147,7 @@ static jboolean invoke_action(JNIEnv* android_env, JNIEnv* runtime,
 }
 
 JNIEXPORT jboolean JNICALL
-Java_net_kdt_pojavlaunch_utils_JREUtils_localUiEquipInventorySlot(
+Java_net_kdt_pojavlaunch_LocalGameUiNativeBridge_equipInventorySlot(
         JNIEnv* android_env, jclass clazz, jint slot) {
     (void) android_env;
     (void) clazz;
@@ -157,7 +157,7 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_localUiEquipInventorySlot(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_net_kdt_pojavlaunch_utils_JREUtils_localUiUnequipEquipmentSlot(
+Java_net_kdt_pojavlaunch_LocalGameUiNativeBridge_unequipEquipmentSlot(
         JNIEnv* android_env, jclass clazz, jint slot) {
     (void) android_env;
     (void) clazz;
@@ -167,7 +167,7 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_localUiUnequipEquipmentSlot(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_net_kdt_pojavlaunch_utils_JREUtils_localUiInventoryAction(
+Java_net_kdt_pojavlaunch_LocalGameUiNativeBridge_inventoryAction(
         JNIEnv* android_env, jclass clazz, jint slot, jstring action) {
     (void) clazz;
     JNIEnv* runtime = awt_get_graphics_env();
@@ -176,7 +176,7 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_localUiInventoryAction(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_net_kdt_pojavlaunch_utils_JREUtils_localUiEquipmentAction(
+Java_net_kdt_pojavlaunch_LocalGameUiNativeBridge_equipmentAction(
         JNIEnv* android_env, jclass clazz, jint slot, jstring action) {
     (void) clazz;
     JNIEnv* runtime = awt_get_graphics_env();
@@ -185,7 +185,7 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_localUiEquipmentAction(
 }
 
 JNIEXPORT void JNICALL
-Java_net_kdt_pojavlaunch_utils_JREUtils_releaseLocalUiBridge(
+Java_net_kdt_pojavlaunch_LocalGameUiNativeBridge_release(
         JNIEnv* android_env, jclass clazz) {
     JNIEnv* runtime = awt_get_graphics_env();
     if (!runtime) return;
