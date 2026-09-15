@@ -39,6 +39,13 @@ public class plugin extends Plugin {
         return Math.max(1, GameShell.canvasHeight);
     }
 
+    private static int minimumButtonTouchSize() {
+        // Scale the invisible target with the logical RT4 canvas, not Android's
+        // raw pixel density. A 503-high game gets a ~48px target while taller
+        // layouts gain a little more room without visually scaling old sprites.
+        return clamp(Math.round(clientHeight() * 0.095F), 42, 58);
+    }
+
     private static final long HIT_REGION_MAX_AGE_MS = 250L;
 
     // ComponentDraw is the reliable per-frame callback in this RT4 build.
@@ -62,6 +69,7 @@ public class plugin extends Plugin {
     private boolean announcedBlockedDrag;
     private boolean announcedDragEnd;
     private boolean announcedCancel;
+    private boolean announcedButtonAssist;
 
     @Override
     public void Init() {
@@ -253,7 +261,8 @@ public class plugin extends Plugin {
         switch (event.type) {
             case MobileGestureBridge.TAP:
                 endHeldMouseIfNecessary(event.x, event.y);
-                injectClick(event.x, event.y, false);
+                int[] assistedTap = resolveButtonTap(event.x, event.y);
+                injectClick(assistedTap[0], assistedTap[1], false);
                 announceOnce("TAP");
                 break;
 
@@ -413,24 +422,26 @@ public class plugin extends Plugin {
         API.SetCameraZoom(clamp(target, 1, 2000));
     }
 
-    private HitRegion chooseHitRegion(int x, int y) {
-        HitRegion scrollCandidate = null;
-        HitRegion blockingCandidate = null;
-
+    private List<HitRegion> recentHitRegions() {
         long now = MonotonicClock.currentTimeMillis();
         List<HitRegion> recent = new ArrayList<HitRegion>(hitRegions.size());
-
         for (Map.Entry<Component, HitRegion> entry : hitRegions.entrySet()) {
             HitRegion region = entry.getValue();
             if (now - region.lastSeenMs <= HIT_REGION_MAX_AGE_MS) {
                 recent.add(region);
             }
         }
+        recent.sort((a, b) -> Long.compare(b.lastSeenMs, a.lastSeenMs));
+        return recent;
+    }
+
+    private HitRegion chooseHitRegion(int x, int y) {
+        HitRegion scrollCandidate = null;
+        HitRegion blockingCandidate = null;
 
         // Component callbacks are refreshed continuously. Prefer the most recently
         // rendered matching region as the topmost practical target.
-        recent.sort((a, b) -> Long.compare(b.lastSeenMs, a.lastSeenMs));
-        for (HitRegion region : recent) {
+        for (HitRegion region : recentHitRegions()) {
             if (!region.contains(x, y)) {
                 continue;
             }
@@ -446,6 +457,53 @@ public class plugin extends Plugin {
         }
 
         return scrollCandidate != null ? scrollCandidate : blockingCandidate;
+    }
+
+    /**
+     * Keep the original RT4 UI pixels exactly as rendered, but make small vanilla
+     * buttons finger-friendly. The hit target follows ComponentDraw every frame,
+     * so resizable-mode tabs/minimap/chat controls remain correct at any viewport
+     * width instead of relying on fixed 765x503 coordinates.
+     */
+    private int[] resolveButtonTap(int x, int y) {
+        List<HitRegion> recent = recentHitRegions();
+
+        // Never reinterpret a tap that already landed on a real rendered control.
+        for (HitRegion region : recent) {
+            if (region.contains(x, y)) {
+                return new int[]{x, y};
+            }
+        }
+
+        int target = minimumButtonTouchSize();
+        HitRegion best = null;
+        int bestDistance = Integer.MAX_VALUE;
+
+        for (HitRegion region : recent) {
+            if (!region.isSmallVanillaButton(target)) {
+                continue;
+            }
+            if (!region.containsExpanded(x, y, target)) {
+                continue;
+            }
+
+            int distance = region.distanceSquaredTo(x, y);
+            if (best == null || distance < bestDistance) {
+                best = region;
+                bestDistance = distance;
+            }
+        }
+
+        if (best == null) {
+            return new int[]{x, y};
+        }
+
+        if (!announcedButtonAssist) {
+            announcedButtonAssist = true;
+            System.out.println(
+                    "SINGLEPLAYER_TOUCH: VANILLA_BUTTON_ASSIST target=" + target);
+        }
+        return new int[]{best.centerX(), best.centerY()};
     }
 
     private boolean isInsideWorldViewport(int x, int y) {
@@ -637,6 +695,7 @@ public class plugin extends Plugin {
         announcedBlockedDrag = false;
         announcedDragEnd = false;
         announcedCancel = false;
+        announcedButtonAssist = false;
     }
 
     private static int clamp(int value, int min, int max) {
@@ -677,6 +736,51 @@ public class plugin extends Plugin {
 
         boolean contains(int px, int py) {
             return px >= x && py >= y && px < x + width && py < y + height;
+        }
+
+        boolean isSmallVanillaButton(int target) {
+            if (inventory || genericDraggable || scrollable) {
+                return false;
+            }
+            if (width >= target && height >= target) {
+                return false;
+            }
+            if (width > target * 4 || height > target * 2) {
+                return false;
+            }
+            return component.buttonType != 0
+                    || component.clientCode != 0
+                    || component.ops != null
+                    || component.onClickRepeat != null
+                    || component.onHold != null
+                    || component.onOptionClick != null
+                    || component.aBoolean25
+                    || InterfaceList.getServerActiveProperties(component).events != 0;
+        }
+
+        boolean containsExpanded(int px, int py, int target) {
+            int padX = Math.max(0, (target - width + 1) / 2);
+            int padY = Math.max(0, (target - height + 1) / 2);
+            return px >= x - padX
+                    && py >= y - padY
+                    && px < x + width + padX
+                    && py < y + height + padY;
+        }
+
+        int distanceSquaredTo(int px, int py) {
+            int nearestX = clamp(px, x, x + width - 1);
+            int nearestY = clamp(py, y, y + height - 1);
+            int dx = px - nearestX;
+            int dy = py - nearestY;
+            return dx * dx + dy * dy;
+        }
+
+        int centerX() {
+            return clamp(x + width / 2, 0, clientWidth() - 1);
+        }
+
+        int centerY() {
+            return clamp(y + height / 2, 0, clientHeight() - 1);
         }
 
         boolean hasDraggableTargetAt(int px, int py) {
