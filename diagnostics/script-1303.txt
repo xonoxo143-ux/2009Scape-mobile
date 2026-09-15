@@ -1,0 +1,6 @@
+[23:20:42]: [INFO] Initializing cache...
+script=1303 bytes=31 instructions=3 intLocals=1 stringLocals=0 intArgs=1 stringArgs=0 switches=0 trailerPos=16
+name=
+0: op=33 arg=0
+1: op=40 arg=1304
+2: op=21 arg=0
