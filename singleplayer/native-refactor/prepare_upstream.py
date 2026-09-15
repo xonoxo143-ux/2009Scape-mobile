@@ -75,6 +75,44 @@ def install_native_overlay(repo_root: Path, server_root: Path) -> None:
         raise SystemExit(f"Native overlay tree is empty: {source_root}")
 
 
+def patch_endless_harvest_depletion(server_root: Path) -> None:
+    mining = server_root / "src/main/content/global/skill/gather/mining/MiningListener.kt"
+    replace_once(
+        mining,
+        """            // Transform ore to depleted version
+            if (!isEssence && resource!!.respawnRate != 0) {
+""",
+        """            // Endless Harvest keeps ordinary ore nodes active and immediately
+            // resumes the retained mining loop after a successful reward.
+            if (!isEssence && resource!!.respawnRate != 0 &&
+                core.local.league.EndlessHarvestHooks.preventDepletion(player)) {
+                return delayScript(player, getDelay(resource, tool))
+            }
+
+            // Transform ore to depleted version
+            if (!isEssence && resource!!.respawnRate != 0) {
+""",
+        "Endless Harvest mining persistence",
+    )
+
+    woodcutting = server_root / "src/main/content/global/skill/gather/woodcutting/WoodcuttingListener.kt"
+    replace_once(
+        woodcutting,
+        """    private fun rollDepletion(player: Player, node: Scenery, resource: WoodcuttingNode): Boolean {
+        //transform to depleted version
+""",
+        """    private fun rollDepletion(player: Player, node: Scenery, resource: WoodcuttingNode): Boolean {
+        // Endless Harvest prevents the player's successful chop from felling
+        // the resource node. Reward/XP logic remains entirely retained.
+        if (core.local.league.EndlessHarvestHooks.preventDepletion(player)) return false
+
+        //transform to depleted version
+""",
+        "Endless Harvest woodcutting persistence",
+    )
+    print("overlay: Endless Harvest resource nodes persist")
+
+
 def patch_command_boundary(server_root: Path) -> None:
     processor = server_root / "src/main/core/net/packet/PacketProcessor.kt"
     replace_once(
@@ -534,6 +572,7 @@ def main() -> None:
 
     patch_sqlite_dependency(server_root)
     install_native_overlay(repo_root, server_root)
+    patch_endless_harvest_depletion(server_root)
     patch_command_boundary(server_root)
     patch_player_debug_output(server_root)
     patch_presentation_boundary(server_root)
