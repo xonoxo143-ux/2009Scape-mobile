@@ -2,10 +2,13 @@ package LoginTimer;
 
 import plugin.Plugin;
 import plugin.annotations.PluginMeta;
+import plugin.api.MiniMenuEntry;
 import rt4.Component;
 import rt4.JagString;
 import rt4.LocalLeagueBridge;
 import rt4.LocalLeagueUiBridge;
+import rt4.LocalizedText;
+import rt4.MiniMenu;
 
 /**
  * Reuses the stock Report Abuse button as a live League-point display and
@@ -17,7 +20,7 @@ import rt4.LocalLeagueUiBridge;
 @PluginMeta(
         author = "2009Scape Mobile Single Player",
         description = "Displays authoritative League points and the local League menu.",
-        version = 1.2
+        version = 1.3
 )
 public final class plugin extends Plugin {
     private static final int REPORT_ABUSE_COMPONENT = 49217565; // 751:29
@@ -37,10 +40,10 @@ public final class plugin extends Plugin {
 
     @Override
     public void Draw(long timeDelta) {
-        // The stock LoginTimer plugin also keeps a reference to this component
-        // from ComponentDraw and mutates its text from Draw. Doing the mutation
-        // here is important because the normal interface renderer may rewrite the
-        // stock "Report Abuse" text during the component draw itself.
+        // Keep the League-point launcher text current here. The actual League
+        // surface is deliberately NOT drawn from Plugin.Draw(): RT4 invokes
+        // that callback from client-code component 1405, before the rest of the
+        // normal HUD has finished rendering.
         if (reportButton != null && reportButton.id == REPORT_ABUSE_COMPONENT) {
             int points = LocalLeagueBridge.points();
             if (points != lastPoints) {
@@ -49,8 +52,25 @@ public final class plugin extends Plugin {
             }
             reportButton.text = lastText;
         }
+    }
 
+    @Override
+    public void OnMiniMenuCreate(MiniMenuEntry[] currentEntries) {
+        if (!LocalLeagueUiBridge.isOpen()) return;
+
+        // LoginManager invokes this only after Cs1ScriptRunner has rendered the
+        // complete top-level interface tree (viewport, chat, minimap, inventory,
+        // tabs, etc.). Drawing here therefore makes League the final full-screen
+        // UI layer instead of allowing retained HUD widgets to punch through it.
         LocalLeagueUiBridge.draw();
+
+        // Prevent the retained hover/minimenu text from being painted over the
+        // League layer later in LoginManager.method1841(). League already owns
+        // all touch input while open, so only the inert Cancel entry is needed.
+        MiniMenu.size = 1;
+        MiniMenu.ops[0] = LocalizedText.CANCEL;
+        MiniMenu.opBases[0] = JagString.EMPTY;
+        MiniMenu.actions[0] = 1005;
     }
 
     @Override
