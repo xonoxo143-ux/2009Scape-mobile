@@ -106,6 +106,7 @@ jobs:
               raise SystemExit('expected JS5 build decoder not found')
           p.write_text(s.replace(old, new, 1))
           PY
+          chmod +x gradlew
           ./gradlew --no-daemon shadowJar -x test
           cat > js5server.properties <<EOF
           listen_ports=43594
