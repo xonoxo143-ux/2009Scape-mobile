@@ -1,0 +1,54 @@
+name: Inspect BoomPS client
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [singleplayer-native-refactor]
+    paths: [.github/workflows/boomps-client-inspect.yml]
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download declared BoomPS client
+        run: |
+          set -euxo pipefail
+          mkdir -p boomps-inspect/report
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o boomps-inspect/client-boomps.jar
+          sha256sum boomps-inspect/client-boomps.jar | tee boomps-inspect/report/sha256.txt
+          stat -c '%n %s bytes' boomps-inspect/client-boomps.jar | tee boomps-inspect/report/size.txt
+
+      - name: Inventory jar structure
+        run: |
+          set -euxo pipefail
+          cd boomps-inspect
+          jar tf client-boomps.jar > report/files.txt
+          unzip -p client-boomps.jar META-INF/MANIFEST.MF > report/manifest.txt || true
+          awk -F/ 'NF>2 {print $1"/"$2"/"$3}' report/files.txt | sort | uniq -c | sort -nr > report/package-counts.txt
+          grep -Ei 'mobile|touch|sidebar|viewport|canvas|gpu|opengl|lwjgl|render|scene|interface|widget|inventory|prayer|magic|equipment|plugin' report/files.txt > report/interesting-files.txt || true
+          printf '%s\n' '=== TOP PACKAGES ==='
+          head -80 report/package-counts.txt
+          printf '%s\n' '=== INTERESTING CLASSES/RESOURCES ==='
+          head -250 report/interesting-files.txt
+
+      - name: Java dependency summary
+        run: |
+          cd boomps-inspect
+          jdeps -summary client-boomps.jar > report/jdeps-summary.txt 2>&1 || true
+          jdeps --list-deps client-boomps.jar > report/jdeps-list.txt 2>&1 || true
+          cat report/jdeps-summary.txt
+          cat report/jdeps-list.txt
+
+      - name: Extract readable identifiers
+        run: |
+          cd boomps-inspect
+          strings client-boomps.jar | grep -Ei 'boomps|runelite|mobile|touch|gpu|opengl|lwjgl|plugin|sidebar|viewport|interface' | sort -u > report/strings-interesting.txt || true
+          head -300 report/strings-interesting.txt
+
+      - name: Upload inspection bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: boomps-client-inspection
+          path: boomps-inspect/**
+          retention-days: 3
