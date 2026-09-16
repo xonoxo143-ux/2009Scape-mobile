@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Boom localhost handshake capture helper.
 import argparse
 import pathlib
 import socket
