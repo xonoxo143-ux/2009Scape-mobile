@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Boom localhost handshake capture helper.
+# Boom localhost JS5 handshake and request capture helper.
 import argparse
 import pathlib
 import socket
@@ -23,21 +23,24 @@ def serve(port: int, outdir: pathlib.Path, stop: threading.Event) -> None:
             n += 1
             path = outdir / f"tcp-{port}-{n}.bin"
             print(f"ACCEPT {port} #{n} from {addr}", flush=True)
-            conn.settimeout(2.0)
+            conn.settimeout(5.0)
             data = bytearray()
+            acked = False
+            started = time.monotonic()
             try:
-                while len(data) < 65536:
+                while len(data) < 65536 and time.monotonic() - started < 12.0:
                     chunk = conn.recv(4096)
                     if not chunk:
                         break
                     data.extend(chunk)
                     print(f"RX {port} #{n}: {chunk.hex()}", flush=True)
-                    # Keep the connection open briefly. We intentionally do not
-                    # pretend to be a valid server yet; this probe only records
-                    # the client's first handshake bytes.
-                    if len(data) >= 1:
-                        time.sleep(1.0)
-                        break
+                    # Revision-239 Boom sends a 21-byte JS5 hello beginning with
+                    # 0x0f, followed by a big-endian revision and 16 extra bytes.
+                    # A zero response is the normal 'revision accepted' reply.
+                    if not acked and len(data) >= 21 and data[0] == 0x0F:
+                        conn.sendall(b"\x00")
+                        acked = True
+                        print(f"TX {port} #{n}: 00 (JS5 revision accepted)", flush=True)
             except socket.timeout:
                 pass
             path.write_bytes(data)
