@@ -74,11 +74,38 @@ jobs:
           find "$CACHE" -maxdepth 1 -type f -printf '%f %s\n' | sort | tee probe/logs/cache-files.txt
           echo "cache_path=$CACHE" | tee probe/logs/cache-path.txt
 
-      - name: Build open-source local JS5 server
+      - name: Build revision-239 local JS5 server
         run: |
           set -euxo pipefail
           git clone --depth 1 https://github.com/Jire/js5server.git probe/js5server
           cd probe/js5server
+          # Boom revision 239 sends opcode 15 + build + sixteen zero bytes.
+          # Jire/js5server targets the older 5-byte hello, so consume the
+          # modern trailing handshake bytes before switching to Js5Decoder.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/main/kotlin/org/jire/js5server/codec/init/InitDecoder.kt')
+          s = p.read_text()
+          old = '''                15 -> {
+                    length = 4
+                    state = State.PAYLOAD
+                }'''
+          new = '''                15 -> {
+                    length = 20
+                    state = State.PAYLOAD
+                }'''
+          if old not in s:
+              raise SystemExit('expected legacy JS5 hello decoder not found')
+          s = s.replace(old, new, 1)
+          old = '''                    val build = buf.readInt()
+                    out += InitRequest.Js5(build)'''
+          new = '''                    val build = buf.readInt()
+                    buf.skipBytes(16)
+                    out += InitRequest.Js5(build)'''
+          if old not in s:
+              raise SystemExit('expected JS5 build decoder not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
           ./gradlew --no-daemon shadowJar -x test
           cat > js5server.properties <<EOF
           listen_ports=43594
@@ -102,8 +129,12 @@ jobs:
           nohup java -Xms128m -Xmx1536m -jar "$JAR" > ../logs/local-js5.log 2>&1 & echo $! > ../local-js5.pid
           cd ../..
           for i in $(seq 1 30); do
-            if grep -q '43594' probe/logs/local-js5.log 2>/dev/null || ss -ltn | grep -q ':43594'; then
+            if ss -ltn | grep -q ':43594'; then
               break
+            fi
+            if ! kill -0 $(cat probe/local-js5.pid) 2>/dev/null; then
+              cat probe/logs/local-js5.log
+              exit 1
             fi
             sleep 1
           done
