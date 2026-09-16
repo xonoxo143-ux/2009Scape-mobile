@@ -79,32 +79,20 @@ jobs:
           set -euxo pipefail
           git clone --depth 1 https://github.com/Jire/js5server.git probe/js5server
           cd probe/js5server
-          # Boom revision 239 sends opcode 15 + build + sixteen zero bytes.
-          # Jire/js5server targets the older 5-byte hello, so consume the
-          # modern trailing handshake bytes before switching to Js5Decoder.
+          # Boom revision 239 sends opcode 15 + build + sixteen trailing bytes.
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/main/kotlin/org/jire/js5server/codec/init/InitDecoder.kt')
           s = p.read_text()
-          old = '''                15 -> {
-                    length = 4
-                    state = State.PAYLOAD
-                }'''
-          new = '''                15 -> {
-                    length = 20
-                    state = State.PAYLOAD
-                }'''
-          if old not in s:
-              raise SystemExit('expected legacy JS5 hello decoder not found')
-          s = s.replace(old, new, 1)
-          old = '''                    val build = buf.readInt()
-                    out += InitRequest.Js5(build)'''
-          new = '''                    val build = buf.readInt()
-                    buf.skipBytes(16)
-                    out += InitRequest.Js5(build)'''
-          if old not in s:
-              raise SystemExit('expected JS5 build decoder not found')
-          p.write_text(s.replace(old, new, 1))
+          if 'length = 4' not in s:
+              raise SystemExit('legacy JS5 hello length not found')
+          s = s.replace('length = 4', 'length = 20', 1)
+          needle = 'val build = buf.readInt()'
+          if needle not in s:
+              raise SystemExit('JS5 build read not found')
+          s = s.replace(needle, needle + '\n                    buf.skipBytes(16)', 1)
+          p.write_text(s)
+          print('patched modern JS5 hello:', 'length = 20' in s and 'skipBytes(16)' in s)
           PY
           chmod +x gradlew
           ./gradlew --no-daemon shadowJar -x test
