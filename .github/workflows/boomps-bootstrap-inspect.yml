@@ -1,0 +1,23 @@
+name: Inspect BoomPS bootstrap
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [singleplayer-native-refactor]
+    paths: [.github/workflows/boomps-bootstrap-inspect.yml]
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch bootstrap metadata
+        run: |
+          mkdir -p boomps-inspect
+          curl -fL https://bps-host.com/integrations/bootstrap.json -o boomps-inspect/bootstrap.json
+          cat boomps-inspect/bootstrap.json
+      - name: Upload bootstrap metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: boomps-bootstrap
+          path: boomps-inspect/bootstrap.json
+          retention-days: 1
