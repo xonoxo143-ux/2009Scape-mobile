@@ -51,7 +51,7 @@ jobs:
           set +e
           Xvfb :99 -screen 0 1280x800x24 > probe/logs/xvfb.log 2>&1 & echo $! > probe/xvfb.pid
           sleep 2
-          java -ea -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+          java -ea -Duser.home="$HOME" -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
             -jar probe/client-local.jar \
             --noupdate \
             --disable-telemetry \
@@ -60,7 +60,7 @@ jobs:
             --jav_config http://127.0.0.1:18080/jav_config.ws \
             > probe/logs/client.log 2>&1 &
           echo $! > probe/client.pid
-          sleep 55
+          sleep 25
           if command -v import >/dev/null 2>&1; then
             import -display :99 -window root probe/screen.png || true
           fi
@@ -74,9 +74,25 @@ jobs:
           echo '=== RELAY ===' | tee probe/logs/summary.txt
           cat probe/logs/relay.log | tee -a probe/logs/summary.txt || true
           echo '=== CLIENT IMPORTANT ===' | tee -a probe/logs/summary.txt
-          grep -Ei 'error_game|js5|game state|login|loaded|cache|127\.0\.0\.1|239' probe/logs/client.log | tail -250 | tee -a probe/logs/summary.txt || true
+          grep -Ei 'error_game|js5|game state|login|loaded|cache|127\.0\.0\.1|239|user.home' probe/logs/client.log | tail -250 | tee -a probe/logs/summary.txt || true
+          echo '=== JAVA HOME ===' | tee -a probe/logs/summary.txt
+          printf 'forced_user_home=%s\n' "${{ github.workspace }}/probe/home" | tee -a probe/logs/summary.txt
           echo '=== LOCAL FILE TREE ===' | tee -a probe/logs/summary.txt
-          find probe/home -type f -printf '%s %p\n' | sort -nr | head -400 | tee probe/logs/home-files.txt | tee -a probe/logs/summary.txt || true
+          find probe/home -type f -printf '%s %p\n' | sort -nr | head -600 | tee probe/logs/home-files.txt | tee -a probe/logs/summary.txt || true
+          echo '=== CACHE SUMMARY ===' | tee -a probe/logs/summary.txt
+          python3 - <<'PY' | tee probe/logs/cache-summary.txt | tee -a probe/logs/summary.txt
+          from pathlib import Path
+          root = Path('probe/home')
+          files = [p for p in root.rglob('*') if p.is_file()]
+          print('file_count=', len(files))
+          print('total_bytes=', sum(p.stat().st_size for p in files))
+          for d in sorted({p.parent for p in files}, key=str):
+              rel = d.relative_to(root)
+              ds = [p for p in files if p.parent == d]
+              size = sum(p.stat().st_size for p in ds)
+              if size or any(k in str(rel).lower() for k in ('jagex', 'boom', 'runelite', 'cache')):
+                  print(f'dir={rel} files={len(ds)} bytes={size}')
+          PY
           echo '=== RELAY BYTE TOTALS ===' | tee -a probe/logs/summary.txt
           python3 - <<'PY' | tee -a probe/logs/summary.txt
           from pathlib import Path
