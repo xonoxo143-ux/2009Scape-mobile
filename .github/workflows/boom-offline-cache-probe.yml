@@ -74,6 +74,32 @@ jobs:
           find "$CACHE" -maxdepth 1 -type f -printf '%f %s\n' | sort | tee probe/logs/cache-files.txt
           echo "cache_path=$CACHE" | tee probe/logs/cache-path.txt
 
+          # Preserve only the tiny master-index response metadata. The first
+          # upstream byte is the JS5 handshake success code; the next response
+          # is archive=255/group=255 with an uncompressed master index.
+          python3 - <<'PY'
+          from pathlib import Path
+          captures = sorted(Path('probe/relay').glob('*-server-to-client.bin'))
+          if not captures:
+              raise SystemExit('no JS5 server capture found')
+          data = captures[0].read_bytes()
+          if not data or data[0] != 0:
+              raise SystemExit('missing JS5 success byte')
+          response = data[1:]
+          if response[:4] != bytes.fromhex('ff00ff00'):
+              raise SystemExit(f'unexpected master response header: {response[:8].hex()}')
+          payload_len = int.from_bytes(response[4:8], 'big')
+          total_len = 8 + payload_len
+          master = response[:total_len]
+          if len(master) != total_len:
+              raise SystemExit('truncated master response')
+          Path('probe/master-response.bin').write_bytes(master)
+          Path('probe/logs/master-response.txt').write_text(
+              f'bytes={len(master)}\nhex={master.hex()}\n'
+          )
+          print('captured master response bytes=', len(master))
+          PY
+
       - name: Build revision-239 local JS5 server
         run: |
           set -euxo pipefail
@@ -83,6 +109,7 @@ jobs:
           # while this JS5 repo still pins the older 1.9 compiler.
           sed -i 's/kotlin("jvm").version("1.9.23")/kotlin("jvm").version("2.2.10")/' settings.gradle.kts
           grep 'kotlin("jvm")' settings.gradle.kts
+
           # Boom revision 239 sends opcode 15 + build + sixteen trailing bytes.
           python3 - <<'PY'
           from pathlib import Path
@@ -97,7 +124,24 @@ jobs:
           s = s.replace(needle, needle + '\n                    buf.skipBytes(16)', 1)
           p.write_text(s)
           print('patched modern JS5 hello:', 'length = 20' in s and 'skipBytes(16)' in s)
+
+          # The standard disk cache does not store the master-index response
+          # itself. For this compatibility proof, use the exact 208-byte master
+          # metadata captured during seeding, while all archive groups still
+          # come from DiskStore locally.
+          p = Path('src/main/kotlin/org/jire/js5server/Openrs2Js5GroupRepository.kt')
+          s = p.read_text()
+          if 'import java.nio.file.Path' not in s:
+              raise SystemExit('Path import not found')
+          s = s.replace('import java.nio.file.Path', 'import java.nio.file.Files\nimport java.nio.file.Path', 1)
+          needle = '    private fun encodeMasterIndex(masterIndex: Js5MasterIndex) {\n'
+          if needle not in s:
+              raise SystemExit('encodeMasterIndex function not found')
+          injected = '''    private fun encodeMasterIndex(masterIndex: Js5MasterIndex) {\n        val capturedMaster = System.getenv("BOOM_MASTER_RESPONSE")\n        if (!capturedMaster.isNullOrBlank()) {\n            val response = Unpooled.wrappedBuffer(Files.readAllBytes(Path.of(capturedMaster)))\n            map[bitpack(ARCHIVESET, ARCHIVESET)] = response\n            logger.info("Using captured Boom master index ({} bytes)", response.readableBytes())\n            return\n        }\n'''
+          s = s.replace(needle, injected, 1)
+          p.write_text(s)
           PY
+
           chmod +x gradlew
           ./gradlew --no-daemon shadowJar -x test
           cat > js5server.properties <<EOF
@@ -119,7 +163,8 @@ jobs:
           cd probe/js5server
           JAR=$(find build/libs -maxdepth 1 -name '*-all.jar' -print -quit)
           test -n "$JAR"
-          nohup java -Xms128m -Xmx1536m -jar "$JAR" > ../logs/local-js5.log 2>&1 & echo $! > ../local-js5.pid
+          nohup env BOOM_MASTER_RESPONSE="${GITHUB_WORKSPACE}/probe/master-response.bin" \
+            java -Xms128m -Xmx1536m -jar "$JAR" > ../logs/local-js5.log 2>&1 & echo $! > ../local-js5.pid
           cd ../..
           for i in $(seq 1 30); do
             if ss -ltn | grep -q ':43594'; then
@@ -155,7 +200,7 @@ jobs:
           kill $(cat probe/local-js5.pid) 2>/dev/null || true
           echo "offline_cache_ready=$ready" | tee probe/logs/offline-result.txt
           grep -Ei 'Game state changed|Cache is ready|error_game_js5|127\.0\.0\.1' probe/logs/offline-client.log | tail -100 | tee probe/logs/offline-important.txt || true
-          tail -100 probe/logs/local-js5.log | tee probe/logs/local-js5-tail.txt || true
+          tail -120 probe/logs/local-js5.log | tee probe/logs/local-js5-tail.txt || true
           test "$ready" = 1
 
       - name: Upload diagnostics only
