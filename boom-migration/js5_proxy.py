@@ -40,8 +40,13 @@ def relay_pair(client: socket.socket, upstream_host: str, upstream_port: int,
         sockets = [client, upstream]
         try:
             while sockets and time.monotonic() - started < 120:
-                readable, _, exceptional = select.select(sockets, [], sockets, 1.0)
+                try:
+                    readable, _, exceptional = select.select(sockets, [], sockets, 1.0)
+                except OSError as exc:
+                    log_line(log, f"SELECT_ERROR {type(exc).__name__}: {exc}")
+                    break
                 if exceptional:
+                    log_line(log, "SOCKET_EXCEPTION")
                     break
                 if not readable:
                     continue
@@ -50,7 +55,14 @@ def relay_pair(client: socket.socket, upstream_host: str, upstream_port: int,
                         data = src.recv(65536)
                     except BlockingIOError:
                         continue
+                    except (ConnectionResetError, OSError) as exc:
+                        label = "CLIENT" if src is client else "UPSTREAM"
+                        log_line(log, f"{label}_RESET {type(exc).__name__}: {exc}")
+                        sockets = []
+                        break
                     if not data:
+                        label = "CLIENT" if src is client else "UPSTREAM"
+                        log_line(log, f"{label}_EOF")
                         sockets = []
                         break
                     if src is client:
@@ -70,6 +82,10 @@ def relay_pair(client: socket.socket, upstream_host: str, upstream_port: int,
                             view = view[sent:]
                         except BlockingIOError:
                             time.sleep(0.001)
+                        except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+                            log_line(log, f"SEND_ERROR {type(exc).__name__}: {exc}")
+                            sockets = []
+                            break
         finally:
             log_line(log, f"CLOSE c2s={totals[client]} s2c={totals[upstream]}")
             try:
