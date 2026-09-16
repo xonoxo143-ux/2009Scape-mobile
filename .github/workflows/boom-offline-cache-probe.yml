@@ -1,0 +1,144 @@
+name: Prove Boom cache boot from localhost only
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [boom-singleplayer-pivot]
+    paths:
+      - .github/workflows/boom-offline-cache-probe.yml
+
+jobs:
+  offline-cache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Prepare Boom client and isolated home
+        run: |
+          set -euxo pipefail
+          mkdir -p probe/web probe/logs probe/relay probe/home
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o probe/client-boomps.jar
+          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o probe/official-jav_config.ws
+          python3 boom-migration/patch_local_properties.py probe/client-boomps.jar probe/client-local.jar --host 127.0.0.1 --port 43594 > probe/logs/patched-properties.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path('probe/official-jav_config.ws').read_text()
+          out = []
+          for line in src.splitlines():
+              if line.startswith('codebase='):
+                  line = 'codebase=http://127.0.0.1:18080/'
+              line = line.replace('world1.boom-ps.com', '127.0.0.1')
+              out.append(line)
+          Path('probe/web/jav_config.ws').write_text('\n'.join(out) + '\n')
+          PY
+
+      - name: Seed standard cache through localhost relay
+        env:
+          HOME: ${{ github.workspace }}/probe/home
+          DISPLAY: :99
+        run: |
+          set -euxo pipefail
+          nohup python3 -m http.server 18080 --bind 127.0.0.1 --directory probe/web > probe/logs/http.log 2>&1 & echo $! > probe/http.pid
+          nohup python3 boom-migration/js5_proxy.py --out probe/relay > probe/logs/seed-relay.log 2>&1 & echo $! > probe/relay.pid
+          Xvfb :99 -screen 0 1280x800x24 > probe/logs/xvfb.log 2>&1 & echo $! > probe/xvfb.pid
+          sleep 2
+          set +e
+          java -ea -Duser.home="$HOME" -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -jar probe/client-local.jar --noupdate --disable-telemetry --safe-mode --debug \
+            --jav_config http://127.0.0.1:18080/jav_config.ws \
+            > probe/logs/seed-client.log 2>&1 &
+          SEED_PID=$!
+          set -e
+          ready=0
+          for i in $(seq 1 45); do
+            if grep -q 'Cache is ready' probe/logs/seed-client.log 2>/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          kill "$SEED_PID" 2>/dev/null || true
+          kill $(cat probe/relay.pid) 2>/dev/null || true
+          sleep 2
+          test "$ready" = 1
+          CACHE="$HOME/.boomps-local/jagexcache/oldschool/LIVE"
+          test -s "$CACHE/main_file_cache.dat2"
+          test -s "$CACHE/main_file_cache.idx255"
+          du -sb "$CACHE" | tee probe/logs/cache-size.txt
+          find "$CACHE" -maxdepth 1 -type f -printf '%f %s\n' | sort | tee probe/logs/cache-files.txt
+          echo "cache_path=$CACHE" | tee probe/logs/cache-path.txt
+
+      - name: Build open-source local JS5 server
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/Jire/js5server.git probe/js5server
+          cd probe/js5server
+          ./gradlew --no-daemon shadowJar -x test
+          cat > js5server.properties <<EOF
+          listen_ports=43594
+          version=239
+          check_version=true
+          support_prefetch=true
+          cache_path=${GITHUB_WORKSPACE}/probe/home/.boomps-local/jagexcache/oldschool/LIVE
+          group_repository=org.jire.js5server.Openrs2Js5GroupRepository
+          EOF
+          ls -lh build/libs | tee ../logs/js5-build.txt
+
+      - name: Relaunch Boom with Boom JS5 disconnected
+        env:
+          HOME: ${{ github.workspace }}/probe/home
+          DISPLAY: :99
+        run: |
+          set -euxo pipefail
+          cd probe/js5server
+          JAR=$(find build/libs -maxdepth 1 -name '*-all.jar' -print -quit)
+          test -n "$JAR"
+          nohup java -Xms128m -Xmx1536m -jar "$JAR" > ../logs/local-js5.log 2>&1 & echo $! > ../local-js5.pid
+          cd ../..
+          for i in $(seq 1 30); do
+            if grep -q '43594' probe/logs/local-js5.log 2>/dev/null || ss -ltn | grep -q ':43594'; then
+              break
+            fi
+            sleep 1
+          done
+          ss -ltn | grep ':43594' | tee probe/logs/local-js5-listen.txt
+          : > probe/logs/offline-client.log
+          set +e
+          java -ea -Duser.home="$HOME" -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -jar probe/client-local.jar --noupdate --disable-telemetry --safe-mode --debug \
+            --jav_config http://127.0.0.1:18080/jav_config.ws \
+            > probe/logs/offline-client.log 2>&1 &
+          OFFLINE_PID=$!
+          set -e
+          ready=0
+          for i in $(seq 1 40); do
+            if grep -q 'Cache is ready' probe/logs/offline-client.log 2>/dev/null; then
+              ready=1
+              break
+            fi
+            if grep -q 'error_game_js5' probe/logs/offline-client.log 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill "$OFFLINE_PID" 2>/dev/null || true
+          kill $(cat probe/local-js5.pid) 2>/dev/null || true
+          echo "offline_cache_ready=$ready" | tee probe/logs/offline-result.txt
+          grep -Ei 'Game state changed|Cache is ready|error_game_js5|127\.0\.0\.1' probe/logs/offline-client.log | tail -100 | tee probe/logs/offline-important.txt || true
+          tail -100 probe/logs/local-js5.log | tee probe/logs/local-js5-tail.txt || true
+          test "$ready" = 1
+
+      - name: Upload diagnostics only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-offline-cache-proof
+          path: probe/logs/**
+          if-no-files-found: warn
+          retention-days: 3
