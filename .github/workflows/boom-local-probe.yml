@@ -1,0 +1,102 @@
+name: Probe Boom client against localhost
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [boom-singleplayer-pivot]
+    paths:
+      - .github/workflows/boom-local-probe.yml
+      - boom-migration/**
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare Boom client and configs
+        run: |
+          set -euxo pipefail
+          mkdir -p probe/web probe/logs probe/captures probe/home
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o probe/client-boomps.jar
+          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o probe/official-jav_config.ws
+          python3 boom-migration/patch_local_properties.py probe/client-boomps.jar probe/client-local.jar --host 127.0.0.1 --port 43594 > probe/logs/patched-properties.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path('probe/official-jav_config.ws').read_text()
+          out = []
+          for line in src.splitlines():
+              if line.startswith('codebase='):
+                  line = 'codebase=http://127.0.0.1:18080/'
+              line = line.replace('world1.boom-ps.com', '127.0.0.1')
+              out.append(line)
+          Path('probe/web/jav_config.ws').write_text('\n'.join(out) + '\n')
+          PY
+          echo '=== OFFICIAL CONFIG ===' | tee probe/logs/configs.txt
+          cat probe/official-jav_config.ws | tee -a probe/logs/configs.txt
+          echo '=== LOCAL CONFIG ===' | tee -a probe/logs/configs.txt
+          cat probe/web/jav_config.ws | tee -a probe/logs/configs.txt
+
+      - name: Start local config and socket probes
+        run: |
+          set -euxo pipefail
+          nohup python3 -m http.server 18080 --bind 127.0.0.1 --directory probe/web > probe/logs/http.log 2>&1 & echo $! > probe/http.pid
+          nohup python3 boom-migration/local_probe.py --out probe/captures --ports 43594 > probe/logs/tcp.log 2>&1 & echo $! > probe/tcp.pid
+          sleep 2
+          cat probe/logs/tcp.log
+
+      - name: Launch client in isolated X session
+        env:
+          HOME: ${{ github.workspace }}/probe/home
+        run: |
+          set +e
+          timeout 35s xvfb-run -a java -ea -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -jar probe/client-local.jar \
+            --noupdate \
+            --disable-telemetry \
+            --safe-mode \
+            --debug \
+            --jav_config http://127.0.0.1:18080/jav_config.ws \
+            > probe/logs/client.log 2>&1
+          status=$?
+          echo "client_exit=$status" | tee probe/logs/status.txt
+          sleep 2
+          echo '=== CLIENT LOG ==='
+          tail -250 probe/logs/client.log || true
+          echo '=== TCP PROBE ==='
+          cat probe/logs/tcp.log || true
+          echo '=== HTTP PROBE ==='
+          cat probe/logs/http.log || true
+          echo '=== CAPTURES ==='
+          find probe/captures -type f -maxdepth 1 -print -exec xxd -g1 {} \; || true
+          exit 0
+
+      - name: Summarize local redirect
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          captures = sorted(Path('probe/captures').glob('*.bin'))
+          lines = [f'capture_count={len(captures)}']
+          for p in captures:
+              b = p.read_bytes()
+              lines.append(f'{p.name}: {len(b)} bytes: {b.hex()}')
+          client = Path('probe/logs/client.log').read_text(errors='replace') if Path('probe/logs/client.log').exists() else ''
+          for needle in ('127.0.0.1', 'js5', 'JS5', 'connect', '43594', '239'):
+              hits = [line for line in client.splitlines() if needle in line]
+              lines.append(f'[{needle}] hits={len(hits)}')
+              lines.extend(hits[-20:])
+          Path('probe/logs/summary.txt').write_text('\n'.join(lines) + '\n')
+          print('\n'.join(lines))
+          PY
+
+      - name: Upload probe report only
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-local-probe
+          path: |
+            probe/logs/**
+            probe/captures/**
+            probe/official-jav_config.ws
+            probe/web/jav_config.ws
+          retention-days: 3
