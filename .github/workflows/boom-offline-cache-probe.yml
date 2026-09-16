@@ -79,6 +79,10 @@ jobs:
           set -euxo pipefail
           git clone --depth 1 https://github.com/Jire/js5server.git probe/js5server
           cd probe/js5server
+          # Current OpenRS2 snapshots are compiled with Kotlin 2.2 metadata,
+          # while this JS5 repo still pins the older 1.9 compiler.
+          sed -i 's/kotlin("jvm").version("1.9.23")/kotlin("jvm").version("2.2.10")/' settings.gradle.kts
+          grep 'kotlin("jvm")' settings.gradle.kts
           # Boom revision 239 sends opcode 15 + build + sixteen trailing bytes.
           python3 - <<'PY'
           from pathlib import Path
