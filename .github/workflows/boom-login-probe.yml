@@ -21,7 +21,7 @@ jobs:
       - name: Install runtime and UI automation helpers
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb xauth xdotool imagemagick openjdk-17-jre-headless
+          sudo apt-get install -y -qq xvfb xauth xdotool imagemagick openbox openjdk-17-jre-headless
 
       - name: Download and patch Boom client
         run: |
@@ -60,36 +60,50 @@ jobs:
           Xvfb :99 -screen 0 1280x900x24 > boom-local/login-report/xvfb.log 2>&1 &
           echo $! > boom-local/login-report/xvfb.pid
           export DISPLAY=:99
+          sleep 1
+          openbox > boom-local/login-report/openbox.log 2>&1 &
+          echo $! > boom-local/login-report/openbox.pid
+
           HOME=/tmp/boom-home java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
             -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
             > boom-local/login-report/client.log 2>&1 &
           echo $! > boom-local/login-report/client.pid
 
-          # Give the JS5 proxy time to populate the normal cache and reach LOGIN_SCREEN.
           for i in $(seq 1 45); do
             if grep -q 'Cache is ready' boom-local/login-report/client.log 2>/dev/null; then break; fi
             sleep 1
           done
+          # The first-run terms dialog is rendered a moment after LOGIN_SCREEN/cache readiness.
+          sleep 4
 
-          import -window root boom-local/login-report/before-login.png 2>/dev/null || true
+          import -window root boom-local/login-report/terms-screen.png 2>/dev/null || true
           WIN=$(xdotool search --name 'BoomPS' 2>/dev/null | head -1)
           echo "window=$WIN" | tee boom-local/login-report/window.txt
           if [ -n "$WIN" ]; then
-            xdotool windowactivate --sync "$WIN"
-            # Standard OSRS/RuneLite login: Enter selects/advances Existing User on many builds.
-            xdotool key --window "$WIN" Return
+            xdotool windowactivate --sync "$WIN" || true
+            # 1280x900 runner: Boom canvas sits at roughly x=241..1039, y=198..703.
+            # First-run Terms dialog Accept button center is approximately (544, 511).
+            xdotool mousemove 544 511 click 1
+            sleep 3
+            import -window root boom-local/login-report/after-accept.png 2>/dev/null || true
+
+            # Try the standard Enter -> credentials path now that the gate is gone.
+            xdotool key Return
             sleep 1
-            xdotool type --window "$WIN" --delay 35 'localprobe@example.invalid'
-            xdotool key --window "$WIN" Tab
-            xdotool type --window "$WIN" --delay 35 'localprobe'
-            xdotool key --window "$WIN" Return
+            import -window root boom-local/login-report/after-enter.png 2>/dev/null || true
+            xdotool type --delay 25 'localprobe@example.invalid'
+            xdotool key Tab
+            xdotool type --delay 25 'localprobe'
+            xdotool key Return
             sleep 8
           fi
+
           import -window root boom-local/login-report/after-login.png 2>/dev/null || true
           grep -E 'Cache is ready|LOGIN_SCREEN|LOGGING_IN|CONNECTION_LOST|HOPPING' boom-local/login-report/client.log | tail -100 > boom-local/login-report/state-summary.txt || true
           grep -E 'LOGIN_' boom-local/login-report/proxy.log > boom-local/login-report/login-summary.txt || true
           kill $(cat boom-local/login-report/client.pid) 2>/dev/null || true
           kill $(cat boom-local/login-report/proxy.pid) 2>/dev/null || true
+          kill $(cat boom-local/login-report/openbox.pid) 2>/dev/null || true
           exit 0
 
       - name: Print login capture summary
