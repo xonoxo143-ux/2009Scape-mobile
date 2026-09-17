@@ -1,0 +1,65 @@
+name: Observe BoomPS prelogin cache
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [boom-local-singleplayer]
+    paths:
+      - '.github/workflows/boom-cache-observe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openjdk-17-jre-headless
+
+      - name: Download declared BoomPS client
+        run: |
+          mkdir -p boom-cache-report
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o /tmp/client-boomps.jar
+          sha256sum /tmp/client-boomps.jar | tee boom-cache-report/client.sha256
+
+      - name: Snapshot home before launch
+        run: |
+          find "$HOME" -xdev -type f -printf '%p\t%s\n' 2>/dev/null | sort > /tmp/home-before.txt
+
+      - name: Launch normal client briefly to populate public prelogin cache
+        continue-on-error: true
+        run: |
+          set +e
+          timeout 35s xvfb-run -a java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp /tmp/client-boomps.jar net.runelite.client.RuneLite --debug \
+            > boom-cache-report/client.log 2>&1
+          echo $? > boom-cache-report/client.exit
+          set -e
+
+      - name: Inventory cache-like files only
+        if: always()
+        run: |
+          find "$HOME" -xdev -type f -printf '%p\t%s\n' 2>/dev/null | sort > /tmp/home-after.txt
+          comm -13 /tmp/home-before.txt /tmp/home-after.txt > boom-cache-report/new-files.txt || true
+          find "$HOME" -xdev -type f \( -name 'main_file_cache.dat2' -o -name 'main_file_cache.idx*' -o -name '*.dat2' -o -name '*.idx255' -o -path '*jagexcache*' -o -path '*boomps*' \) \
+            -printf '%p\t%s\n' 2>/dev/null | sort > boom-cache-report/cache-files.txt || true
+          echo '=== CACHE FILES ==='
+          cat boom-cache-report/cache-files.txt || true
+          echo '=== NEW FILES MATCHING CACHE/RUNELITE ==='
+          grep -Ei 'cache|boom|runelite|jagex' boom-cache-report/new-files.txt | head -300 || true
+          echo '=== CLIENT CACHE-RELATED LOGS ==='
+          grep -Ei 'cache|js5|archive|index|revision|gamepack' boom-cache-report/client.log | tail -300 || true
+
+      - name: Upload metadata only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-cache-observation
+          path: boom-cache-report/**
+          retention-days: 3
