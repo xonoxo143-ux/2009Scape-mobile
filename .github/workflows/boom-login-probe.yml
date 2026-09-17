@@ -1,0 +1,115 @@
+name: Capture BoomPS local login handshake
+
+on:
+  push:
+    branches: [boom-local-singleplayer]
+    paths:
+      - 'boom-local/login_probe_proxy.py'
+      - '.github/workflows/boom-login-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  login-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime and UI automation helpers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth xdotool imagemagick openjdk-17-jre-headless
+
+      - name: Download and patch Boom client
+        run: |
+          set -euxo pipefail
+          mkdir -p boom-local/work boom-local/login-report /tmp/boom-http /tmp/boom-home
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o boom-local/work/client-boomps.jar
+          chmod +x boom-local/patch-client-local.sh
+          boom-local/patch-client-local.sh boom-local/work/client-boomps.jar
+
+      - name: Serve local jav_config
+        run: |
+          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o /tmp/boom-http/jav_config.ws
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/boom-http/jav_config.ws')
+          text=p.read_text(errors='replace').replace('world1.boom-ps.com','127.0.0.1')
+          lines=[]
+          for line in text.splitlines():
+              if line.startswith('codebase='):
+                  line='codebase=http://127.0.0.1:8080/'
+              lines.append(line)
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          (cd /tmp/boom-http && python3 -m http.server 8080 --bind 127.0.0.1 > "$GITHUB_WORKSPACE/boom-local/login-report/http.log" 2>&1 &)
+
+      - name: Start JS5 proxy plus local-only login capture
+        run: |
+          python3 boom-local/login_probe_proxy.py --out boom-local/login-report > boom-local/login-report/proxy.stdout 2>&1 &
+          echo $! > boom-local/login-report/proxy.pid
+          sleep 2
+
+      - name: Launch client under Xvfb and drive login UI
+        continue-on-error: true
+        run: |
+          set +e
+          Xvfb :99 -screen 0 1280x900x24 > boom-local/login-report/xvfb.log 2>&1 &
+          echo $! > boom-local/login-report/xvfb.pid
+          export DISPLAY=:99
+          HOME=/tmp/boom-home java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
+            > boom-local/login-report/client.log 2>&1 &
+          echo $! > boom-local/login-report/client.pid
+
+          # Give the JS5 proxy time to populate the normal cache and reach LOGIN_SCREEN.
+          for i in $(seq 1 45); do
+            if grep -q 'Cache is ready' boom-local/login-report/client.log 2>/dev/null; then break; fi
+            sleep 1
+          done
+
+          import -window root boom-local/login-report/before-login.png 2>/dev/null || true
+          WIN=$(xdotool search --name 'BoomPS' 2>/dev/null | head -1)
+          echo "window=$WIN" | tee boom-local/login-report/window.txt
+          if [ -n "$WIN" ]; then
+            xdotool windowactivate --sync "$WIN"
+            # Standard OSRS/RuneLite login: Enter selects/advances Existing User on many builds.
+            xdotool key --window "$WIN" Return
+            sleep 1
+            xdotool type --window "$WIN" --delay 35 'localprobe@example.invalid'
+            xdotool key --window "$WIN" Tab
+            xdotool type --window "$WIN" --delay 35 'localprobe'
+            xdotool key --window "$WIN" Return
+            sleep 8
+          fi
+          import -window root boom-local/login-report/after-login.png 2>/dev/null || true
+          grep -E 'Cache is ready|LOGIN_SCREEN|LOGGING_IN|CONNECTION_LOST|HOPPING' boom-local/login-report/client.log | tail -100 > boom-local/login-report/state-summary.txt || true
+          grep -E 'LOGIN_' boom-local/login-report/proxy.log > boom-local/login-report/login-summary.txt || true
+          kill $(cat boom-local/login-report/client.pid) 2>/dev/null || true
+          kill $(cat boom-local/login-report/proxy.pid) 2>/dev/null || true
+          exit 0
+
+      - name: Print login capture summary
+        if: always()
+        run: |
+          echo '=== LOGIN PROXY ==='
+          cat boom-local/login-report/proxy.log 2>/dev/null | tail -120 || true
+          echo '=== CLIENT STATE ==='
+          cat boom-local/login-report/state-summary.txt 2>/dev/null || true
+          if [ -s boom-local/login-report/login-after-seed.bin ]; then
+            echo 'LOGIN_CAPTURE=PASS'
+            wc -c boom-local/login-report/login-after-seed.bin
+          else
+            echo 'LOGIN_CAPTURE=NO_PACKET'
+          fi
+
+      - name: Upload login probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-login-probe
+          path: boom-local/login-report/**
+          retention-days: 3
