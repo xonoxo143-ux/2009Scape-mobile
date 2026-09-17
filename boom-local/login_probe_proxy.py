@@ -3,9 +3,13 @@ import argparse
 import binascii
 import select
 import socket
+import struct
 import threading
 import time
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+KEY_FILE = ROOT / 'local-rsa-test-key.properties'
 
 
 def relay(a, b, log):
@@ -23,6 +27,61 @@ def relay(a, b, log):
                 other.sendall(data)
     except OSError as e:
         log(f'RELAY_END {e!r}')
+
+
+def load_local_rsa():
+    props = {}
+    for raw in KEY_FILE.read_text(encoding='utf-8').splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        props[k.strip()] = v.strip()
+    return int(props['modulus_decimal']), int(props['private_exponent_decimal'])
+
+
+def decrypt_login_rsa(packet: bytes, out: Path, log):
+    # Captured revision-239 layout before the XTEA-encrypted body:
+    # u8 loginOpcode, u16 payloadLength, u32 revision, u32 subRevision,
+    # u32 clientRevision, u8 clientType, u24 reserved, u8 rsaLength, rsaBytes...
+    if len(packet) < 20:
+        log(f'LOGIN_PARSE_TOO_SHORT len={len(packet)}')
+        return
+    opcode = packet[0]
+    payload_len = int.from_bytes(packet[1:3], 'big')
+    revision = int.from_bytes(packet[3:7], 'big')
+    sub_revision = int.from_bytes(packet[7:11], 'big')
+    client_revision = int.from_bytes(packet[11:15], 'big')
+    client_type = packet[15]
+    rsa_len = packet[19]
+    rsa_start = 20
+    rsa_end = rsa_start + rsa_len
+    if rsa_end > len(packet):
+        log(f'LOGIN_RSA_TRUNCATED rsa_len={rsa_len} packet_len={len(packet)}')
+        return
+
+    modulus, private_exponent = load_local_rsa()
+    cipher = packet[rsa_start:rsa_end]
+    cipher_int = int.from_bytes(cipher, 'big', signed=False)
+    plain_int = pow(cipher_int, private_exponent, modulus)
+    plain = plain_int.to_bytes(max(1, (plain_int.bit_length() + 7) // 8), 'big')
+    (out / 'login-rsa-plain.bin').write_bytes(plain)
+
+    printable = ''.join(chr(b) if 32 <= b < 127 else '.' for b in plain)
+    log(
+        f'LOGIN_HEADER opcode={opcode} payload_len={payload_len} revision={revision} '
+        f'sub_revision={sub_revision} client_revision={client_revision} client_type={client_type} '
+        f'rsa_len={rsa_len} xtea_body_len={len(packet)-rsa_end}'
+    )
+    log(f'LOGIN_RSA_PLAIN len={len(plain)} hex={plain.hex()} ascii={printable}')
+
+    if len(plain) >= 25 and plain[0] == 1:
+        xtea = struct.unpack('>4I', plain[1:17])
+        seed = int.from_bytes(plain[17:25], 'big')
+        log('LOGIN_XTEA_KEYS ' + ','.join(f'0x{x:08x}' for x in xtea))
+        log(f'LOGIN_SERVER_SEED 0x{seed:016x}')
+    else:
+        log('LOGIN_RSA_LAYOUT_UNEXPECTED')
 
 
 def main():
@@ -90,7 +149,6 @@ def main():
                             break
                         chunks.append(d)
                         total += len(d)
-                        # Login packet has a length prefix; a short idle is enough for capture.
                         if total >= 3:
                             time.sleep(0.25)
                             c.settimeout(0.5)
@@ -99,6 +157,11 @@ def main():
                 data = b''.join(chunks)
                 (out / 'login-after-seed.bin').write_bytes(data)
                 log(f'LOGIN_AFTER_SEED len={len(data)} hex={data.hex()}')
+                if data:
+                    try:
+                        decrypt_login_rsa(data, out, log)
+                    except Exception as e:
+                        log(f'LOGIN_RSA_DECRYPT_ERROR {type(e).__name__}: {e}')
                 return
 
             # Unknown traffic is recorded rather than forwarded so we don't accidentally
