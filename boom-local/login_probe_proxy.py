@@ -8,6 +8,8 @@ import threading
 import time
 from pathlib import Path
 
+from rev239_initial_world import build_initial_frame
+
 ROOT = Path(__file__).resolve().parent
 KEY_FILE = ROOT / 'local-rsa-test-key.properties'
 MASK32 = 0xFFFFFFFF
@@ -43,12 +45,6 @@ def load_local_rsa():
 
 
 def xtea_decrypt(data: bytes, keys):
-    """Match the game client's in-place XTEA range operation.
-
-    The client encrypts floor(length/8) complete blocks and leaves any trailing
-    bytes untouched. Revision-239's observed login tail is 276 bytes, so the
-    final four bytes are intentionally not transformed.
-    """
     out = bytearray(data)
     block_end = (len(out) // 8) * 8
     for off in range(0, block_end, 8):
@@ -72,9 +68,6 @@ def cstring(data: bytes, start=0):
 
 
 def decrypt_login(packet: bytes, out: Path, log):
-    # Captured revision-239 layout before the XTEA-encrypted body:
-    # u8 loginOpcode, u16 payloadLength, u32 revision, u32 subRevision,
-    # u32 clientRevision, u8 clientType, u24 reserved, u8 rsaLength, rsaBytes...
     if len(packet) < 20:
         log(f'LOGIN_PARSE_TOO_SHORT len={len(packet)}')
         return None
@@ -115,8 +108,7 @@ def decrypt_login(packet: bytes, out: Path, log):
     log('LOGIN_XTEA_KEYS ' + ','.join(f'0x{x:08x}' for x in keys))
     log(f'LOGIN_SERVER_SEED 0x{seed:016x}')
 
-    tail = packet[rsa_end:]
-    tail_plain = xtea_decrypt(tail, keys)
+    tail_plain = xtea_decrypt(packet[rsa_end:], keys)
     (out / 'login-xtea-plain.bin').write_bytes(tail_plain)
     tail_ascii = ''.join(chr(b) if 32 <= b < 127 else '.' for b in tail_plain)
     username, pos = cstring(tail_plain, 0)
@@ -126,20 +118,17 @@ def decrypt_login(packet: bytes, out: Path, log):
 
 
 def success_metadata():
-    # After response code 2, revision 239 requires a length byte of 37 followed
-    # by 37 bytes. The client consumes 34 fields and tolerates three reserved
-    # trailing bytes. Keep all optional/account state disabled for local play.
     meta = bytearray()
-    meta += b'\x00'                 # no account-token persistence
-    meta += b'\x00\x00\x00\x00' # ignored token bytes
-    meta += b'\x00'                 # staff/mod level-like byte
-    meta += b'\x00'                 # boolean account flag
-    meta += b'\x00\x01'           # local player index = 1
-    meta += b'\x00'                 # world/account state byte
-    meta += b'\x00' * 8             # account hash/id
-    meta += b'\x00' * 8             # secondary long
-    meta += b'\x00' * 8             # tertiary long
-    meta += b'\x00' * 3             # reserved/unused in observed parser
+    meta += b'\x00'
+    meta += b'\x00\x00\x00\x00'
+    meta += b'\x00'
+    meta += b'\x00'
+    meta += b'\x00\x01'
+    meta += b'\x00'
+    meta += b'\x00' * 8
+    meta += b'\x00' * 8
+    meta += b'\x00' * 8
+    meta += b'\x00' * 3
     assert len(meta) == 37
     return bytes(meta)
 
@@ -176,9 +165,6 @@ def main():
             op = first[0]
             log(f'CONNECT {addr[0]}:{addr[1]} first={binascii.hexlify(first).decode()} op={op}')
 
-            # JS5 handshake begins with opcode 15. Forward these connections unchanged
-            # for the protocol lab; the keyed-cache workflow separately proves this can
-            # be served entirely offline.
             if op == 15:
                 try:
                     upstream = socket.create_connection((args.upstream_host, args.upstream_port), timeout=10)
@@ -191,9 +177,6 @@ def main():
                 log('JS5_PROXY_END')
                 return
 
-            # Modern OSRS login initial request is opcode 14. Keep it local, return
-            # success + deterministic seed, decrypt the client's request, then advance
-            # it through the revision-239 login-success metadata state.
             if op == 14:
                 initial = c.recv(64)
                 log(f'LOGIN_INITIAL len={len(initial)} hex={initial.hex()}')
@@ -229,22 +212,26 @@ def main():
                 if keys is None:
                     return
 
-                response = b'\x02' + bytes([37]) + success_metadata()
-                c.sendall(response)
-                log(f'LOGIN_SUCCESS_METADATA_SENT len={len(response)} hex={response.hex()}')
+                metadata = b'\x02' + bytes([37]) + success_metadata()
+                first_world = build_initial_frame(keys, packet_id=0, tile_x=3222, tile_y=3218)
+                (out / 'first-world-frame.bin').write_bytes(first_world)
+                c.sendall(metadata + first_world)
+                log(f'LOGIN_SUCCESS_METADATA_SENT len={len(metadata)} hex={metadata.hex()}')
+                log(
+                    f'FIRST_WORLD_PACKET_SENT frame_len={len(first_world)} '
+                    f'payload_len={len(first_world)-3} opcode_wire=0x{first_world[0]:02x}'
+                )
 
-                # Do not invent the initial world packet yet. Hold the connection open
-                # and record whether the client sends anything while it waits for the
-                # first ISAAC-encrypted server packet.
-                c.settimeout(6)
+                # Keep the connection alive and record the first client gameplay traffic.
+                c.settimeout(7)
                 try:
                     after = c.recv(65536)
                 except socket.timeout:
                     after = b''
-                    log('LOGIN_WAITING_FOR_FIRST_GAME_PACKET timeout=true')
+                    log('POST_WORLD_CLIENT_WAIT timeout=true')
                 if after:
-                    (out / 'login-after-success-client.bin').write_bytes(after)
-                    log(f'LOGIN_AFTER_SUCCESS_CLIENT len={len(after)} hex={after.hex()}')
+                    (out / 'post-world-client.bin').write_bytes(after)
+                    log(f'POST_WORLD_CLIENT len={len(after)} hex={after.hex()}')
                 return
 
             data = c.recv(4096)
