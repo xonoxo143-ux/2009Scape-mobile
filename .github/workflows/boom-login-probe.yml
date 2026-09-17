@@ -34,10 +34,10 @@ jobs:
       - name: Disassemble world-crash client code
         run: |
           set +e
-          jar tf boom-local/work/client-boomps-local.jar | grep -E '^osrs/(Client|iy|cB)\.class$' > boom-local/login-report/relevant-classes.txt
-          javap -classpath boom-local/work/client-boomps-local.jar -c -p -l osrs.Client > boom-local/login-report/client-javap.txt 2>&1
-          javap -classpath boom-local/work/client-boomps-local.jar -c -p -l osrs.iy > boom-local/login-report/iy-javap.txt 2>&1
-          javap -classpath boom-local/work/client-boomps-local.jar -c -p -l osrs.cB > boom-local/login-report/cB-javap.txt 2>&1
+          jar tf boom-local/work/client-boomps-local.jar | grep -E '^osrs/(Client|iy|cB|cH|it|cx|hX)\.class$' > boom-local/login-report/relevant-classes.txt
+          for cls in Client iy cB cH it cx hX; do
+            javap -classpath boom-local/work/client-boomps-local.jar -c -p -l "osrs.$cls" > "boom-local/login-report/${cls}-javap.txt" 2>&1
+          done
           set -e
 
       - name: Serve local jav_config
