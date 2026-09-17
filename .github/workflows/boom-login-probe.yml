@@ -34,8 +34,8 @@ jobs:
       - name: Disassemble world-crash client code
         run: |
           set +e
-          jar tf boom-local/work/client-boomps-local.jar | grep -E '^osrs/(Client|iy|cB|cH|it|cx|hX)\.class$' > boom-local/login-report/relevant-classes.txt
-          for cls in Client iy cB cH it cx hX; do
+          jar tf boom-local/work/client-boomps-local.jar | grep -E '^osrs/(Client|iy|cB|cH|it|cx|hX|bV|M)\.class$' > boom-local/login-report/relevant-classes.txt
+          for cls in Client iy cB cH it cx hX bV M; do
             javap -classpath boom-local/work/client-boomps-local.jar -c -p -l "osrs.$cls" > "boom-local/login-report/${cls}-javap.txt" 2>&1
           done
           set -e
