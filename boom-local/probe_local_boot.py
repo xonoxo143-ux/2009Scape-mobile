@@ -30,6 +30,24 @@ class ConfigHandler(http.server.SimpleHTTPRequestHandler):
             f.write((fmt % args) + "\n")
 
 
+def recv_some(conn, limit, timeout=2.0):
+    conn.settimeout(timeout)
+    chunks = []
+    total = 0
+    while total < limit:
+        try:
+            part = conn.recv(min(4096, limit - total))
+        except socket.timeout:
+            break
+        if not part:
+            break
+        chunks.append(part)
+        total += len(part)
+        if len(part) < 4096:
+            break
+    return b"".join(chunks)
+
+
 def tcp_probe(port: int):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -43,23 +61,26 @@ def tcp_probe(port: int):
             except socket.timeout:
                 continue
             with conn:
-                conn.settimeout(2.0)
-                chunks = []
-                try:
-                    while sum(map(len, chunks)) < 4096:
-                        part = conn.recv(4096 - sum(map(len, chunks)))
-                        if not part:
-                            break
-                        chunks.append(part)
-                        if len(part) < 4096:
-                            break
-                except socket.timeout:
-                    pass
-                data = b"".join(chunks)
+                first = recv_some(conn, 4096, 2.0)
+                stamp = int(time.time() * 1000)
                 with (OUT / "tcp-connections.log").open("a", encoding="utf-8") as f:
-                    f.write(f"from={addr[0]}:{addr[1]} bytes={len(data)} hex={data.hex()}\n")
-                (OUT / f"tcp-first-{int(time.time()*1000)}.bin").write_bytes(data)
-                # Deliberately close; the first milestone is capture, not emulation.
+                    f.write(f"from={addr[0]}:{addr[1]} phase=handshake bytes={len(first)} hex={first.hex()}\n")
+                (OUT / f"tcp-handshake-{stamp}.bin").write_bytes(first)
+
+                # Modern JS5 accepts the revision handshake with a single zero byte.
+                # If this is the expected protocol, the client should immediately send
+                # its post-handshake control/request packets on the same connection.
+                try:
+                    conn.sendall(b"\x00")
+                except OSError as e:
+                    with (OUT / "tcp-connections.log").open("a", encoding="utf-8") as f:
+                        f.write(f"from={addr[0]}:{addr[1]} phase=accept-send error={e!r}\n")
+                    continue
+
+                following = recv_some(conn, 65536, 8.0)
+                with (OUT / "tcp-connections.log").open("a", encoding="utf-8") as f:
+                    f.write(f"from={addr[0]}:{addr[1]} phase=after-accept bytes={len(following)} hex={following.hex()}\n")
+                (OUT / f"tcp-after-accept-{stamp}.bin").write_bytes(following)
 
 
 def main():
