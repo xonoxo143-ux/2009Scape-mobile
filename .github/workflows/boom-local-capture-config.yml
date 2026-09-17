@@ -1,0 +1,31 @@
+name: Capture Boom local config reference
+
+on:
+  push:
+    branches: [boom-local-singleplayer]
+    paths:
+      - '.github/workflows/boom-local-capture-config.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fetch current Boom and revision-239 local jav configs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p capture
+          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o capture/boom-jav_config.ws
+          curl -fL --retry 3 https://client.blurite.io/jav_local_239.ws -o capture/local-239-jav_config.ws
+          echo '=== Boom current ==='
+          cat capture/boom-jav_config.ws
+          echo '=== Revision 239 local reference ==='
+          cat capture/local-239-jav_config.ws
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boom-revision239-config-reference
+          path: capture/
+          retention-days: 1
