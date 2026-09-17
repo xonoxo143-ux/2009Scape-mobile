@@ -101,21 +101,16 @@ def _short_add(value):
 
 
 def build_initial_payload(tile_x=3222, tile_y=3218):
-    # Client iy.a(cH): 30 bits for our player, then 18 bits for each of the
-    # other 2047 player slots. Zero is a valid empty/default regional position
-    # for the non-local slots.
+    # Client iy.a(cH): 30 bits for the local player, then 18 bits for player
+    # slots 1..2047 except Client.Q. With local index 1, that is 2046 remote
+    # entries. Slot zero is not part of this bootstrap loop.
     bits = BitWriter()
     packed_local = ((0 & 3) << 28) | ((tile_x & 0x3FFF) << 14) | (tile_y & 0x3FFF)
     bits.write(packed_local, 30)
     for player_index in range(1, 2048):
-        # Login metadata assigns local index 1, so skip that slot and include
-        # player 0 plus 2..2047: still exactly 2047 remote-player entries.
         if player_index == 1:
             continue
         bits.write(0, 18)
-    # The loop above only writes 2046 remotes because index 0 isn't in range.
-    # The client loop is 1..2047 excluding local index, so local index 1 means
-    # exactly 2046 entries. This matches the decompiled client.
     payload = bytearray(bits.bytes())
 
     # cB.a(cH) then consumes J(), H(), H(). J() is a signed little-endian
@@ -128,8 +123,10 @@ def build_initial_payload(tile_x=3222, tile_y=3218):
     return bytes(payload)
 
 
-def build_initial_frame(xtea_keys, packet_id=0, tile_x=3222, tile_y=3218):
-    # Server->client ISAAC uses the four login/XTEA seeds + 50.
+def build_initial_frame(xtea_keys, packet_id=2, tile_x=3222, tile_y=3218):
+    # cx packet descriptor id 2 has declared length -2 in this revision, so the
+    # login state reads the following unsigned short as the payload length.
+    # Descriptor id 0 is fixed length 4 and must NOT be used for this frame.
     cipher = Isaac([((k + 50) & MASK32) for k in xtea_keys])
     encoded_opcode = (packet_id + cipher.next_int()) & 0xFF
     payload = build_initial_payload(tile_x, tile_y)
@@ -137,9 +134,8 @@ def build_initial_frame(xtea_keys, packet_id=0, tile_x=3222, tile_y=3218):
 
 
 if __name__ == '__main__':
-    # Deterministic self-check against osrs.hX for the known first capture.
     keys = [0x38A51F5B, 0xC5C1984A, 0x40DB307C, 0xA2D36278]
     c = Isaac([k + 50 for k in keys])
     assert c.next_int() == 0x89C69E78
     frame = build_initial_frame(keys)
-    print('selftest=PASS first_isaac=89c69e78 payload_len=%d frame_len=%d' % (len(frame) - 3, len(frame)))
+    print('selftest=PASS first_isaac=89c69e78 packet_id=2 payload_len=%d frame_len=%d' % (len(frame) - 3, len(frame)))
