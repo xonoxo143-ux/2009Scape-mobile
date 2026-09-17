@@ -213,16 +213,16 @@ def main():
                     return
 
                 metadata = b'\x02' + bytes([37]) + success_metadata()
-                first_world = build_initial_frame(keys, packet_id=0, tile_x=3222, tile_y=3218)
+                # Descriptor 2 is a -2 (u16 variable-length) packet in Boom revision 239.
+                first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)
                 (out / 'first-world-frame.bin').write_bytes(first_world)
                 c.sendall(metadata + first_world)
                 log(f'LOGIN_SUCCESS_METADATA_SENT len={len(metadata)} hex={metadata.hex()}')
                 log(
-                    f'FIRST_WORLD_PACKET_SENT frame_len={len(first_world)} '
+                    f'FIRST_WORLD_PACKET_SENT packet_id=2 frame_len={len(first_world)} '
                     f'payload_len={len(first_world)-3} opcode_wire=0x{first_world[0]:02x}'
                 )
 
-                # Keep the connection alive and record the first client gameplay traffic.
                 c.settimeout(7)
                 try:
                     after = c.recv(65536)
