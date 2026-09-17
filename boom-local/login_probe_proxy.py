@@ -10,6 +10,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 KEY_FILE = ROOT / 'local-rsa-test-key.properties'
+MASK32 = 0xFFFFFFFF
+XTEA_DELTA = 0x9E3779B9
 
 
 def relay(a, b, log):
@@ -40,13 +42,42 @@ def load_local_rsa():
     return int(props['modulus_decimal']), int(props['private_exponent_decimal'])
 
 
-def decrypt_login_rsa(packet: bytes, out: Path, log):
+def xtea_decrypt(data: bytes, keys):
+    """Match the game client's in-place XTEA range operation.
+
+    The client encrypts floor(length/8) complete blocks and leaves any trailing
+    bytes untouched. Revision-239's observed login tail is 276 bytes, so the
+    final four bytes are intentionally not transformed.
+    """
+    out = bytearray(data)
+    block_end = (len(out) // 8) * 8
+    for off in range(0, block_end, 8):
+        v0, v1 = struct.unpack_from('>II', out, off)
+        total = (XTEA_DELTA * 32) & MASK32
+        for _ in range(32):
+            mix = (((((v0 << 4) & MASK32) ^ (v0 >> 5)) + v0) & MASK32) ^ ((total + keys[(total >> 11) & 3]) & MASK32)
+            v1 = (v1 - mix) & MASK32
+            total = (total - XTEA_DELTA) & MASK32
+            mix = (((((v1 << 4) & MASK32) ^ (v1 >> 5)) + v1) & MASK32) ^ ((total + keys[total & 3]) & MASK32)
+            v0 = (v0 - mix) & MASK32
+        struct.pack_into('>II', out, off, v0, v1)
+    return bytes(out)
+
+
+def cstring(data: bytes, start=0):
+    end = data.find(b'\x00', start)
+    if end < 0:
+        return None, start
+    return data[start:end].decode('cp1252', errors='replace'), end + 1
+
+
+def decrypt_login(packet: bytes, out: Path, log):
     # Captured revision-239 layout before the XTEA-encrypted body:
     # u8 loginOpcode, u16 payloadLength, u32 revision, u32 subRevision,
     # u32 clientRevision, u8 clientType, u24 reserved, u8 rsaLength, rsaBytes...
     if len(packet) < 20:
         log(f'LOGIN_PARSE_TOO_SHORT len={len(packet)}')
-        return
+        return None
     opcode = packet[0]
     payload_len = int.from_bytes(packet[1:3], 'big')
     revision = int.from_bytes(packet[3:7], 'big')
@@ -58,7 +89,7 @@ def decrypt_login_rsa(packet: bytes, out: Path, log):
     rsa_end = rsa_start + rsa_len
     if rsa_end > len(packet):
         log(f'LOGIN_RSA_TRUNCATED rsa_len={rsa_len} packet_len={len(packet)}')
-        return
+        return None
 
     modulus, private_exponent = load_local_rsa()
     cipher = packet[rsa_start:rsa_end]
@@ -75,13 +106,42 @@ def decrypt_login_rsa(packet: bytes, out: Path, log):
     )
     log(f'LOGIN_RSA_PLAIN len={len(plain)} hex={plain.hex()} ascii={printable}')
 
-    if len(plain) >= 25 and plain[0] == 1:
-        xtea = struct.unpack('>4I', plain[1:17])
-        seed = int.from_bytes(plain[17:25], 'big')
-        log('LOGIN_XTEA_KEYS ' + ','.join(f'0x{x:08x}' for x in xtea))
-        log(f'LOGIN_SERVER_SEED 0x{seed:016x}')
-    else:
+    if len(plain) < 25 or plain[0] != 1:
         log('LOGIN_RSA_LAYOUT_UNEXPECTED')
+        return None
+
+    keys = struct.unpack('>4I', plain[1:17])
+    seed = int.from_bytes(plain[17:25], 'big')
+    log('LOGIN_XTEA_KEYS ' + ','.join(f'0x{x:08x}' for x in keys))
+    log(f'LOGIN_SERVER_SEED 0x{seed:016x}')
+
+    tail = packet[rsa_end:]
+    tail_plain = xtea_decrypt(tail, keys)
+    (out / 'login-xtea-plain.bin').write_bytes(tail_plain)
+    tail_ascii = ''.join(chr(b) if 32 <= b < 127 else '.' for b in tail_plain)
+    username, pos = cstring(tail_plain, 0)
+    log(f'LOGIN_XTEA_PLAIN len={len(tail_plain)} hex={tail_plain.hex()} ascii={tail_ascii}')
+    log(f'LOGIN_USERNAME value={username!r} next_offset={pos}')
+    return keys
+
+
+def success_metadata():
+    # After response code 2, revision 239 requires a length byte of 37 followed
+    # by 37 bytes. The client consumes 34 fields and tolerates three reserved
+    # trailing bytes. Keep all optional/account state disabled for local play.
+    meta = bytearray()
+    meta += b'\x00'                 # no account-token persistence
+    meta += b'\x00\x00\x00\x00' # ignored token bytes
+    meta += b'\x00'                 # staff/mod level-like byte
+    meta += b'\x00'                 # boolean account flag
+    meta += b'\x00\x01'           # local player index = 1
+    meta += b'\x00'                 # world/account state byte
+    meta += b'\x00' * 8             # account hash/id
+    meta += b'\x00' * 8             # secondary long
+    meta += b'\x00' * 8             # tertiary long
+    meta += b'\x00' * 3             # reserved/unused in observed parser
+    assert len(meta) == 37
+    return bytes(meta)
 
 
 def main():
@@ -117,7 +177,8 @@ def main():
             log(f'CONNECT {addr[0]}:{addr[1]} first={binascii.hexlify(first).decode()} op={op}')
 
             # JS5 handshake begins with opcode 15. Forward these connections unchanged
-            # so the client can populate its normal cache while the login path remains local.
+            # for the protocol lab; the keyed-cache workflow separately proves this can
+            # be served entirely offline.
             if op == 15:
                 try:
                     upstream = socket.create_connection((args.upstream_host, args.upstream_port), timeout=10)
@@ -131,7 +192,8 @@ def main():
                 return
 
             # Modern OSRS login initial request is opcode 14. Keep it local, return
-            # success + a deterministic server seed, then capture the encrypted login block.
+            # success + deterministic seed, decrypt the client's request, then advance
+            # it through the revision-239 login-success metadata state.
             if op == 14:
                 initial = c.recv(64)
                 log(f'LOGIN_INITIAL len={len(initial)} hex={initial.hex()}')
@@ -157,15 +219,34 @@ def main():
                 data = b''.join(chunks)
                 (out / 'login-after-seed.bin').write_bytes(data)
                 log(f'LOGIN_AFTER_SEED len={len(data)} hex={data.hex()}')
-                if data:
-                    try:
-                        decrypt_login_rsa(data, out, log)
-                    except Exception as e:
-                        log(f'LOGIN_RSA_DECRYPT_ERROR {type(e).__name__}: {e}')
+                if not data:
+                    return
+                try:
+                    keys = decrypt_login(data, out, log)
+                except Exception as e:
+                    log(f'LOGIN_DECRYPT_ERROR {type(e).__name__}: {e}')
+                    return
+                if keys is None:
+                    return
+
+                response = b'\x02' + bytes([37]) + success_metadata()
+                c.sendall(response)
+                log(f'LOGIN_SUCCESS_METADATA_SENT len={len(response)} hex={response.hex()}')
+
+                # Do not invent the initial world packet yet. Hold the connection open
+                # and record whether the client sends anything while it waits for the
+                # first ISAAC-encrypted server packet.
+                c.settimeout(6)
+                try:
+                    after = c.recv(65536)
+                except socket.timeout:
+                    after = b''
+                    log('LOGIN_WAITING_FOR_FIRST_GAME_PACKET timeout=true')
+                if after:
+                    (out / 'login-after-success-client.bin').write_bytes(after)
+                    log(f'LOGIN_AFTER_SUCCESS_CLIENT len={len(after)} hex={after.hex()}')
                 return
 
-            # Unknown traffic is recorded rather than forwarded so we don't accidentally
-            # authenticate or send gameplay traffic upstream.
             data = c.recv(4096)
             log(f'UNKNOWN_LOCAL_ONLY op={op} len={len(data)} hex={data.hex()}')
 
