@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
-import argparse, base64, json, os, select, socket, time
+import argparse, base64, json, select, socket
 from pathlib import Path
 
 HOST='127.0.0.1'; PORT=43594
 REMOTE_HOST='world1.boom-ps.com'; REMOTE_PORT=43594
 
 
-def recv_exact(sock, n):
-    out=bytearray()
-    while len(out)<n:
-        b=sock.recv(n-len(out))
-        if not b: raise EOFError(f'eof after {len(out)}/{n}')
-        out.extend(b)
-    return bytes(out)
+def encode_event(direction, data):
+    return json.dumps({'d':direction,'b':base64.b64encode(data).decode()})
 
 
 def record(path):
-    events=[]
-    with socket.socket() as ls:
+    count=0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w', encoding='utf-8', buffering=1) as trace, socket.socket() as ls:
         ls.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         ls.bind((HOST,PORT)); ls.listen(1)
         print(f'RECORD listening {HOST}:{PORT}', flush=True)
@@ -27,21 +23,24 @@ def record(path):
             client.setblocking(False); remote.setblocking(False)
             while True:
                 ready,_,_=select.select([client,remote],[],[],30)
-                if not ready: break
+                if not ready:
+                    print(f'RECORD idle-timeout events={count}', flush=True)
+                    return
                 for src in ready:
                     direction='C>S' if src is client else 'S>C'
                     dst=remote if src is client else client
                     try: data=src.recv(65536)
                     except BlockingIOError: continue
                     if not data:
-                        path.write_text('\n'.join(json.dumps(e) for e in events)+'\n')
-                        print(f'RECORD eof events={len(events)}',flush=True); return
-                    events.append({'d':direction,'b':base64.b64encode(data).decode()})
+                        print(f'RECORD eof events={count}',flush=True)
+                        return
+                    trace.write(encode_event(direction,data)+'\n')
+                    trace.flush()
+                    count += 1
                     try: dst.sendall(data)
                     except (BrokenPipeError,OSError):
-                        path.write_text('\n'.join(json.dumps(e) for e in events)+'\n'); return
-    path.write_text('\n'.join(json.dumps(e) for e in events)+'\n')
-    print(f'RECORD done events={len(events)} bytes={path.stat().st_size}',flush=True)
+                        print(f'RECORD peer-closed events={count}',flush=True)
+                        return
 
 
 def replay(path):
@@ -67,7 +66,6 @@ def replay(path):
                 got=bytes(pending[:len(data)]); del pending[:len(data)]
                 if got!=data:
                     print(f'MISMATCH event={i} expected={data[:64].hex()} got={got[:64].hex()}',flush=True)
-                    # Stop immediately: sending later responses against a divergent request stream is invalid.
                     return 3
             print('REPLAY completed event stream',flush=True)
     return 0
