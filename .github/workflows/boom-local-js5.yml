@@ -1,0 +1,116 @@
+name: Boot BoomPS through local JS5
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [boom-local-singleplayer]
+    paths:
+      - '.github/workflows/boom-local-js5.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  local-js5:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openjdk-17-jdk-headless netcat-openbsd
+
+      - name: Download Boom client
+        run: |
+          mkdir -p boom-local/js5-report boom-local/work
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o boom-local/work/client-boomps.jar
+          sha256sum boom-local/work/client-boomps.jar | tee boom-local/js5-report/client.sha256
+
+      - name: Populate Boom prelogin cache normally
+        continue-on-error: true
+        run: |
+          set +e
+          timeout 35s xvfb-run -a java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp boom-local/work/client-boomps.jar net.runelite.client.RuneLite --debug \
+            > boom-local/js5-report/bootstrap-client.log 2>&1
+          set -e
+          CACHE="$HOME/.boomscape/jagexcache/oldschool/LIVE"
+          test -s "$CACHE/main_file_cache.dat2"
+          test -s "$CACHE/main_file_cache.idx255"
+          ls -lh "$CACHE" | tee boom-local/js5-report/cache-layout.txt
+
+      - name: Start MIT JS5 server against transient Boom cache
+        run: |
+          git clone --depth 1 https://github.com/Jire/js5server.git /tmp/js5server
+          cat > /tmp/js5server/js5server.properties <<EOF
+          listen_ports=43594
+          version=239
+          check_version=true
+          support_prefetch=true
+          cache_path=$HOME/.boomscape/jagexcache/oldschool/LIVE
+          group_repository=org.jire.js5server.DispleeJs5GroupRepository
+          EOF
+          cd /tmp/js5server
+          chmod +x gradlew
+          ./gradlew run > "$GITHUB_WORKSPACE/boom-local/js5-report/js5server.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/boom-local/js5-report/js5server.pid"
+          for i in $(seq 1 90); do
+            if nc -z 127.0.0.1 43594; then exit 0; fi
+            sleep 1
+          done
+          echo 'JS5 server failed to bind' >&2
+          tail -200 "$GITHUB_WORKSPACE/boom-local/js5-report/js5server.log" >&2
+          exit 1
+
+      - name: Build and serve local jav_config
+        run: |
+          mkdir -p /tmp/boom-http
+          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o /tmp/boom-http/jav_config.ws
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/boom-http/jav_config.ws')
+          lines=[]
+          for line in p.read_text(errors='replace').splitlines():
+              if line.startswith('codebase='):
+                  line='codebase=http://127.0.0.1:8080/'
+              line=line.replace('world1.boom-ps.com','127.0.0.1')
+              lines.append(line)
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          (cd /tmp/boom-http && python3 -m http.server 8080 --bind 127.0.0.1 > "$GITHUB_WORKSPACE/boom-local/js5-report/http.log" 2>&1 &)
+          sleep 1
+
+      - name: Patch Boom client to localhost
+        run: |
+          chmod +x boom-local/patch-client-local.sh
+          boom-local/patch-client-local.sh boom-local/work/client-boomps.jar
+
+      - name: Launch patched Boom client through local JS5
+        continue-on-error: true
+        run: |
+          set +e
+          timeout 35s xvfb-run -a java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
+            > boom-local/js5-report/local-client.log 2>&1
+          echo $? > boom-local/js5-report/local-client.exit
+          set -e
+
+      - name: Report local boot state
+        if: always()
+        run: |
+          echo '=== JS5 SERVER ==='
+          tail -250 boom-local/js5-report/js5server.log 2>/dev/null || true
+          echo '=== LOCAL CLIENT CACHE/STATE ==='
+          grep -Ei 'cache is ready|js5|loading|game state|login|error|exception' boom-local/js5-report/local-client.log 2>/dev/null | tail -300 || true
+          echo '=== LOCAL CLIENT TAIL ==='
+          tail -150 boom-local/js5-report/local-client.log 2>/dev/null || true
+
+      - name: Upload logs only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-local-js5-report
+          path: boom-local/js5-report/**
+          retention-days: 3
