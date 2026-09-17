@@ -1,31 +1,83 @@
-name: Capture Boom local config reference
+name: Probe Boom local singleplayer boot
 
 on:
   push:
     branches: [boom-local-singleplayer]
     paths:
       - '.github/workflows/boom-local-capture-config.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  capture:
+  probe:
     runs-on: ubuntu-24.04
+    timeout-minutes: 8
     steps:
-      - name: Fetch current Boom and revision-239 local jav configs
-        shell: bash
+      - uses: actions/checkout@v4
+
+      - name: Install runtime helpers
         run: |
-          set -euxo pipefail
-          mkdir -p capture
-          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o capture/boom-jav_config.ws
-          curl -fL --retry 3 https://client.blurite.io/jav_local_239.ws -o capture/local-239-jav_config.ws
-          echo '=== Boom current ==='
-          cat capture/boom-jav_config.ws
-          echo '=== Revision 239 local reference ==='
-          cat capture/local-239-jav_config.ws
+          sudo apt-get update
+          sudo apt-get install -y xvfb openjdk-17-jre-headless
+
+      - name: Download Boom client
+        run: |
+          mkdir -p boom-local/work boom-local/probe-output
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o boom-local/work/client-boomps.jar
+          sha256sum boom-local/work/client-boomps.jar | tee boom-local/probe-output/client.sha256
+
+      - name: Build local jav_config
+        run: |
+          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o boom-local/probe-output/jav_config.remote.ws
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path('boom-local/probe-output/jav_config.remote.ws').read_text(errors='replace')
+          out=[]
+          for line in src.splitlines():
+              line=line.replace('world1.boom-ps.com','127.0.0.1')
+              if line.startswith('codebase='):
+                  line='codebase=http://127.0.0.1:8080/'
+              out.append(line)
+          Path('boom-local/jav_config.local.ws').write_text('\n'.join(out)+'\n')
+          PY
+
+      - name: Patch client endpoints
+        run: |
+          chmod +x boom-local/patch-client-local.sh
+          boom-local/patch-client-local.sh boom-local/work/client-boomps.jar
+
+      - name: Start local config and TCP probes
+        run: |
+          python3 boom-local/probe_local_boot.py > boom-local/probe-output/probe-server.log 2>&1 &
+          echo $! > boom-local/probe-output/probe-server.pid
+          sleep 2
+
+      - name: Launch patched client
+        continue-on-error: true
+        run: |
+          set +e
+          timeout 35s xvfb-run -a java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
+            > boom-local/probe-output/client.log 2>&1
+          echo $? > boom-local/probe-output/client.exit
+          set -e
+
+      - name: Print probe results
+        if: always()
+        run: |
+          sleep 2
+          echo '=== TCP ==='
+          cat boom-local/probe-output/tcp-connections.log 2>/dev/null || true
+          echo '=== HTTP ==='
+          cat boom-local/probe-output/http-requests.log 2>/dev/null || true
+          echo '=== CLIENT TAIL ==='
+          tail -250 boom-local/probe-output/client.log 2>/dev/null || true
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: boom-revision239-config-reference
-          path: capture/
-          retention-days: 1
+          name: boom-local-probe
+          path: boom-local/probe-output/**
+          retention-days: 3
