@@ -1,0 +1,114 @@
+name: Prove BoomPS JS5 offline replay
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [boom-local-singleplayer]
+    paths:
+      - '.github/workflows/boom-js5-offline-replay.yml'
+      - 'boom-local/js5_record_replay.py'
+      - 'boom-local/patch-client-local.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openjdk-17-jre-headless
+
+      - name: Download and patch Boom client
+        run: |
+          mkdir -p boom-local/offline-report boom-local/work /tmp/boom-http
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o boom-local/work/client-boomps.jar
+          chmod +x boom-local/patch-client-local.sh
+          boom-local/patch-client-local.sh boom-local/work/client-boomps.jar
+
+      - name: Build localhost jav_config
+        run: |
+          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o /tmp/boom-http/jav_config.ws
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/boom-http/jav_config.ws')
+          text=p.read_text(errors='replace').replace('world1.boom-ps.com','127.0.0.1')
+          lines=[]
+          for line in text.splitlines():
+              if line.startswith('codebase='):
+                  line='codebase=http://127.0.0.1:8080/'
+              lines.append(line)
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          (cd /tmp/boom-http && python3 -m http.server 8080 --bind 127.0.0.1 > "$GITHUB_WORKSPACE/boom-local/offline-report/http.log" 2>&1 &)
+          sleep 1
+
+      - name: Record one clean pre-login JS5 session
+        run: |
+          rm -rf /tmp/boom-record-home /tmp/boom-replay-home
+          mkdir -p /tmp/boom-record-home /tmp/boom-replay-home
+          python3 boom-local/js5_record_replay.py record boom-local/work/js5-trace.jsonl > boom-local/offline-report/record-server.log 2>&1 &
+          echo $! > boom-local/offline-report/record.pid
+          sleep 1
+          set +e
+          HOME=/tmp/boom-record-home timeout 18s xvfb-run -a java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
+            > boom-local/offline-report/record-client.log 2>&1
+          echo $? > boom-local/offline-report/record-client.exit
+          set -e
+          kill $(cat boom-local/offline-report/record.pid) 2>/dev/null || true
+          sleep 1
+          test -s boom-local/work/js5-trace.jsonl
+          grep -E 'Cache is ready|Game state changed: LOGIN_SCREEN' boom-local/offline-report/record-client.log | tail -20 | tee boom-local/offline-report/record-ready.txt || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,base64
+          p=Path('boom-local/work/js5-trace.jsonl')
+          ev=[json.loads(x) for x in p.read_text().splitlines() if x.strip()]
+          c=sum(len(base64.b64decode(e['b'])) for e in ev if e['d']=='C>S')
+          s=sum(len(base64.b64decode(e['b'])) for e in ev if e['d']=='S>C')
+          Path('boom-local/offline-report/trace-summary.txt').write_text(f'events={len(ev)}\nclient_bytes={c}\nserver_bytes={s}\n')
+          PY
+
+      - name: Replay session with no upstream JS5 access
+        run: |
+          python3 boom-local/js5_record_replay.py replay boom-local/work/js5-trace.jsonl > boom-local/offline-report/replay-server.log 2>&1 &
+          echo $! > boom-local/offline-report/replay.pid
+          sleep 1
+          set +e
+          HOME=/tmp/boom-replay-home timeout 18s xvfb-run -a java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
+            > boom-local/offline-report/replay-client.log 2>&1
+          echo $? > boom-local/offline-report/replay-client.exit
+          set -e
+          kill $(cat boom-local/offline-report/replay.pid) 2>/dev/null || true
+          sleep 1
+
+      - name: Verify offline bootstrap
+        run: |
+          echo '=== RECORD ==='
+          cat boom-local/offline-report/record-ready.txt 2>/dev/null || true
+          cat boom-local/offline-report/trace-summary.txt
+          echo '=== REPLAY SERVER ==='
+          cat boom-local/offline-report/replay-server.log
+          echo '=== REPLAY CLIENT STATE ==='
+          grep -E 'Cache is ready|Game state changed: LOGIN_SCREEN|error_game_js5|Loading' boom-local/offline-report/replay-client.log | tail -120 || true
+          if grep -q 'Cache is ready' boom-local/offline-report/replay-client.log && grep -q 'Game state changed: LOGIN_SCREEN' boom-local/offline-report/replay-client.log; then
+            echo 'OFFLINE_JS5_BOOT=PASS' | tee boom-local/offline-report/result.txt
+          else
+            echo 'OFFLINE_JS5_BOOT=FAIL' | tee boom-local/offline-report/result.txt
+            exit 1
+          fi
+
+      - name: Upload logs only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-js5-offline-replay-report
+          path: boom-local/offline-report/**
+          retention-days: 3
