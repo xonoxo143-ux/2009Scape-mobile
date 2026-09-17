@@ -73,7 +73,6 @@ jobs:
             if grep -q 'Cache is ready' boom-local/login-report/client.log 2>/dev/null; then break; fi
             sleep 1
           done
-          # The first-run terms dialog is rendered a moment after LOGIN_SCREEN/cache readiness.
           sleep 4
 
           import -window root boom-local/login-report/terms-screen.png 2>/dev/null || true
@@ -81,13 +80,10 @@ jobs:
           echo "window=$WIN" | tee boom-local/login-report/window.txt
           if [ -n "$WIN" ]; then
             xdotool windowactivate --sync "$WIN" || true
-            # 1280x900 runner: Boom canvas sits at roughly x=241..1039, y=198..703.
-            # First-run Terms dialog Accept button center is approximately (544, 511).
             xdotool mousemove 544 511 click 1
             sleep 3
             import -window root boom-local/login-report/after-accept.png 2>/dev/null || true
 
-            # Try the standard Enter -> credentials path now that the gate is gone.
             xdotool key Return
             sleep 1
             import -window root boom-local/login-report/after-enter.png 2>/dev/null || true
@@ -95,29 +91,36 @@ jobs:
             xdotool key Tab
             xdotool type --delay 25 'localprobe'
             xdotool key Return
-            sleep 8
+
+            # Capture the earliest successful world entry separately from the
+            # longer session test so an eventual disconnect cannot hide it.
+            for i in $(seq 1 20); do
+              if grep -q 'Game state changed: LOGGED_IN' boom-local/login-report/client.log 2>/dev/null; then break; fi
+              sleep 0.25
+            done
+            import -window root boom-local/login-report/in-world-early.png 2>/dev/null || true
+            sleep 10
           fi
 
-          import -window root boom-local/login-report/after-login.png 2>/dev/null || true
-          grep -E 'Cache is ready|LOGIN_SCREEN|LOGGING_IN|CONNECTION_LOST|HOPPING' boom-local/login-report/client.log | tail -100 > boom-local/login-report/state-summary.txt || true
-          grep -E 'LOGIN_' boom-local/login-report/proxy.log > boom-local/login-report/login-summary.txt || true
+          import -window root boom-local/login-report/after-session.png 2>/dev/null || true
+          grep -E 'Cache is ready|LOGIN_SCREEN|LOGGING_IN|LOADING|LOGGED_IN|CONNECTION_LOST|HOPPING' boom-local/login-report/client.log | tail -150 > boom-local/login-report/state-summary.txt || true
+          grep -E 'LOGIN_|FIRST_WORLD|POST_WORLD|SESSION_' boom-local/login-report/proxy.log > boom-local/login-report/session-summary.txt || true
           kill $(cat boom-local/login-report/client.pid) 2>/dev/null || true
           kill $(cat boom-local/login-report/proxy.pid) 2>/dev/null || true
           kill $(cat boom-local/login-report/openbox.pid) 2>/dev/null || true
           exit 0
 
-      - name: Print login capture summary
+      - name: Print session summary
         if: always()
         run: |
-          echo '=== LOGIN PROXY ==='
-          cat boom-local/login-report/proxy.log 2>/dev/null | tail -120 || true
+          echo '=== LOCAL SESSION PROXY ==='
+          cat boom-local/login-report/session-summary.txt 2>/dev/null | tail -160 || true
           echo '=== CLIENT STATE ==='
           cat boom-local/login-report/state-summary.txt 2>/dev/null || true
-          if [ -s boom-local/login-report/login-after-seed.bin ]; then
-            echo 'LOGIN_CAPTURE=PASS'
-            wc -c boom-local/login-report/login-after-seed.bin
+          if grep -q 'Game state changed: LOGGED_IN' boom-local/login-report/state-summary.txt 2>/dev/null; then
+            echo 'LOCAL_WORLD_LOGIN=PASS'
           else
-            echo 'LOGIN_CAPTURE=NO_PACKET'
+            echo 'LOCAL_WORLD_LOGIN=FAIL'
           fi
 
       - name: Upload login probe evidence
