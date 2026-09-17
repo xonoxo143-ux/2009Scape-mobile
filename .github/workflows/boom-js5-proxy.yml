@@ -1,0 +1,90 @@
+name: Trace BoomPS JS5 through localhost proxy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [boom-local-singleplayer]
+    paths:
+      - '.github/workflows/boom-js5-proxy.yml'
+      - 'boom-local/js5_proxy.py'
+      - 'boom-local/patch-client-local.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openjdk-17-jre-headless
+
+      - name: Download and patch Boom client
+        run: |
+          mkdir -p boom-local/proxy-report boom-local/work
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o boom-local/work/client-boomps.jar
+          chmod +x boom-local/patch-client-local.sh
+          boom-local/patch-client-local.sh boom-local/work/client-boomps.jar
+
+      - name: Serve Boom jav_config locally
+        run: |
+          mkdir -p /tmp/boom-http
+          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o /tmp/boom-http/jav_config.ws
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/boom-http/jav_config.ws')
+          text=p.read_text(errors='replace').replace('world1.boom-ps.com','127.0.0.1')
+          lines=[]
+          for line in text.splitlines():
+              if line.startswith('codebase='):
+                  line='codebase=http://127.0.0.1:8080/'
+              lines.append(line)
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          (cd /tmp/boom-http && python3 -m http.server 8080 --bind 127.0.0.1 > "$GITHUB_WORKSPACE/boom-local/proxy-report/http.log" 2>&1 &)
+
+      - name: Start transparent JS5 proxy
+        run: |
+          rm -rf boom-local/proxy-output
+          mkdir -p boom-local/proxy-output
+          python3 boom-local/js5_proxy.py > boom-local/proxy-report/proxy-process.log 2>&1 &
+          echo $! > boom-local/proxy-report/proxy.pid
+          sleep 2
+
+      - name: Run patched Boom client through proxy
+        continue-on-error: true
+        run: |
+          set +e
+          timeout 40s xvfb-run -a java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
+            > boom-local/proxy-report/client.log 2>&1
+          echo $? > boom-local/proxy-report/client.exit
+          set -e
+          sleep 2
+
+      - name: Summarize trace
+        if: always()
+        run: |
+          cp boom-local/proxy-output/proxy.log boom-local/proxy-report/ 2>/dev/null || true
+          echo '=== JS5 REQUEST TRACE ==='
+          cat boom-local/proxy-report/proxy.log 2>/dev/null | head -500 || true
+          echo '=== CACHE STATE ==='
+          CACHE="$HOME/.boomscape/jagexcache/oldschool/LIVE"
+          if [ -d "$CACHE" ]; then ls -lh "$CACHE" | tee boom-local/proxy-report/cache-layout.txt; fi
+          echo '=== CLIENT STATE ==='
+          grep -Ei 'cache is ready|loading|login|game state|js5|error_game' boom-local/proxy-report/client.log 2>/dev/null | tail -250 || true
+
+      - name: Upload trace logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-js5-proxy-trace
+          path: |
+            boom-local/proxy-report/**
+            boom-local/proxy-output/*.bin
+          retention-days: 2
