@@ -1,0 +1,108 @@
+name: Prove BoomPS keyed JS5 offline cache
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [boom-local-singleplayer]
+    paths:
+      - '.github/workflows/boom-js5-keyed-offline.yml'
+      - 'boom-local/js5_keyed_cache.py'
+      - 'boom-local/patch-client-local.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  keyed-offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openjdk-17-jre-headless
+
+      - name: Download and patch Boom client
+        run: |
+          mkdir -p boom-local/keyed-report boom-local/work /tmp/boom-http
+          curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o boom-local/work/client-boomps.jar
+          chmod +x boom-local/patch-client-local.sh
+          boom-local/patch-client-local.sh boom-local/work/client-boomps.jar
+
+      - name: Build localhost jav_config
+        run: |
+          curl -fL --retry 3 https://boom-ps.com/integrations/jav_config.ws -o /tmp/boom-http/jav_config.ws
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/boom-http/jav_config.ws')
+          text=p.read_text(errors='replace').replace('world1.boom-ps.com','127.0.0.1')
+          lines=[]
+          for line in text.splitlines():
+              if line.startswith('codebase='):
+                  line='codebase=http://127.0.0.1:8080/'
+              lines.append(line)
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          (cd /tmp/boom-http && python3 -m http.server 8080 --bind 127.0.0.1 > "$GITHUB_WORKSPACE/boom-local/keyed-report/http.log" 2>&1 &)
+          sleep 1
+
+      - name: Record JS5 objects by archive and group
+        run: |
+          rm -rf /tmp/boom-keyed-record-home /tmp/boom-keyed-replay-home boom-local/work/js5-objects
+          mkdir -p /tmp/boom-keyed-record-home /tmp/boom-keyed-replay-home boom-local/work/js5-objects
+          python3 boom-local/js5_keyed_cache.py record boom-local/work/js5-objects --log boom-local/keyed-report/record-server.log &
+          echo $! > boom-local/keyed-report/record.pid
+          sleep 1
+          set +e
+          HOME=/tmp/boom-keyed-record-home timeout 22s xvfb-run -a java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
+            > boom-local/keyed-report/record-client.log 2>&1
+          echo $? > boom-local/keyed-report/record-client.exit
+          set -e
+          kill $(cat boom-local/keyed-report/record.pid) 2>/dev/null || true
+          sleep 1
+          grep -E 'Cache is ready|Game state changed: LOGIN_SCREEN' boom-local/keyed-report/record-client.log | tail -20 | tee boom-local/keyed-report/record-ready.txt || true
+          find boom-local/work/js5-objects -type f -name '*.bin' | wc -l | tee boom-local/keyed-report/object-count.txt
+          du -sh boom-local/work/js5-objects | tee boom-local/keyed-report/object-size.txt
+          test -s boom-local/keyed-report/object-count.txt
+
+      - name: Serve recorded JS5 objects with no upstream connection
+        run: |
+          python3 boom-local/js5_keyed_cache.py serve boom-local/work/js5-objects --log boom-local/keyed-report/replay-server.log &
+          echo $! > boom-local/keyed-report/replay.pid
+          sleep 1
+          set +e
+          HOME=/tmp/boom-keyed-replay-home timeout 22s xvfb-run -a java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
+            > boom-local/keyed-report/replay-client.log 2>&1
+          echo $? > boom-local/keyed-report/replay-client.exit
+          set -e
+          kill $(cat boom-local/keyed-report/replay.pid) 2>/dev/null || true
+          sleep 1
+
+      - name: Verify offline keyed cache bootstrap
+        run: |
+          echo '=== RECORDED OBJECTS ==='
+          cat boom-local/keyed-report/object-count.txt
+          cat boom-local/keyed-report/object-size.txt
+          echo '=== SERVER MISS SUMMARY ==='
+          grep 'MISS' boom-local/keyed-report/replay-server.log | head -100 || true
+          echo 'miss_count='$(grep -c 'MISS' boom-local/keyed-report/replay-server.log || true) | tee boom-local/keyed-report/miss-count.txt
+          echo '=== REPLAY CLIENT STATE ==='
+          grep -E 'Cache is ready|Game state changed: LOGIN_SCREEN|error_game_js5|Loading' boom-local/keyed-report/replay-client.log | tail -150 || true
+          if grep -q 'Cache is ready' boom-local/keyed-report/replay-client.log && grep -q 'Game state changed: LOGIN_SCREEN' boom-local/keyed-report/replay-client.log; then
+            echo 'KEYED_OFFLINE_JS5_BOOT=PASS' | tee boom-local/keyed-report/result.txt
+          else
+            echo 'KEYED_OFFLINE_JS5_BOOT=FAIL' | tee boom-local/keyed-report/result.txt
+            exit 1
+          fi
+
+      - name: Upload logs only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-js5-keyed-offline-report
+          path: boom-local/keyed-report/**
+          retention-days: 3
