@@ -30,8 +30,8 @@ class ConfigHandler(http.server.SimpleHTTPRequestHandler):
             f.write((fmt % args) + "\n")
 
 
-def recv_some(conn, limit, timeout=2.0):
-    conn.settimeout(timeout)
+def recv_until_idle(conn, limit, idle_timeout=2.0):
+    conn.settimeout(idle_timeout)
     chunks = []
     total = 0
     while total < limit:
@@ -43,8 +43,6 @@ def recv_some(conn, limit, timeout=2.0):
             break
         chunks.append(part)
         total += len(part)
-        if len(part) < 4096:
-            break
     return b"".join(chunks)
 
 
@@ -61,15 +59,12 @@ def tcp_probe(port: int):
             except socket.timeout:
                 continue
             with conn:
-                first = recv_some(conn, 4096, 2.0)
+                first = recv_until_idle(conn, 4096, 0.5)
                 stamp = int(time.time() * 1000)
                 with (OUT / "tcp-connections.log").open("a", encoding="utf-8") as f:
                     f.write(f"from={addr[0]}:{addr[1]} phase=handshake bytes={len(first)} hex={first.hex()}\n")
                 (OUT / f"tcp-handshake-{stamp}.bin").write_bytes(first)
 
-                # Modern JS5 accepts the revision handshake with a single zero byte.
-                # If this is the expected protocol, the client should immediately send
-                # its post-handshake control/request packets on the same connection.
                 try:
                     conn.sendall(b"\x00")
                 except OSError as e:
@@ -77,7 +72,7 @@ def tcp_probe(port: int):
                         f.write(f"from={addr[0]}:{addr[1]} phase=accept-send error={e!r}\n")
                     continue
 
-                following = recv_some(conn, 65536, 8.0)
+                following = recv_until_idle(conn, 65536, 5.0)
                 with (OUT / "tcp-connections.log").open("a", encoding="utf-8") as f:
                     f.write(f"from={addr[0]}:{addr[1]} phase=after-accept bytes={len(following)} hex={following.hex()}\n")
                 (OUT / f"tcp-after-accept-{stamp}.bin").write_bytes(following)
