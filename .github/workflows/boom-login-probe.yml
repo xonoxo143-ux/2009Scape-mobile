@@ -21,7 +21,7 @@ jobs:
       - name: Install runtime and UI automation helpers
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb xauth xdotool imagemagick openbox openjdk-17-jre-headless
+          sudo apt-get install -y -qq xvfb xauth xdotool imagemagick openbox openjdk-17-jdk-headless
 
       - name: Download and patch Boom client
         run: |
@@ -30,6 +30,15 @@ jobs:
           curl -fL --retry 3 https://boom-ps.com/download/files/client-boomps.jar -o boom-local/work/client-boomps.jar
           chmod +x boom-local/patch-client-local.sh
           boom-local/patch-client-local.sh boom-local/work/client-boomps.jar
+
+      - name: Disassemble world-crash client code
+        run: |
+          set +e
+          jar tf boom-local/work/client-boomps-local.jar | grep -E '^osrs/(Client|iy|cB)\.class$' > boom-local/login-report/relevant-classes.txt
+          javap -classpath boom-local/work/client-boomps-local.jar -c -p -l osrs.Client > boom-local/login-report/client-javap.txt 2>&1
+          javap -classpath boom-local/work/client-boomps-local.jar -c -p -l osrs.iy > boom-local/login-report/iy-javap.txt 2>&1
+          javap -classpath boom-local/work/client-boomps-local.jar -c -p -l osrs.cB > boom-local/login-report/cB-javap.txt 2>&1
+          set -e
 
       - name: Serve local jav_config
         run: |
@@ -92,8 +101,6 @@ jobs:
             xdotool type --delay 25 'localprobe'
             xdotool key Return
 
-            # Capture the earliest successful world entry separately from the
-            # longer session test so an eventual disconnect cannot hide it.
             for i in $(seq 1 20); do
               if grep -q 'Game state changed: LOGGED_IN' boom-local/login-report/client.log 2>/dev/null; then break; fi
               sleep 0.25
@@ -105,6 +112,7 @@ jobs:
           import -window root boom-local/login-report/after-session.png 2>/dev/null || true
           grep -E 'Cache is ready|LOGIN_SCREEN|LOGGING_IN|LOADING|LOGGED_IN|CONNECTION_LOST|HOPPING' boom-local/login-report/client.log | tail -150 > boom-local/login-report/state-summary.txt || true
           grep -E 'LOGIN_|FIRST_WORLD|POST_WORLD|SESSION_' boom-local/login-report/proxy.log > boom-local/login-report/session-summary.txt || true
+          grep -n -A18 -B8 'Client error:' boom-local/login-report/client.log > boom-local/login-report/client-error-context.txt || true
           kill $(cat boom-local/login-report/client.pid) 2>/dev/null || true
           kill $(cat boom-local/login-report/proxy.pid) 2>/dev/null || true
           kill $(cat boom-local/login-report/openbox.pid) 2>/dev/null || true
@@ -117,6 +125,8 @@ jobs:
           cat boom-local/login-report/session-summary.txt 2>/dev/null | tail -160 || true
           echo '=== CLIENT STATE ==='
           cat boom-local/login-report/state-summary.txt 2>/dev/null || true
+          echo '=== CLIENT CRASH ==='
+          cat boom-local/login-report/client-error-context.txt 2>/dev/null || true
           if grep -q 'Game state changed: LOGGED_IN' boom-local/login-report/state-summary.txt 2>/dev/null; then
             echo 'LOCAL_WORLD_LOGIN=PASS'
           else
