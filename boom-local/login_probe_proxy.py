@@ -213,7 +213,6 @@ def main():
                     return
 
                 metadata = b'\x02' + bytes([37]) + success_metadata()
-                # Descriptor 2 is a -2 (u16 variable-length) packet in Boom revision 239.
                 first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)
                 (out / 'first-world-frame.bin').write_bytes(first_world)
                 c.sendall(metadata + first_world)
@@ -223,15 +222,29 @@ def main():
                     f'payload_len={len(first_world)-3} opcode_wire=0x{first_world[0]:02x}'
                 )
 
-                c.settimeout(7)
-                try:
-                    after = c.recv(65536)
-                except socket.timeout:
-                    after = b''
-                    log('POST_WORLD_CLIENT_WAIT timeout=true')
-                if after:
-                    (out / 'post-world-client.bin').write_bytes(after)
-                    log(f'POST_WORLD_CLIENT len={len(after)} hex={after.hex()}')
+                # Keep the local game connection open long enough to distinguish
+                # client-side EOF/errors from the old probe intentionally closing it.
+                deadline = time.time() + 30.0
+                c.settimeout(0.25)
+                seq = 0
+                log('SESSION_HOLD_START seconds=30')
+                while time.time() < deadline:
+                    try:
+                        after = c.recv(65536)
+                    except socket.timeout:
+                        continue
+                    except OSError as e:
+                        log(f'SESSION_SOCKET_ERROR {e!r}')
+                        break
+                    if not after:
+                        log('SESSION_PEER_EOF')
+                        break
+                    seq += 1
+                    with (out / 'post-world-client.bin').open('ab') as f:
+                        f.write(after)
+                    log(f'POST_WORLD_CLIENT seq={seq} len={len(after)} hex={after.hex()}')
+                else:
+                    log('SESSION_HOLD_COMPLETE')
                 return
 
             data = c.recv(4096)
