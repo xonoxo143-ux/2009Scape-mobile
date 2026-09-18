@@ -213,12 +213,12 @@ def main():
                     return
 
                 metadata = b'\x02' + bytes([37]) + success_metadata()
-                first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)
+                first_world = build_initial_frame(keys, packet_id=49, tile_x=3222, tile_y=3218)
                 (out / 'first-world-frame.bin').write_bytes(first_world)
                 c.sendall(metadata + first_world)
                 log(f'LOGIN_SUCCESS_METADATA_SENT len={len(metadata)} hex={metadata.hex()}')
                 log(
-                    f'FIRST_WORLD_PACKET_SENT packet_id=2 frame_len={len(first_world)} '
+                    f'FIRST_WORLD_PACKET_SENT packet_id=49 frame_len={len(first_world)} '
                     f'payload_len={len(first_world)-3} opcode_wire=0x{first_world[0]:02x}'
                 )
 
