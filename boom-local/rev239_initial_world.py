@@ -123,15 +123,11 @@ def build_initial_payload(tile_x=3222, tile_y=3218):
     return bytes(payload)
 
 
-def build_initial_frame(xtea_keys, packet_id=2, tile_x=3222, tile_y=3218):
-    # cx packet descriptor id 2 has declared length -2 in this revision, so the
-    # login state reads the following unsigned short as the payload length.
-    # Descriptor id 0 is fixed length 4 and must NOT be used for this frame.
+def build_initial_frame(xtea_keys, packet_id=49, tile_x=3222, tile_y=3218):
+    # Network packet index 49 maps to cx.I, the revision-239 normal
+    # region-rebuild descriptor. It is -2 (u16 variable length), matching the
+    # player bootstrap + region payload consumed by iy.a(cH) then cB.a(cH).
     cipher = Isaac([((k + 50) & MASK32) for k in xtea_keys])
-    # The login-success parser consumes one server ISAAC value before the
-    # first normal server-packet opcode. Keep our server stream aligned with
-    # the client's PacketBuffer before encoding the initial world packet.
-    cipher.next_int()
     encoded_opcode = (packet_id + cipher.next_int()) & 0xFF
     payload = build_initial_payload(tile_x, tile_y)
     return bytes([encoded_opcode]) + struct.pack('>H', len(payload)) + payload
@@ -144,4 +140,4 @@ if __name__ == '__main__':
     second = c.next_int()
     assert first == 0x89C69E78
     frame = build_initial_frame(keys)
-    print('selftest=PASS first_isaac=%08x second_isaac=%08x packet_id=2 payload_len=%d frame_len=%d' % (first, second, len(frame) - 3, len(frame)))
+    print('selftest=PASS first_isaac=%08x second_isaac=%08x packet_id=49 payload_len=%d frame_len=%d' % (first, second, len(frame) - 3, len(frame)))
