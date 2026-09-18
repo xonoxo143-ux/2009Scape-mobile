@@ -74,6 +74,7 @@ jobs:
           echo $! > boom-local/login-report/openbox.pid
 
           HOME=/tmp/boom-home java -Xmx768m -Xss2m -XX:CompileThreshold=1500 \
+            -Xlog:exceptions=trace:file=boom-local/login-report/jvm-exceptions.log:time,level,tags \
             -cp boom-local/work/client-boomps-local.jar net.runelite.client.RuneLite --debug \
             > boom-local/login-report/client.log 2>&1 &
           echo $! > boom-local/login-report/client.pid
@@ -127,6 +128,8 @@ jobs:
           cat boom-local/login-report/state-summary.txt 2>/dev/null || true
           echo '=== CLIENT CRASH ==='
           cat boom-local/login-report/client-error-context.txt 2>/dev/null || true
+          echo '=== JVM IOEXCEPTION SITES ==='
+          grep -n -B3 -A6 -E 'java\.io\.IOException|osrs\.Client' boom-local/login-report/jvm-exceptions.log 2>/dev/null | tail -160 || true
           if grep -q 'Game state changed: LOGGED_IN' boom-local/login-report/state-summary.txt 2>/dev/null; then
             echo 'LOCAL_WORLD_LOGIN=PASS'
           else
