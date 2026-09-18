@@ -5,6 +5,7 @@ on:
     branches: [boom-local-singleplayer]
     paths:
       - 'boom-local/login_probe_proxy.py'
+      - 'boom-local/rev239_initial_world.py'
       - '.github/workflows/boom-login-probe.yml'
   workflow_dispatch:
 
