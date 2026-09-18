@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from rev239_initial_world import Isaac, MASK32, build_initial_frame
+from rev239_initial_world import build_initial_frame
 
 ROOT = Path(__file__).resolve().parent
 KEY_FILE = ROOT / 'local-rsa-test-key.properties'
@@ -117,20 +117,6 @@ def decrypt_login(packet: bytes, out: Path, log):
     return keys
 
 
-
-def build_open_top_frame(xtea_keys, root_id=548):
-    """Build cx.aD (server packet id 96), the dedicated IF_OPEN_TOP packet.
-
-    The descriptor is fixed length 2. Client cH.H() decodes the root as a
-    big-endian short whose low byte is stored +128.
-    """
-    cipher = Isaac([((k + 50) & MASK32) for k in xtea_keys])
-    cipher.next_int()  # first post-login frame consumes server ISAAC slot 0
-    encoded_opcode = (96 + cipher.next_int()) & 0xFF
-    payload = bytes([(root_id >> 8) & 0xFF, ((root_id & 0xFF) + 128) & 0xFF])
-    return bytes([encoded_opcode]) + payload
-
-
 def success_metadata():
     meta = bytearray()
     meta += b'\x00'
@@ -228,18 +214,12 @@ def main():
 
                 metadata = b'\x02' + bytes([37]) + success_metadata()
                 first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)
-                open_top = build_open_top_frame(keys, root_id=548)
                 (out / 'first-world-frame.bin').write_bytes(first_world)
-                (out / 'open-top-frame.bin').write_bytes(open_top)
                 c.sendall(metadata + first_world)
                 log(f'LOGIN_SUCCESS_METADATA_SENT len={len(metadata)} hex={metadata.hex()}')
                 log(
                     f'FIRST_WORLD_PACKET_SENT packet_id=2 frame_len={len(first_world)} '
                     f'payload_len={len(first_world)-3} opcode_wire=0x{first_world[0]:02x}'
-                )
-                log(
-                    f'OPEN_TOP_READY packet_id=96 root=548 '
-                    f'frame_len={len(open_top)} opcode_wire=0x{open_top[0]:02x}'
                 )
 
                 # Keep the local game connection open long enough to distinguish
@@ -247,7 +227,6 @@ def main():
                 deadline = time.time() + 30.0
                 c.settimeout(0.25)
                 seq = 0
-                open_top_sent = False
                 log('SESSION_HOLD_START seconds=30')
                 while time.time() < deadline:
                     try:
@@ -264,14 +243,6 @@ def main():
                     with (out / 'post-world-client.bin').open('ab') as f:
                         f.write(after)
                     log(f'POST_WORLD_CLIENT seq={seq} len={len(after)} hex={after.hex()}')
-                    if not open_top_sent:
-                        c.sendall(open_top)
-                        open_top_sent = True
-                        log(
-                            f'OPEN_TOP_SENT_AFTER_CLIENT packet_id=96 root=548 '
-                            f'after_client_seq={seq} frame_len={len(open_top)} '
-                            f'opcode_wire=0x{open_top[0]:02x}'
-                        )
                 else:
                     log('SESSION_HOLD_COMPLETE')
                 return
