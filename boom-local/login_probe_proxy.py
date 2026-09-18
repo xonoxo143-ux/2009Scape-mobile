@@ -227,8 +227,10 @@ def main():
                 # three-byte header of the immediately following variable-length
                 # first-world packet.
                 metadata = b'\x02' + bytes([37]) + success_metadata()
-                first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)\n                open_top = build_open_top_frame(keys, root_id=548)
-                (out / 'first-world-frame.bin').write_bytes(first_world)\n                (out / 'open-top-frame.bin').write_bytes(open_top)
+                first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)
+                open_top = build_open_top_frame(keys, root_id=548)
+                (out / 'first-world-frame.bin').write_bytes(first_world)
+                (out / 'open-top-frame.bin').write_bytes(open_top)
                 c.sendall(metadata + first_world)
                 log(f'LOGIN_SUCCESS_METADATA_SENT len={len(metadata)} hex={metadata.hex()}')
                 log(
@@ -241,6 +243,7 @@ def main():
                 deadline = time.time() + 30.0
                 c.settimeout(0.25)
                 seq = 0
+                open_top_sent = False
                 log('SESSION_HOLD_START seconds=30')
                 while time.time() < deadline:
                     try:
