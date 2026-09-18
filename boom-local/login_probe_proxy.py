@@ -231,14 +231,14 @@ def main():
                 open_top = build_open_top_frame(keys, root_id=548)
                 (out / 'first-world-frame.bin').write_bytes(first_world)
                 (out / 'open-top-frame.bin').write_bytes(open_top)
-                c.sendall(metadata + first_world + open_top)
+                c.sendall(metadata + first_world)
                 log(f'LOGIN_SUCCESS_METADATA_SENT len={len(metadata)} hex={metadata.hex()}')
                 log(
                     f'FIRST_WORLD_PACKET_SENT packet_id=2 frame_len={len(first_world)} '
                     f'payload_len={len(first_world)-3} opcode_wire=0x{first_world[0]:02x}'
                 )
                 log(
-                    f'OPEN_TOP_SENT packet_id=96 root=548 '
+                    f'OPEN_TOP_READY packet_id=96 root=548 '
                     f'frame_len={len(open_top)} opcode_wire=0x{open_top[0]:02x}'
                 )
 
@@ -247,6 +247,7 @@ def main():
                 deadline = time.time() + 30.0
                 c.settimeout(0.25)
                 seq = 0
+                open_top_sent = False
                 log('SESSION_HOLD_START seconds=30')
                 while time.time() < deadline:
                     try:
@@ -263,6 +264,14 @@ def main():
                     with (out / 'post-world-client.bin').open('ab') as f:
                         f.write(after)
                     log(f'POST_WORLD_CLIENT seq={seq} len={len(after)} hex={after.hex()}')
+                    if not open_top_sent:
+                        c.sendall(open_top)
+                        open_top_sent = True
+                        log(
+                            f'OPEN_TOP_SENT_AFTER_CLIENT packet_id=96 root=548 '
+                            f'after_client_seq={seq} frame_len={len(open_top)} '
+                            f'opcode_wire=0x{open_top[0]:02x}'
+                        )
                 else:
                     log('SESSION_HOLD_COMPLETE')
                 return
