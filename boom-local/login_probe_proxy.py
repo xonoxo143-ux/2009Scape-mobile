@@ -118,19 +118,18 @@ def decrypt_login(packet: bytes, out: Path, log):
 
 
 
-def build_interface_sync_frame(xtea_keys, root_id=548):
-    """Build cx.k (server packet id 25): full top-level interface tree sync.
+def build_open_top_frame(xtea_keys, root_id=548):
+    """Build cx.aD (server packet id 96), the dedicated IF_OPEN_TOP packet.
 
-    Boom revision 239 declares cx.k as -2, so it is opcode + u16 length.
-    The payload starts with the root interface u16 and a u16 subinterface count.
-    For the first probe we intentionally mount no subinterfaces; if root 548 is
-    correct, this alone should replace the login/connecting top-level UI.
+    The descriptor is fixed length 2. Client cH.H() decodes the root as a
+    big-endian short whose low byte is stored +128.
     """
     cipher = Isaac([((k + 50) & MASK32) for k in xtea_keys])
     cipher.next_int()  # first post-login frame consumes server ISAAC slot 0
-    encoded_opcode = (25 + cipher.next_int()) & 0xFF
-    payload = struct.pack('>HH', root_id, 0)
-    return bytes([encoded_opcode]) + struct.pack('>H', len(payload)) + payload
+    encoded_opcode = (96 + cipher.next_int()) & 0xFF
+    payload = bytes([(root_id >> 8) & 0xFF, ((root_id & 0xFF) + 128) & 0xFF])
+    return bytes([encoded_opcode]) + payload
+
 
 def success_metadata():
     meta = bytearray()
@@ -229,18 +228,18 @@ def main():
 
                 metadata = b'\x02' + bytes([37]) + success_metadata()
                 first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)
-                interface_sync = build_interface_sync_frame(keys, root_id=548)
+                open_top = build_open_top_frame(keys, root_id=548)
                 (out / 'first-world-frame.bin').write_bytes(first_world)
-                (out / 'interface-sync-frame.bin').write_bytes(interface_sync)
-                c.sendall(metadata + first_world + interface_sync)
+                (out / 'open-top-frame.bin').write_bytes(open_top)
+                c.sendall(metadata + first_world + open_top)
                 log(f'LOGIN_SUCCESS_METADATA_SENT len={len(metadata)} hex={metadata.hex()}')
                 log(
                     f'FIRST_WORLD_PACKET_SENT packet_id=2 frame_len={len(first_world)} '
                     f'payload_len={len(first_world)-3} opcode_wire=0x{first_world[0]:02x}'
                 )
                 log(
-                    f'INTERFACE_SYNC_SENT packet_id=25 root=548 sub_count=0 '
-                    f'frame_len={len(interface_sync)} opcode_wire=0x{interface_sync[0]:02x}'
+                    f'OPEN_TOP_SENT packet_id=96 root=548 '
+                    f'frame_len={len(open_top)} opcode_wire=0x{open_top[0]:02x}'
                 )
 
                 # Keep the local game connection open long enough to distinguish
