@@ -118,20 +118,20 @@ def decrypt_login(packet: bytes, out: Path, log):
 
 
 def success_metadata():
+    # Revision-239 success metadata with tokenFlag == 0:
+    # tokenFlag:u8, rights:u8, accountFlag:u8, localPlayerIndex:u16,
+    # sessionFlag:u8, then three u64 session/account values.
     meta = bytearray()
-    meta += b'\x00'
-    meta += b'\x00\x00\x00\x00'
-    meta += b'\x00'
-    meta += b'\x00'
-    meta += b'\x00\x01'
-    meta += b'\x00'
+    meta += b'\x00'          # token/account hash absent
+    meta += b'\x00'          # rights / staff level
+    meta += b'\x00'          # account flag
+    meta += b'\x00\x01'    # local player index = 1
+    meta += b'\x00'          # session/member flag
     meta += b'\x00' * 8
     meta += b'\x00' * 8
     meta += b'\x00' * 8
-    meta += b'\x00' * 3
-    assert len(meta) == 37
+    assert len(meta) == 30
     return bytes(meta)
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -212,13 +212,13 @@ def main():
                 if keys is None:
                     return
 
-                metadata = b'\x02' + bytes([37]) + success_metadata()
-                first_world = build_initial_frame(keys, packet_id=49, tile_x=3222, tile_y=3218)
+                metadata = b'\x02' + bytes([30]) + success_metadata()
+                first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)
                 (out / 'first-world-frame.bin').write_bytes(first_world)
                 c.sendall(metadata + first_world)
                 log(f'LOGIN_SUCCESS_METADATA_SENT len={len(metadata)} hex={metadata.hex()}')
                 log(
-                    f'FIRST_WORLD_PACKET_SENT packet_id=49 frame_len={len(first_world)} '
+                    f'FIRST_WORLD_PACKET_SENT packet_id=2 frame_len={len(first_world)} '
                     f'payload_len={len(first_world)-3} opcode_wire=0x{first_world[0]:02x}'
                 )
 
