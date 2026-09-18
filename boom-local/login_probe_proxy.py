@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from rev239_initial_world import build_initial_frame
+from rev239_initial_world import Isaac, MASK32, build_initial_frame
 
 ROOT = Path(__file__).resolve().parent
 KEY_FILE = ROOT / 'local-rsa-test-key.properties'
@@ -117,6 +117,16 @@ def decrypt_login(packet: bytes, out: Path, log):
     return keys
 
 
+def build_open_top_frame(xtea_keys, root_id=548):
+    # Server packet 96 / cx.aD / IF_OPEN_TOP. The first server ISAAC value
+    # encoded the login bootstrap packet, so this frame uses the second.
+    cipher = Isaac([((k + 50) & MASK32) for k in xtea_keys])
+    cipher.next_int()
+    encoded_opcode = (96 + cipher.next_int()) & 0xFF
+    payload = bytes([(root_id >> 8) & 0xFF, ((root_id & 0xFF) + 128) & 0xFF])
+    return bytes([encoded_opcode]) + payload
+
+
 def success_metadata():
     # Revision-239 LOGIN_OK metadata. The client always transfers the four
     # account-token bytes even when tokenFlag == 0; it only skips interpreting
@@ -217,8 +227,8 @@ def main():
                 # three-byte header of the immediately following variable-length
                 # first-world packet.
                 metadata = b'\x02' + bytes([37]) + success_metadata()
-                first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)
-                (out / 'first-world-frame.bin').write_bytes(first_world)
+                first_world = build_initial_frame(keys, packet_id=2, tile_x=3222, tile_y=3218)\n                open_top = build_open_top_frame(keys, root_id=548)
+                (out / 'first-world-frame.bin').write_bytes(first_world)\n                (out / 'open-top-frame.bin').write_bytes(open_top)
                 c.sendall(metadata + first_world)
                 log(f'LOGIN_SUCCESS_METADATA_SENT len={len(metadata)} hex={metadata.hex()}')
                 log(
@@ -247,6 +257,14 @@ def main():
                     with (out / 'post-world-client.bin').open('ab') as f:
                         f.write(after)
                     log(f'POST_WORLD_CLIENT seq={seq} len={len(after)} hex={after.hex()}')
+                    if not open_top_sent:
+                        c.sendall(open_top)
+                        open_top_sent = True
+                        log(
+                            f'OPEN_TOP_SENT_AFTER_CLIENT packet_id=96 root=548 '
+                            f'after_client_seq={seq} frame_len={len(open_top)} '
+                            f'opcode_wire=0x{open_top[0]:02x}'
+                        )
                 else:
                     log('SESSION_HOLD_COMPLETE')
                 return
